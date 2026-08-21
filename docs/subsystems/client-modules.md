@@ -14,10 +14,9 @@ The graph is the wire single source between the Node and browser halves: the hos
 /**
  * One composed client entry pushed by the host (a graph row). Wire
  * single source: the host node half (package root) produces this same shape.
- * `immediately` marks stage-one prefetch; `inject` is informational graph
- * metadata (the authoritative edges live in each package's `dsh.client`
- * declaration and reach fibers through entry creation). `external` carries
- * module-graph edges: unlike `inject`, they constrain code arrival because
+ * `immediately` marks stage-one prefetch; `inject` carries package dependency
+ * edges and lets web boot pull transitive providers into the paint-blocking
+ * wave. `external` carries module-graph edges: unlike `inject`, they constrain code arrival because
  * `require` is synchronous (see {@link WebBootGraph.entries}).
  */
 interface WebBootEntry {
@@ -27,7 +26,7 @@ interface WebBootEntry {
   url: string
   /** Bundle content hash (cache-busting consistency anchor). */
   rev: string
-  /** Package-name dependency edges, informational (preflight display / HMR diffing). */
+  /** Package-name dependency edges used for paint-blocking dependency closure. */
   inject?: string[]
   /** Stage-one prefetch mark: load the script for factory registration during module-face boot. */
   immediately?: boolean
@@ -50,7 +49,7 @@ interface WebBootGraph {
 }
 ```
 
-Each row's `rev` is the bundle's content hash and rides the URL as a cache-busting query; the graph `rev` hashes the composed rows, so any row change changes it. `immediately` marks the stage-one prefetch tier (fetch and execute during module-face boot, registration only); a lazy row is fetched on first import.
+Each row's `rev` is the bundle's content hash and rides the URL as a cache-busting query; the graph `rev` hashes the composed rows, so any row change changes it. `immediately` marks the stage-one prefetch tier (fetch and execute during module-face boot, registration only); a lazy row is fetched on first import. Web boot follows `inject` transitively so providers required by a paint-blocking row join the same activation wave.
 
 ## The scan
 
@@ -62,7 +61,7 @@ Package metadata — including the negative "not a client package" verdict — i
 
 ## The bundle route and index injection
 
-`GET`/`HEAD /plugins/<id>/client.js` serves the registered bundle from disk with `no-cache` (the rev query, not HTTP caching, anchors consistency); other methods are 405. An unknown id — or a registered row whose bundle is unreadable because it has not been built yet — answers a loud 404, so no unreadable bundle appears as a successful JavaScript response. The injection rows carry the current graph on every index render, so a reload always boots against the live composition.
+`GET`/`HEAD /plugins/<id>/client.js` serves the registered bundle from disk with `no-cache` when unversioned. A single `rev` equal to the current graph row enables one-year immutable caching; a stale, arbitrary, empty, or repeated `rev` is 404. Source maps are available only to direct-loopback requests. Other methods are 405. An unknown id — or a registered row whose bundle is unreadable because it has not been built yet — answers a loud 404, so no unreadable bundle appears as a successful JavaScript response. The structured injection rows carry the current graph on every index render, so a reload always boots against the live composition.
 
 ## The service
 

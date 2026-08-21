@@ -14,10 +14,9 @@ Web 插件表：[dsh-client-modules](../../packages/client/modules) 中 client �
 /**
  * One composed client entry pushed by the host (a graph row). Wire
  * single source: the host node half (package root) produces this same shape.
- * `immediately` marks stage-one prefetch; `inject` is informational graph
- * metadata (the authoritative edges live in each package's `dsh.client`
- * declaration and reach fibers through entry creation). `external` carries
- * module-graph edges: unlike `inject`, they constrain code arrival because
+ * `immediately` marks stage-one prefetch; `inject` carries package dependency
+ * edges and lets web boot pull transitive providers into the paint-blocking
+ * wave. `external` carries module-graph edges: unlike `inject`, they constrain code arrival because
  * `require` is synchronous (see {@link WebBootGraph.entries}).
  */
 interface WebBootEntry {
@@ -27,7 +26,7 @@ interface WebBootEntry {
   url: string
   /** Bundle content hash (cache-busting consistency anchor). */
   rev: string
-  /** Package-name dependency edges, informational (preflight display / HMR diffing). */
+  /** Package-name dependency edges used for paint-blocking dependency closure. */
   inject?: string[]
   /** Stage-one prefetch mark: load the script for factory registration during module-face boot. */
   immediately?: boolean
@@ -50,7 +49,7 @@ interface WebBootGraph {
 }
 ```
 
-每一行的 `rev` 是该 bundle 的内容哈希，并作为使缓存失效的查询参数附在 URL 上；图的 `rev` 对组合后的各行做哈希，因此任何一行的变化都会改变它。`immediately` 标记第一阶段预取档位（在模块面启动期间 fetch 并执行，只做登记）；惰性行在首次 import 时才拉取。
+每一行的 `rev` 是该 bundle 的内容哈希，并作为使缓存失效的查询参数附在 URL 上；图的 `rev` 对组合后的各行做哈希，因此任何一行的变化都会改变它。`immediately` 标记第一阶段预取档位（在模块面启动期间 fetch 并执行，只做登记）；惰性行在首次 import 时才拉取。Web 启动会沿 `inject` 做传递闭包，使绘制阻塞行所需的提供方进入同一激活波次。
 
 ## 扫描
 
@@ -62,7 +61,7 @@ interface WebBootGraph {
 
 ## bundle 路由与 index 注入
 
-`GET`/`HEAD /plugins/<id>/client.js` 以 `no-cache` 从磁盘提供已注册的 bundle（锚定一致性的是 rev 查询参数，而非 HTTP 缓存）；其他方法返回 405。未知 id——或已注册、但 bundle 因尚未构建而不可读的行——回应一个大声的 404，因此不可读 bundle 不会表现为成功的 JavaScript 响应。注入行在每次 index 渲染时携带当前图，因此刷新页面总是针对实时组合启动。
+`GET`/`HEAD /plugins/<id>/client.js` 在无版本参数时以 `no-cache` 从磁盘提供已注册的 bundle。唯一且等于当前图行的 `rev` 才启用一年 immutable 缓存；过期、任意、空值或重复的 `rev` 均返回 404。source map 仅对直连回环请求可用。其他方法返回 405。未知 id——或已注册、但 bundle 因尚未构建而不可读的行——回应一个大声的 404，因此不可读 bundle 不会表现为成功的 JavaScript 响应。结构化注入行在每次 index 渲染时携带当前图，因此刷新页面总是针对实时组合启动。
 
 ## 服务
 

@@ -43,6 +43,7 @@ describe.skipIf(MODE === 'record')('web e2e: dedicated Skill tool row', () => {
     await sessionRow.waitFor({ timeout: 10_000 })
     await sessionRow.click()
     await page.locator('[data-tool="skill"]').waitFor({ timeout: 15_000 })
+    await page.getByRole('tablist').waitFor({ timeout: 10_000 })
   }, 120_000)
 
   afterAll(async () => {

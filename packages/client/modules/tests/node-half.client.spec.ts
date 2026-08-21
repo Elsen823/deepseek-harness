@@ -1,7 +1,8 @@
 /** Node-half composition diagnostics for package metadata and built client bundles. */
 
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
-import type { IncomingMessage, ServerResponse } from 'node:http'
+import type { IncomingMessage, OutgoingHttpHeaders, ServerResponse } from 'node:http'
+import { gunzipSync } from 'node:zlib'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -76,6 +77,29 @@ function constructWithRoute(packageNames: string[]): { service: ClientModuleRegi
   return { service, route }
 }
 
+/** Dispatch one bundle-route request against a capturing ServerResponse. */
+async function dispatch(
+  route: WebRoute,
+  req: Pick<IncomingMessage, 'method' | 'url' | 'headers'> & { socket: { remoteAddress: string } },
+): Promise<{ status: number; headers: OutgoingHttpHeaders; body: Buffer }> {
+  let status = 0
+  let headers: OutgoingHttpHeaders = {}
+  const chunks: Buffer[] = []
+  const response = {
+    writeHead(nextStatus: number, nextHeaders?: OutgoingHttpHeaders) {
+      status = nextStatus
+      headers = { ...nextHeaders }
+      return response
+    },
+    end(chunk?: string | Buffer) {
+      if (chunk !== undefined) chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk)
+      return response
+    },
+  } as unknown as ServerResponse
+  await route.handler(req as IncomingMessage, response)
+  return { status, headers, body: Buffer.concat(chunks) }
+}
+
 /** Construct the node-half service over the enabled fixture entries. */
 function construct(packageNames: string[]): ClientModuleRegistry {
   return constructWithRoute(packageNames).service
@@ -104,7 +128,7 @@ const bootGraph = (): WebBootGraph => ({
 })
 
 describe('HTML bootstrap facade', () => {
-  it('precedes blocking preloads and the boot graph, then becomes the live registration target', async () => {
+  it('precedes parser-blocking preloads and the boot graph, then becomes the live registration target', async () => {
     const graph = bootGraph()
     const { html, target } = injectedFacade(graph)
     const facadeAt = html.indexOf('window.__ModuleLoader__=')
@@ -213,36 +237,122 @@ describe('client bundle activation', () => {
     const packageName = '@fixture/source-map'
     const clientPath = writePackage(packageName)
     mkdirSync(dirname(clientPath), { recursive: true })
-    writeFileSync(clientPath, 'module.exports = {}\n')
+    const script = `module.exports = { pad: '${'a'.repeat(300)}' }\n//# sourceMappingURL=client.js.map\n`
+    writeFileSync(clientPath, script)
     const map = '{"version":3,"sources":["src/client/index.tsx"]}\n'
     writeFileSync(`${clientPath}.map`, map)
-    const { route } = constructWithRoute([packageName])
-    let status = 0
-    let headers: Record<string, string> | undefined
-    let body = ''
-    const response = {
-      writeHead(nextStatus: number, nextHeaders?: Record<string, string>) {
-        status = nextStatus
-        headers = nextHeaders
-        return response
-      },
-      end(chunk?: Uint8Array) {
-        body = chunk === undefined ? '' : Buffer.from(chunk).toString('utf8')
-        return response
-      },
-    } as unknown as ServerResponse
+    const { service, route } = constructWithRoute([packageName])
+    const currentRev = service.graph().entries.find(entry => entry.id === packageName)?.rev
+    expect(currentRev).toEqual(expect.any(String))
 
-    await route.handler({
+    const loopbackMap = await dispatch(route, {
       method: 'GET',
       url: `/plugins/${packageName}/client.js.map`,
-    } as IncomingMessage, response)
-
-    expect(status).toBe(200)
-    expect(headers).toEqual({
-      'content-type': 'application/json; charset=utf-8',
-      'cache-control': 'no-cache',
+      headers: { host: '127.0.0.1:1' },
+      socket: { remoteAddress: '127.0.0.1' },
     })
-    expect(body).toBe(map)
+    expect(loopbackMap.status).toBe(200)
+    expect(loopbackMap.headers['content-type']).toBe('application/json; charset=utf-8')
+    expect(loopbackMap.headers['cache-control']).toBe('no-cache')
+    expect(loopbackMap.body.toString('utf8')).toBe(map)
+
+    const remoteMap = await dispatch(route, {
+      method: 'GET',
+      url: `/plugins/${packageName}/client.js.map`,
+      headers: { host: '127.0.0.1:1', 'x-forwarded-for': '1.1.1.1' },
+      socket: { remoteAddress: '127.0.0.1' },
+    })
+    expect(remoteMap.status).toBe(404)
+
+    const stale = await dispatch(route, {
+      method: 'GET',
+      url: `/plugins/${packageName}/client.js?rev=stale`,
+      headers: { host: '127.0.0.1:1' },
+      socket: { remoteAddress: '127.0.0.1' },
+    })
+    expect(stale.status).toBe(404)
+
+    const emptyRev = await dispatch(route, {
+      method: 'GET',
+      url: `/plugins/${packageName}/client.js?rev=`,
+      headers: { host: '127.0.0.1:1' },
+      socket: { remoteAddress: '127.0.0.1' },
+    })
+    expect(emptyRev.status).toBe(404)
+
+    const repeatedRev = await dispatch(route, {
+      method: 'GET',
+      url: `/plugins/${packageName}/client.js?rev=${String(currentRev)}&rev=${String(currentRev)}`,
+      headers: { host: '127.0.0.1:1' },
+      socket: { remoteAddress: '127.0.0.1' },
+    })
+    expect(repeatedRev.status).toBe(404)
+
+    const unrevved = await dispatch(route, {
+      method: 'GET',
+      url: `/plugins/${packageName}/client.js`,
+      headers: { host: '127.0.0.1:1', 'accept-encoding': 'identity' },
+      socket: { remoteAddress: '127.0.0.1' },
+    })
+    expect(unrevved.status).toBe(200)
+    expect(unrevved.headers['cache-control']).toBe('no-cache')
+
+    const hashed = await dispatch(route, {
+      method: 'GET',
+      url: `/plugins/${packageName}/client.js?rev=${String(currentRev)}`,
+      headers: { host: '127.0.0.1:1', 'accept-encoding': 'gzip' },
+      socket: { remoteAddress: '127.0.0.1' },
+    })
+    expect(hashed.status).toBe(200)
+    expect(hashed.headers['cache-control']).toBe('public, max-age=31536000, immutable')
+    expect(hashed.headers['content-encoding']).toBe('gzip')
+    expect(gunzipSync(hashed.body).toString('utf8')).toBe(script)
+
+    const remoteJs = await dispatch(route, {
+      method: 'GET',
+      url: `/plugins/${packageName}/client.js?rev=${String(currentRev)}`,
+      headers: {
+        host: 'elsen-vm.tail8b4e1b.ts.net:8443',
+        'accept-encoding': 'gzip',
+      },
+      socket: { remoteAddress: '127.0.0.1' },
+    })
+    expect(remoteJs.headers['cache-control']).toBe('public, max-age=31536000, immutable')
+    expect(gunzipSync(remoteJs.body).toString('utf8')).toBe(`module.exports = { pad: '${'a'.repeat(300)}' }\n`)
+
+    writeFileSync(clientPath, `${script}module.exports.changed = true\n`)
+    const changedBeforeRebuild = await dispatch(route, {
+      method: 'GET',
+      url: `/plugins/${packageName}/client.js?rev=${String(currentRev)}`,
+      headers: { host: '127.0.0.1:1', 'accept-encoding': 'identity' },
+      socket: { remoteAddress: '127.0.0.1' },
+    })
+    expect(changedBeforeRebuild.status).toBe(404)
+  })
+
+  it('lets response-writing failures reach the webserver request guard', async () => {
+    const packageName = '@fixture/response-failure'
+    const clientPath = writePackage(packageName)
+    mkdirSync(dirname(clientPath), { recursive: true })
+    writeFileSync(clientPath, 'module.exports = {}\n')
+    const { route } = constructWithRoute([packageName])
+    const statuses: number[] = []
+    const response = {
+      writeHead(status: number) {
+        statuses.push(status)
+        if (status === 200) throw new Error('response write failed')
+        return response
+      },
+      end() { return response },
+    } as unknown as ServerResponse
+
+    await expect(route.handler({
+      method: 'GET',
+      url: `/plugins/${packageName}/client.js`,
+      headers: { host: '127.0.0.1:1' },
+      socket: { remoteAddress: '127.0.0.1' },
+    } as IncomingMessage, response)).rejects.toThrow('response write failed')
+    expect(statuses).toEqual([200])
   })
 })
 

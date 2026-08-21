@@ -1,22 +1,30 @@
 /**
  * @deepseek-ai/dsh-host-frontend-static — SPA dist server over the webserver
- * fallback seat: serves the built frontend directory with explicit index
- * entry points. A readable index renders at the dist root and configured index
- * path; missing paths return 404, traversal outside the dist root is 403,
- * unknown extensions ship as octet-stream, and non-GET/HEAD is 405. Every
- * index response runs through the webserver's index render (structured
- * injection rows, then raw taps). The dist location is workspace knowledge of
- * the composing application, so `distIndex` is typically supplied through a
- * `!!js` expression, never hardcoded by a deployment.
+ * fallback seat: serves the built frontend directory with explicit index entry
+ * points. A readable index renders at the dist root and configured index path;
+ * missing paths return 404, traversal outside the dist root is 403, unknown
+ * extensions ship as octet-stream, and non-GET/HEAD is 405. Hashed `/assets/`
+ * files are immutable; index and other unhashed files revalidate. gzip/Brotli
+ * are negotiated when Accept-Encoding permits a useful representation. Source
+ * maps are omitted unless the request is direct loopback. Every index response
+ * runs through the webserver's
+ * index render (structured injection rows, then raw taps). The dist location is
+ * workspace knowledge of the composing application, so `distIndex` is typically
+ * supplied through a `!!js` expression, never hardcoded by a deployment.
  * @module @deepseek-ai/dsh-host-frontend-static
  */
 
-import type { ServerResponse } from 'node:http'
+import type { IncomingMessage, ServerResponse } from 'node:http'
 import { readFile } from 'node:fs/promises'
-import { dirname, extname, join, normalize, resolve, sep } from 'node:path'
+import { basename, dirname, extname, join, normalize, relative, resolve, sep } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import type {} from '@deepseek-ai/dsh-host-webserver'
+import {
+  HTTP_CACHE_IMMUTABLE,
+  HTTP_CACHE_REVALIDATE,
+  isDirectLoopback,
+  writeHttpBody,
+} from '@deepseek-ai/dsh-host-webserver'
 
 /** Stable Cordis plugin name. */
 export const name = 'frontend-static'
@@ -35,7 +43,6 @@ export const Config: z<Config> = z.object({
 })
 
 const HTML_MIME = 'text/html; charset=utf-8'
-
 const MIME: Record<string, string> = {
   '.html': HTML_MIME,
   '.js': 'text/javascript; charset=utf-8',
@@ -52,8 +59,12 @@ const STATIC_MISS_CODES: ReadonlySet<string | undefined> = new Set([
   'ENOTDIR',
 ])
 
+/** Vite-style content hash immediately before the final extension. */
+const HASHED_ASSET_NAME = /-[A-Za-z0-9_-]{8,}\.[^.]+$/u
+
 /**
  * Serve one GET/HEAD static request from the dist root.
+ * @param req - inbound request (encoding, validators, loopback check).
  * @param pathname - decoded URL pathname of the request.
  * @param res - the node:http response to write.
  * @param distRoot - absolute dist root directory (resolved by the caller).
@@ -62,6 +73,7 @@ const STATIC_MISS_CODES: ReadonlySet<string | undefined> = new Set([
  * rendering) for the dist root and configured index path.
  */
 export async function serveStatic(
+  req: IncomingMessage,
   pathname: string, res: ServerResponse, distRoot: string, distIndex: string,
   renderIndex: () => Promise<string>,
 ): Promise<void> {
@@ -74,15 +86,29 @@ export async function serveStatic(
     res.end()
     return
   }
+  const directLoopback = isDirectLoopback(req)
+  if (extname(target).toLowerCase() === '.map' && !directLoopback) {
+    res.writeHead(404)
+    res.end()
+    return
+  }
   let body: string | Buffer
-  let type: string
+  let contentType: string
+  let cacheControl: string
+  let stripSourceMappingURL = false
   try {
     if (target === distRoot || target === distIndex) {
       body = await renderIndex()
-      type = HTML_MIME
+      contentType = HTML_MIME
+      cacheControl = HTTP_CACHE_REVALIDATE
     } else {
       body = await readFile(target)
-      type = MIME[extname(target)] ?? 'application/octet-stream'
+      contentType = MIME[extname(target).toLowerCase()] ?? 'application/octet-stream'
+      const targetFromRoot = relative(distRoot, target)
+      const hashedAsset = targetFromRoot.split(sep)[0] === 'assets'
+        && HASHED_ASSET_NAME.test(basename(target))
+      cacheControl = hashedAsset ? HTTP_CACHE_IMMUTABLE : HTTP_CACHE_REVALIDATE
+      stripSourceMappingURL = !directLoopback
     }
   } catch (error) {
     // Only absent or non-file targets are 404; other filesystem failures reach
@@ -92,8 +118,12 @@ export async function serveStatic(
     res.end()
     return
   }
-  res.writeHead(200, { 'content-type': type })
-  res.end(body)
+  await writeHttpBody(req, res, {
+    contentType,
+    cacheControl,
+    body,
+    stripSourceMappingURL,
+  })
 }
 
 /**
@@ -116,6 +146,6 @@ export function apply(ctx: Context, config: Config): void {
     }
     /* v8 ignore next -- node:http always sets url on server requests */
     const rawPath = new URL(req.url ?? '/', 'http://x').pathname
-    await serveStatic(decodeURIComponent(rawPath), res, distRoot, distIndex, renderIndex)
+    await serveStatic(req, decodeURIComponent(rawPath), res, distRoot, distIndex, renderIndex)
   }), 'frontend-static: fallback seat')
 }

@@ -65,6 +65,7 @@ describe.skipIf(MODE === 'record')('web e2e: cancelled Bash row disclosure', () 
     await call.getByText('Wait until cancellation', { exact: false }).waitFor()
     await call.getByText('setInterval(() => {}, 1000)', { exact: false }).waitFor()
     await expect.poll(() => call.getByText('Error: tool call aborted', { exact: true }).count()).toBe(2)
+    await page.getByRole('tablist').waitFor({ timeout: 10_000 })
 
     const snapshot = (await captureStableAria(page, '[class*="centerCol"]', scaffold.workspaceCwd))
       // The borrowed fixture's UTC date is still the previous day in PDT;
