@@ -17,7 +17,7 @@ export const inject = ['invariants']
 /**
  * No runtime invariant: the vite entry shell — boot glue and module-table
  * seeding with no cordis events and no cross-plugin mutable state; the boot
- * chain (loading page → settled → one-flip UI) is asserted by the web smoke
+ * chain (loading page → chrome ACTIVE → mount → deferred plugins) is asserted by the web smoke
  * e2e against the real carrier.
  */
 const install: InvariantInstaller = () => {}

@@ -7,6 +7,8 @@
  */
 
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { request as httpRequest } from 'node:http'
+import { gunzipSync } from 'node:zlib'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -34,7 +36,12 @@ async function loadComposition(): Promise<Context> {
   await mkdir(dist)
   const distIndex = join(dist, 'index.html')
   await writeFile(distIndex, '<head></head><body>shell</body>')
-  await writeFile(join(dist, 'app.js'), 'export {}')
+  await writeFile(join(dist, 'app.js'), 'export {}\n//# sourceMappingURL=app.js.map\n')
+  await writeFile(join(dist, 'app.js.map'), '{"version":3}\n')
+  await writeFile(join(dist, 'app.js.MAP'), '{"version":3}\n')
+  await mkdir(join(dist, 'assets'))
+  await writeFile(join(dist, 'assets', 'index-AAAAAAAA.js'), `${'export const shell = 1; '.repeat(40)}\n`)
+  await writeFile(join(dist, 'assets', 'plain.js'), 'export const plain = true\n')
   await writeFile(join(dist, 'blob.bin'), 'BLOB')
   await writeFile(join(dist, 'manifest.webmanifest'), '{}')
   await mkdir(join(dist, 'empty'))
@@ -75,13 +82,42 @@ async function loadComposition(): Promise<Context> {
 }
 
 /** GET (by default) one path against the running server; returns status, content-type, and a body prefix. */
-async function request(port: number, path: string, init?: RequestInit): Promise<{ status: number; type: string | null; body: string }> {
+async function request(port: number, path: string, init?: RequestInit): Promise<{
+  status: number
+  type: string | null
+  cache: string | null
+  body: string
+}> {
   const response = await fetch(`http://127.0.0.1:${String(port)}${path}`, init)
   return {
     status: response.status,
     type: response.headers.get('content-type'),
+    cache: response.headers.get('cache-control'),
     body: (await response.text()).slice(0, 80),
   }
+}
+
+/** GET one path without automatic decompression so Content-Encoding is observable. */
+function rawGet(port: number, path: string, headers: Record<string, string>): Promise<{
+  status: number
+  encoding: string | undefined
+  cache: string | undefined
+  body: Buffer
+}> {
+  return new Promise((resolve, reject) => {
+    httpRequest({ hostname: '127.0.0.1', port, path, headers }, (response) => {
+      const chunks: Buffer[] = []
+      response.on('data', (chunk: Buffer) => { chunks.push(chunk) })
+      response.on('end', () => {
+        resolve({
+          status: response.statusCode ?? 0,
+          encoding: response.headers['content-encoding'],
+          cache: response.headers['cache-control'],
+          body: Buffer.concat(chunks),
+        })
+      })
+    }).on('error', reject).end()
+  })
 }
 
 describe('real Loader composition', () => {
@@ -95,7 +131,36 @@ describe('real Loader composition', () => {
     const port = server.port
 
     // Real assets with their MIME types; a live rebuild is served on the next read.
-    expect(await request(port, '/app.js')).toMatchObject({ status: 200, type: 'text/javascript; charset=utf-8', body: 'export {}' })
+    const appJs = await request(port, '/app.js')
+    expect(appJs).toMatchObject({
+      status: 200,
+      type: 'text/javascript; charset=utf-8',
+      cache: 'no-cache',
+    })
+    expect(appJs.body).toContain('export {}')
+    expect(appJs.body).toContain('sourceMappingURL')
+    expect(await request(port, '/')).toMatchObject({ status: 200, cache: 'no-cache' })
+    expect(await request(port, '/assets/index-AAAAAAAA.js')).toMatchObject({
+      status: 200,
+      cache: 'public, max-age=31536000, immutable',
+    })
+    expect(await request(port, '/assets/plain.js')).toMatchObject({ status: 200, cache: 'no-cache' })
+    expect(await request(port, '/assets/%2e%2e%2fapp.js')).toMatchObject({ status: 200, cache: 'no-cache' })
+    expect(await request(port, '/app.js.map')).toMatchObject({ status: 200, type: 'application/json' })
+    expect(await request(port, '/app.js.map', { headers: { 'x-forwarded-for': '1.1.1.1' } }))
+      .toMatchObject({ status: 404 })
+    expect(await request(port, '/app.js.MAP')).toMatchObject({ status: 200 })
+    expect(await request(port, '/app.js.MAP', { headers: { 'x-forwarded-for': '1.1.1.1' } }))
+      .toMatchObject({ status: 404 })
+    const gzipped = await rawGet(port, '/assets/index-AAAAAAAA.js', { 'accept-encoding': 'gzip' })
+    expect(gzipped.status).toBe(200)
+    expect(gzipped.encoding).toBe('gzip')
+    expect(gunzipSync(gzipped.body).toString('utf8')).toContain('export const shell')
+    const forwardedJs = await rawGet(port, '/app.js', {
+      'accept-encoding': 'identity',
+      'x-forwarded-for': '1.1.1.1',
+    })
+    expect(forwardedJs.body.toString('utf8')).toBe('export {}\n')
     expect(await request(port, '/manifest.webmanifest')).toMatchObject({
       status: 200,
       type: 'application/manifest+json',
@@ -104,6 +169,7 @@ describe('real Loader composition', () => {
     expect(await request(port, '/app.js', { method: 'HEAD' })).toEqual({
       status: 200,
       type: 'text/javascript; charset=utf-8',
+      cache: 'no-cache',
       body: '',
     })
     await writeFile(join(root!, 'dist', 'app.js'), 'export const rebuilt = true')
@@ -124,6 +190,7 @@ describe('real Loader composition', () => {
     expect(await request(port, '/', { method: 'HEAD' })).toEqual({
       status: 200,
       type: 'text/html; charset=utf-8',
+      cache: 'no-cache',
       body: '',
     })
     untap()
@@ -135,7 +202,7 @@ describe('real Loader composition', () => {
     for (const path of ['/', '/index.html']) {
       const get = await request(port, path)
       const head = await request(port, path, { method: 'HEAD' })
-      expect(get).toEqual({ status: 404, type: null, body: '' })
+      expect(get).toEqual({ status: 404, type: null, cache: null, body: '' })
       expect(head).toEqual(get)
     }
 
@@ -153,7 +220,7 @@ describe('real Loader composition', () => {
     for (const path of [...ordinaryMisses, ...assetMisses]) {
       const get = await request(port, path)
       const head = await request(port, path, { method: 'HEAD' })
-      expect(get).toEqual({ status: 404, type: null, body: '' })
+      expect(get).toEqual({ status: 404, type: null, cache: null, body: '' })
       expect(head).toEqual(get)
     }
 

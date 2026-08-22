@@ -121,6 +121,7 @@ describe('web e2e: CJK-adjacent Markdown strong emphasis', () => {
     for (const [, , paragraph] of CASES) {
       expect(await page.getByText(paragraph, { exact: true }).count()).toBe(1)
     }
+    await page.getByRole('tablist').waitFor({ timeout: 10_000 })
 
     const snapshot = (await captureStableAria(page, '[class*="centerCol"]', scaffold.workspaceCwd))
       .split(SEED_ID).join('{{seededId}}')

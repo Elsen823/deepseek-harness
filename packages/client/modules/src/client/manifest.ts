@@ -42,10 +42,9 @@ declare module '@deepseek-ai/cordis' {
 /**
  * One composed client entry pushed by the host (a graph row). Wire
  * single source: the host node half (package root) produces this same shape.
- * `immediately` marks stage-one prefetch; `inject` is informational graph
- * metadata (the authoritative edges live in each package's `dsh.client`
- * declaration and reach fibers through entry creation). `external` carries
- * module-graph edges: unlike `inject`, they constrain code arrival because
+ * `immediately` marks stage-one prefetch; `inject` carries package dependency
+ * edges and lets web boot pull transitive providers into the paint-blocking
+ * wave. `external` carries module-graph edges: unlike `inject`, they constrain code arrival because
  * `require` is synchronous (see {@link WebBootGraph.entries}).
  */
 export interface WebBootEntry {
@@ -55,7 +54,7 @@ export interface WebBootEntry {
   url: string
   /** Bundle content hash (cache-busting consistency anchor). */
   rev: string
-  /** Package-name dependency edges, informational (preflight display / HMR diffing). */
+  /** Package-name dependency edges used for paint-blocking dependency closure. */
   inject?: string[]
   /** Stage-one prefetch mark: load the script for factory registration during module-face boot. */
   immediately?: boolean
@@ -221,11 +220,11 @@ export interface ClientBootstrapModule {
 export interface ClientModuleLoaderTarget {
   /** Queue before {@link create}; live registration after it returns. */
   mode: 'queue' | 'live'
-  /** Registrations submitted by parser-preloaded scripts before the module system exists. */
+  /** Registrations submitted by deferred bootstrap scripts before the module system exists. */
   pendingQueue: ClientBundleRegistration[]
   /** Queue or immediately register one bundle factory according to {@link mode}. */
   load(registration: ClientBundleRegistration): void
-  /** Create the module system exactly once from the parser-preloaded modules bundle. */
+  /** Create the module system exactly once from the deferred modules bootstrap bundle. */
   create(options: ClientModuleCreateOptions): ClientModuleSystem
 }
 

@@ -123,6 +123,7 @@ describe('web e2e: settled Markdown math rendering', () => {
       () => page.getByText('1 turns · 1 steps', { exact: false }).count(),
       { timeout: 10_000 },
     ).toBe(1)
+    await page.getByRole('tablist').waitFor({ timeout: 10_000 })
 
     const snapshot = (await captureStableAria(page, '[class*="centerCol"]', scaffold.workspaceCwd))
       .split(SEED_ID).join('{{seededId}}')

@@ -19,6 +19,14 @@ import { renderIndexInjections, type IndexInjection } from './injections.ts'
 export { renderIndexInjections } from './injections.ts'
 export type { IndexInjection, IndexInjectionPlacement } from './injections.ts'
 
+export {
+  HTTP_CACHE_IMMUTABLE,
+  HTTP_CACHE_REVALIDATE,
+  isDirectLoopback,
+  writeHttpBody,
+} from './http-body.ts'
+export type { HttpBodyWrite } from './http-body.ts'
+
 declare module '@deepseek-ai/cordis' {
   interface Context {
     webServer: WebServer

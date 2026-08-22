@@ -3,10 +3,12 @@
  * the host Loader's entries for packages declaring `dsh.client`, composes the
  * `window.__DSH_BOOT__` entry graph (wire single source: {@link WebBootEntry}
  * in `./client/manifest.ts`) in module-graph order, serves
- * `/plugins/<id>/client.js` and its source map, contributes the boot manifest
- * plus the parser-blocking bootstrap preloads to the webserver's index
- * injection table, and provides the `clientModuleHost` service (the HMR node
- * half's registration/notification face).
+ * `/plugins/<id>/client.js` (immutable when `rev` matches the graph row and
+ * bytes read; gzip/Brotli when a useful representation is negotiated) and its
+ * source map (direct loopback only),
+ * contributes the boot manifest plus parser-blocking bootstrap preloads to the
+ * webserver's index injection table, and provides the `clientModuleHost`
+ * service (the HMR node half's registration/notification face).
  *
  * Scanning is incremental per package — there is no full-rescan code path.
  * Every cordis `internal/plugin` emission (fiber construction/disposal) marks
@@ -30,7 +32,13 @@ import { dirname, join } from 'node:path'
 import { Service } from '@deepseek-ai/cordis'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/cordis-plugin-loader'
-import type { IndexInjection } from '@deepseek-ai/dsh-host-webserver'
+import {
+  HTTP_CACHE_IMMUTABLE,
+  HTTP_CACHE_REVALIDATE,
+  isDirectLoopback,
+  type IndexInjection,
+  writeHttpBody,
+} from '@deepseek-ai/dsh-host-webserver'
 import { optionalStringArray, stripClientSuffix } from './client/manifest.ts'
 import type { WebBootEntry, WebBootGraph } from './client/manifest.ts'
 
@@ -225,12 +233,12 @@ const CLIENT_MODULES_ID = '@deepseek-ai/dsh-client-modules'
 /** Dynamic package whose ordinary client bundle must be registered before plugin boot starts. */
 const CLIENT_RUNTIME_ID = '@deepseek-ai/dsh-client-runtime'
 
-/** Ordinary dynamic bundles the HTML parser executes before the Vite shell. */
+/** Dynamic packages whose ordinary client bundles must register before the shell runs. */
 const PARSER_PRELOAD_IDS = [CLIENT_MODULES_ID, CLIENT_RUNTIME_ID] as const
 
 /**
  * The boot protocol as index injection rows. The inline registration queue
- * precedes blocking classic scripts for modules' and runtime's ordinary
+ * precedes parser-blocking classic scripts for modules' and runtime's ordinary
  * `lib/client.js` artifacts. Its `create()` method materializes the modules
  * bundle, delegates construction to that bundle, and leaves the same facade
  * in live-registration mode. The graph global follows before the shell reads
@@ -533,7 +541,8 @@ export class ClientModuleRegistry extends Service {
       return
     }
     /* v8 ignore next -- `?? '/'` arm: node:http always sets url on server requests. */
-    const pathname = decodeURIComponent(new URL(req.url ?? '/', 'http://x').pathname)
+    const requestUrl = new URL(req.url ?? '/', 'http://x')
+    const pathname = decodeURIComponent(requestUrl.pathname)
     // The id may contain a scope slash. Anything else under /plugins (including
     // /plugins/events when the HMR row is absent) is an unknown resource.
     const prefix = '/plugins/'
@@ -541,27 +550,48 @@ export class ClientModuleRegistry extends Service {
     const bundleSuffix = '/client.js'
     const isSourceMap = pathname.startsWith(prefix) && pathname.endsWith(mapSuffix)
     const suffix = isSourceMap ? mapSuffix : bundleSuffix
-    const clientPath = pathname.startsWith(prefix) && pathname.endsWith(suffix)
-      ? this.clientPath(pathname.slice(prefix.length, -suffix.length))
+    const record = pathname.startsWith(prefix) && pathname.endsWith(suffix)
+      ? this.table.get(pathname.slice(prefix.length, -suffix.length))
       : undefined
-    const path = clientPath === undefined ? undefined : `${clientPath}${isSourceMap ? '.map' : ''}`
-    if (path === undefined) {
+    if (record === undefined) {
       res.writeHead(404)
       res.end()
       return
     }
+    const path = `${record.meta.clientPath}${isSourceMap ? '.map' : ''}`
+    const requestedRevs = requestUrl.searchParams.getAll('rev')
+    if (requestedRevs.length > 0
+      && (requestedRevs.length !== 1 || requestedRevs[0] !== record.entry.rev)) {
+      res.writeHead(404)
+      res.end()
+      return
+    }
+    const directLoopback = isDirectLoopback(req)
+    if (isSourceMap && !directLoopback) {
+      res.writeHead(404)
+      res.end()
+      return
+    }
+    let body: Buffer
     try {
-      const body = await readFile(path)
-      res.writeHead(200, {
-        'content-type': isSourceMap ? 'application/json; charset=utf-8' : 'text/javascript; charset=utf-8',
-        'cache-control': 'no-cache',
-      })
-      res.end(body)
+      body = await readFile(path)
     } catch {
       // Registered but unreadable (bundle not built yet): loud 404 beats a silent SPA-fallback HTML page.
       res.writeHead(404)
       res.end()
+      return
     }
+    if (!isSourceMap && requestedRevs.length === 1 && shortHash(body) !== requestedRevs[0]) {
+      res.writeHead(404)
+      res.end()
+      return
+    }
+    await writeHttpBody(req, res, {
+      contentType: isSourceMap ? 'application/json; charset=utf-8' : 'text/javascript; charset=utf-8',
+      cacheControl: !isSourceMap && requestedRevs.length === 1 ? HTTP_CACHE_IMMUTABLE : HTTP_CACHE_REVALIDATE,
+      body,
+      stripSourceMappingURL: !isSourceMap && !directLoopback,
+    })
   }
 }
 
