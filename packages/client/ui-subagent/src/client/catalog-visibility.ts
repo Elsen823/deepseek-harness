@@ -44,20 +44,47 @@ function lastActivityAt(summary: SessionSummary): number | undefined {
 
 function addAncestors(
   visible: Set<SessionId>,
+  catalogs: Catalogs,
   summaries: Summaries,
 ): void {
-  for (const id of [...visible]) {
-    const seen = new Set<SessionId>()
-    let current = summaries[id]
-    while (current?.origin === 'subagent' && current.parentId !== undefined
-      && !seen.has(current.id)) {
-      seen.add(current.id)
-      const parent = summaries[current.parentId]
-      if (parent?.origin !== 'subagent') break
-      visible.add(parent.id)
-      current = parent
+  const catalogParents = new Map<SessionId, Set<SessionId>>()
+  for (const [parentIdValue, catalog] of Object.entries(catalogs)) {
+    const parentId = parentIdValue as SessionId
+    for (const entry of catalog.entries) {
+      if (entry.kind !== 'child') continue
+      const parents = catalogParents.get(entry.id) ?? new Set<SessionId>()
+      parents.add(parentId)
+      catalogParents.set(entry.id, parents)
     }
   }
+
+  const pending = [...visible]
+  const visited = new Set<SessionId>()
+  while (pending.length > 0) {
+    const id = pending.pop() as SessionId
+    if (visited.has(id)) continue
+    visited.add(id)
+    const summary = summaries[id]
+    const parents = [
+      ...(summary?.origin === 'subagent' && summary.parentId !== undefined
+        ? [summary.parentId]
+        : []),
+      ...(catalogParents.get(id) ?? []),
+    ]
+    for (const parentId of parents) {
+      if (visible.has(parentId)) continue
+      visible.add(parentId)
+      pending.push(parentId)
+    }
+  }
+}
+
+function catalogChildVisible(
+  id: SessionId,
+  summaries: Summaries,
+  visible: ReadonlySet<SessionId>,
+): boolean {
+  return summaries[id]?.origin !== 'subagent' || visible.has(id)
 }
 
 function projectCatalog(
@@ -75,7 +102,7 @@ function projectCatalog(
       continue
     }
     const summary = summaries[entry.id]
-    if (summary !== undefined && !visible.has(entry.id)) {
+    if (summary?.origin === 'subagent' && !visible.has(entry.id)) {
       changed = true
       continue
     }
@@ -88,8 +115,7 @@ function projectCatalog(
       ? entry.hasChildren
       : childCatalog.state !== 'ready' || childCatalog.entries.some(childEntry => (
         childEntry.kind === 'diagnostic'
-        || summaries[childEntry.id] === undefined
-        || visible.has(childEntry.id)
+        || catalogChildVisible(childEntry.id, summaries, visible)
       ))
     const hasChildren = (descendants.get(entry.id)?.count ?? 0) > 0
       || catalogMayHaveVisibleChildren
@@ -138,16 +164,21 @@ export function projectSubagentCatalogVisibility(
     }
   }
 
-  for (const catalog of Object.values(catalogs)) {
+  for (const [parentIdValue, catalog] of Object.entries(catalogs)) {
+    const parentId = parentIdValue as SessionId
+    if (catalog.state !== 'ready' || catalog.entries.some(entry => entry.kind === 'diagnostic')) {
+      visible.add(parentId)
+    }
     for (const entry of catalog.entries) {
       if (entry.kind !== 'child') continue
       if (entry.activity === 'running') {
         visible.add(entry.id)
         catalogRunning.add(entry.id)
-      } else if (summaries[entry.id] === undefined) visible.add(entry.id)
+      } else if (summaries[entry.id]?.origin !== 'subagent') visible.add(entry.id)
+      if (entry.hasChildren && catalogs[entry.id] === undefined) visible.add(entry.id)
     }
   }
-  addAncestors(visible, summaries)
+  addAncestors(visible, catalogs, summaries)
 
   const visibleSummaries = {} as Record<SessionId, SessionSummary>
   for (const summary of Object.values(summaries)) {

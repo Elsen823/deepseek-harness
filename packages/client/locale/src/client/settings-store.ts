@@ -5,11 +5,11 @@
  */
 import { defineStore, type EngineStoreHandle } from '@deepseek-ai/dsh-client-runtime/client'
 
-/** One selectable locale row (id + self-described label). */
+/** One selectable locale row (persisted id plus selector label). */
 export interface LanguageOptionRow {
   /** Locale id (the setLocale argument). */
   id: string
-  /** Display name in its own language (Simplified Chinese / English). */
+  /** Label shown in locale selection controls. */
   label: string
 }
 

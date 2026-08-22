@@ -19,7 +19,7 @@ describe('VisibilitySettingsRow', () => {
 
     const toggle = screen.getByRole('switch', { name: /已开启/ })
     expect(toggle.getAttribute('aria-checked')).toBe('true')
-    expect(screen.getByText(/60 分钟/)).not.toBeNull()
+    expect(screen.getByText('隐藏超过 60 分钟没有活动且当前未运行的子代理。')).not.toBeNull()
     fireEvent.click(toggle)
     expect(setHideInactive).toHaveBeenCalledWith(false)
   })

@@ -152,6 +152,27 @@ describe('projectSubagentCatalogVisibility', () => {
     expect(result.descendants.get(ROOT)).toEqual({ count: 1, runningCount: 1 })
   })
 
+  it('fails open when a catalog child summary is not classified as a subagent', () => {
+    const unclassified: SessionSummary = {
+      id: CHILD,
+      parentId: ROOT,
+      displayTitle: CHILD,
+      running: false,
+      blank: false,
+      updatedAt: NOW - 2 * HOUR,
+      projectionValues: {
+        subagentTiming: { settledMs: 0, lastActivityAt: NOW - 2 * HOUR },
+      },
+    }
+    const result = project(
+      Object.fromEntries([catalog(ROOT, [child(CHILD)])]),
+      { [CHILD]: unclassified },
+    )
+
+    expect(result.catalogs[ROOT]?.entries).toEqual([child(CHILD)])
+    expect(result.summaries[CHILD]).toBe(unclassified)
+  })
+
   it('retains an old ancestor needed to reach a recent nested child', () => {
     const catalogs = Object.fromEntries([
       catalog(ROOT, [child(CHILD, 'inactive', true)]),
@@ -165,6 +186,59 @@ describe('projectSubagentCatalogVisibility', () => {
     expect(result.catalogs[ROOT]?.entries).toEqual([child(CHILD, 'inactive', true)])
     expect(result.catalogs[CHILD]?.entries).toEqual([child(GRANDCHILD)])
     expect(result.descendants.get(ROOT)).toEqual({ count: 2, runningCount: 0 })
+  })
+
+  it('retains a stale ancestor of a summary-less running catalog child', () => {
+    const catalogs = Object.fromEntries([
+      catalog(ROOT, [child(CHILD, 'inactive', true)]),
+      catalog(CHILD, [child(GRANDCHILD, 'running')]),
+    ]) as SessionListState['subagentsByParent']
+    const result = project(catalogs, {
+      [CHILD]: summary(CHILD, ROOT, { lastActivityAt: NOW - 2 * HOUR }),
+    })
+
+    expect(result.catalogs[ROOT]?.entries).toEqual([child(CHILD, 'inactive', true)])
+    expect(result.catalogs[CHILD]?.entries).toEqual([child(GRANDCHILD, 'running')])
+  })
+
+  it('retains a stale ancestor whose nested catalog contains a diagnostic', () => {
+    const diagnostic = { kind: 'diagnostic', id: 'bad' as SessionId, reason: 'corrupt' } as const
+    const catalogs = Object.fromEntries([
+      catalog(ROOT, [child(CHILD, 'inactive', true)]),
+      catalog(CHILD, [diagnostic]),
+    ]) as SessionListState['subagentsByParent']
+    const result = project(catalogs, {
+      [CHILD]: summary(CHILD, ROOT, { lastActivityAt: NOW - 2 * HOUR }),
+    })
+
+    expect(result.catalogs[ROOT]?.entries).toEqual([child(CHILD, 'inactive', true)])
+    expect(result.catalogs[CHILD]?.entries).toEqual([diagnostic])
+  })
+
+  it('retains a stale ancestor while its nested catalog is unavailable', () => {
+    const unavailable = {
+      ...catalog(CHILD, [])[1],
+      state: 'error' as const,
+      error: { code: 'internal' as const, message: 'catalog unavailable', details: {} },
+    }
+    const catalogs = Object.fromEntries([
+      catalog(ROOT, [child(CHILD, 'inactive', true)]),
+      [CHILD, unavailable],
+    ]) as SessionListState['subagentsByParent']
+    const result = project(catalogs, {
+      [CHILD]: summary(CHILD, ROOT, { lastActivityAt: NOW - 2 * HOUR }),
+    })
+
+    expect(result.catalogs[ROOT]?.entries).toEqual([child(CHILD, 'inactive', true)])
+  })
+
+  it('retains a stale row whose advertised descendants have not been loaded', () => {
+    const result = project(
+      Object.fromEntries([catalog(ROOT, [child(CHILD, 'inactive', true)])]),
+      { [CHILD]: summary(CHILD, ROOT, { lastActivityAt: NOW - 2 * HOUR }) },
+    )
+
+    expect(result.catalogs[ROOT]?.entries).toEqual([child(CHILD, 'inactive', true)])
   })
 
   it('fails open for missing timing and preserves diagnostics', () => {

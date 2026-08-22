@@ -51,11 +51,11 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 /** Locale dictionary: flat key to template string ({name} placeholders). */
 export type LocaleDict = Record<string, string>
 
-/** One selectable locale: id plus its self-described display name. */
+/** One selectable locale: persisted id plus its selector label. */
 export interface LocaleDefinition {
   /** Locale id (persisted; the setLocale argument). */
   id: LocaleId
-  /** Display name in its own language (Simplified Chinese / English). */
+  /** Label shown in locale selection controls. */
   label: string
 }
 

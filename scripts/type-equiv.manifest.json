@@ -1277,6 +1277,11 @@
     },
     {
       "doc": "docs/subsystems/subagent.md",
+      "symbol": "SubagentTimingProjection",
+      "source": "packages/subagent/subagent/src/projection-types.ts"
+    },
+    {
+      "doc": "docs/subsystems/subagent.md",
       "symbol": "SubagentStartRequest",
       "source": "packages/subagent/subagent/src/types.ts"
     },

@@ -9,7 +9,8 @@ export const HIDE_INACTIVE_FIELD = 'hideInactive'
 /** Inactivity threshold in whole minutes. */
 export const INACTIVE_AFTER_MINUTES_FIELD = 'inactiveAfterMinutes'
 
-const MAX_PORTABLE_TIMER_DELAY_MS = 2_147_483_647
+/** Largest timeout delay supported consistently by browser and Node timers. */
+export const MAX_PORTABLE_TIMER_DELAY_MS = 2_147_483_647
 
 /** Largest whole-minute threshold representable by one portable timer delay. */
 export const MAX_INACTIVE_AFTER_MINUTES = Math.floor(MAX_PORTABLE_TIMER_DELAY_MS / 60_000)

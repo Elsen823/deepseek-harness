@@ -40,7 +40,7 @@ export const zh = {
   'readonly.oneShot.body': '一次性任务不支持后续消息，可在这里查看完整执行记录。',
   'readonly.body': '父会话当前不在线，重新打开父会话后即可继续发送消息。',
   'settings.visibility.title': '隐藏不活跃的子代理',
-  'settings.visibility.description': '隐藏超过 {minutes} 分钟没有活动的已停止子代理。',
+  'settings.visibility.description': '隐藏超过 {minutes} 分钟没有活动且当前未运行的子代理。',
   'settings.visibility.on': '已开启',
   'settings.visibility.off': '已关闭',
 } as const
@@ -82,7 +82,7 @@ export const en: Record<SubagentKey, string> = {
   'readonly.oneShot.body': 'One-shot tasks do not accept follow-ups; review the full execution record here.',
   'readonly.body': 'The parent session is offline; reopen it to continue sending messages.',
   'settings.visibility.title': 'Hide inactive subagents',
-  'settings.visibility.description': 'Hide stopped subagents after {minutes} minutes without activity.',
+  'settings.visibility.description': 'Hide non-running subagents after {minutes} minutes without activity.',
   'settings.visibility.on': 'On',
   'settings.visibility.off': 'Off',
 }

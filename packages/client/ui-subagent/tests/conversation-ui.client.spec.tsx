@@ -11,7 +11,8 @@ import {
 import { SubagentReadOnlyComposer } from '../src/client/SubagentReadOnlyComposer.tsx'
 import { zh } from '../src/client/locales.ts'
 import {
-  DEFAULT_SUBAGENT_VISIBILITY_SETTINGS, type SubagentVisibilitySettings,
+  DEFAULT_SUBAGENT_VISIBILITY_SETTINGS, MAX_INACTIVE_AFTER_MINUTES,
+  type SubagentVisibilitySettings,
 } from '../src/catalog-settings-contract.ts'
 import type {} from '@deepseek-ai/dsh-session-stats/client'
 import type {} from '@deepseek-ai/dsh-subagent/client'
@@ -177,6 +178,42 @@ describe('SubagentHeaderLineage', () => {
 
       expect(screen.getByRole('button', { name: /1 个子代理/ })).not.toBeNull()
       await act(async () => { vi.advanceTimersByTime(1_000) })
+      expect(screen.queryByRole('button', { name: /个子代理/ })).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('caps and re-arms an expiration timer beyond the portable delay', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-20T08:00:00Z'))
+    const timeout = vi.spyOn(globalThis, 'setTimeout')
+    try {
+      const now = Date.now()
+      const futureSkewMs = 60_000
+      render(<SubagentHeaderLineage {...props(catalog({
+        entries: [{
+          kind: 'child', id: CHILD, mode: 'continuable', label: 'worker',
+          activity: 'inactive', hasChildren: false,
+        }],
+      }), {}, {
+        [CHILD]: {
+          ...summary(CHILD, now), parentId: PARENT, origin: 'subagent',
+          projectionValues: {
+            subagentTiming: { settledMs: 1_000, lastActivityAt: now + futureSkewMs },
+          },
+        },
+      }, { hideInactive: true, inactiveAfterMinutes: MAX_INACTIVE_AFTER_MINUTES })} />)
+
+      expect(timeout).toHaveBeenCalledWith(expect.any(Function), 2_147_483_647)
+      await act(async () => { await vi.advanceTimersByTimeAsync(2_147_483_647) })
+      expect(screen.getByRole('button', { name: /1 个子代理/ })).not.toBeNull()
+
+      const remainingMs = futureSkewMs
+        + MAX_INACTIVE_AFTER_MINUTES * 60_000
+        - 2_147_483_647
+      expect(timeout).toHaveBeenCalledWith(expect.any(Function), remainingMs)
+      await act(async () => { await vi.advanceTimersByTimeAsync(remainingMs) })
       expect(screen.queryByRole('button', { name: /个子代理/ })).toBeNull()
     } finally {
       vi.useRealTimers()

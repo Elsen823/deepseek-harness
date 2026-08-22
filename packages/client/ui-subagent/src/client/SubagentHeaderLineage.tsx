@@ -13,7 +13,9 @@ import type {
   InjectFace, PropsLocale, PropsRuntime, TranslateNS,
 } from '@deepseek-ai/dsh-client-ui-slots'
 import { NS } from './locales.ts'
-import type { SubagentVisibilitySettings } from '../catalog-settings-contract.ts'
+import {
+  MAX_PORTABLE_TIMER_DELAY_MS, type SubagentVisibilitySettings,
+} from '../catalog-settings-contract.ts'
 import { projectSubagentCatalogVisibility } from './catalog-visibility.ts'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-subagent/client'
@@ -683,10 +685,27 @@ function CatalogDropdown({
   }, [open, descendants.runningCount])
 
   useEffect(() => {
-    if (presentation.nextExpirationAt === undefined) return
-    const delay = Math.max(0, presentation.nextExpirationAt - Date.now())
-    const timer = setTimeout(() => { setNow(Date.now()) }, delay)
-    return () => { clearTimeout(timer) }
+    const expirationAt = presentation.nextExpirationAt
+    if (expirationAt === undefined) return
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const schedule = (): void => {
+      const delay = Math.min(
+        MAX_PORTABLE_TIMER_DELAY_MS,
+        Math.max(0, expirationAt - Date.now()),
+      )
+      timer = setTimeout(() => {
+        const current = Date.now()
+        if (current < expirationAt) {
+          schedule()
+          return
+        }
+        setNow(current)
+      }, delay)
+    }
+    schedule()
+    return () => {
+      if (timer !== undefined) clearTimeout(timer)
+    }
   }, [presentation.nextExpirationAt])
 
   useEffect(() => () => {
