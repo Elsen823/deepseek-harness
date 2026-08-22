@@ -10,6 +10,11 @@ import {
 } from '../src/client/SubagentHeaderLineage.tsx'
 import { SubagentReadOnlyComposer } from '../src/client/SubagentReadOnlyComposer.tsx'
 import { zh } from '../src/client/locales.ts'
+import {
+  DEFAULT_SUBAGENT_VISIBILITY_SETTINGS, type SubagentVisibilitySettings,
+} from '../src/catalog-settings-contract.ts'
+import type {} from '@deepseek-ai/dsh-session-stats/client'
+import type {} from '@deepseek-ai/dsh-subagent/client'
 
 afterEach(() => {
   cleanup()
@@ -46,6 +51,7 @@ function props(
   value: SubagentCatalogSnapshot | undefined,
   nested: Readonly<Record<SessionId, SubagentCatalogSnapshot>> = {},
   summaries?: Readonly<Record<SessionId, SessionSummary>>,
+  visibility: SubagentVisibilitySettings = DEFAULT_SUBAGENT_VISIBILITY_SETTINGS,
 ) {
   const state = {
     ids: [CHILD],
@@ -67,9 +73,13 @@ function props(
   function useSessions<T>(select: (snapshot: SessionListState) => T): T {
     return select(state)
   }
+  function useVisibility<T>(select: (value: SubagentVisibilitySettings) => T): T {
+    return select(visibility)
+  }
   return {
     sessionId: PARENT,
     useSessions,
+    useVisibility,
     openChild: vi.fn(),
     refresh: vi.fn(),
     setCatalogOpen: vi.fn(),
@@ -144,6 +154,78 @@ describe('SubagentHeaderLineage', () => {
 
     const trigger = screen.getByRole('button', { name: '2 个子代理' })
     expect(trigger.querySelector('[data-state="ongoing"]')).toBeNull()
+  })
+
+  it('expires an inactive row at the configured deadline without a Host frame', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-20T08:00:00Z'))
+    try {
+      const now = Date.now()
+      render(<SubagentHeaderLineage {...props(catalog({
+        entries: [{
+          kind: 'child', id: CHILD, mode: 'continuable', label: 'worker',
+          activity: 'inactive', hasChildren: false,
+        }],
+      }), {}, {
+        [CHILD]: {
+          ...summary(CHILD, now), parentId: PARENT, origin: 'subagent',
+          projectionValues: {
+            subagentTiming: { settledMs: 1_000, lastActivityAt: now - 60 * 60 * 1_000 + 1_000 },
+          },
+        },
+      }, { hideInactive: true, inactiveAfterMinutes: 60 })} />)
+
+      expect(screen.getByRole('button', { name: /1 个子代理/ })).not.toBeNull()
+      await act(async () => { vi.advanceTimersByTime(1_000) })
+      expect(screen.queryByRole('button', { name: /个子代理/ })).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('excludes legacy inactive rows from the closed trigger count', () => {
+    const now = Date.now()
+    const recent = 'child-2' as SessionId
+    render(<SubagentHeaderLineage {...props(catalog({
+      entries: [
+        {
+          kind: 'child', id: CHILD, mode: 'continuable', label: 'legacy',
+          activity: 'inactive', hasChildren: false,
+        },
+        {
+          kind: 'child', id: recent, mode: 'continuable', label: 'recent',
+          activity: 'inactive', hasChildren: false,
+        },
+      ],
+    }), {}, {
+      [CHILD]: {
+        ...summary(CHILD, now - 2 * 60 * 60 * 1_000),
+        parentId: PARENT,
+        origin: 'subagent',
+        projectionValues: {
+          sessionStats: {
+            turns: 1,
+            steps: 1,
+            llmMs: 30 * 60 * 1_000,
+            toolMs: 0,
+            ttftMs: 0,
+            ttftSteps: 0,
+            decodeMs: 0,
+            decodeTokens: 0,
+          },
+        },
+      },
+      [recent]: {
+        ...summary(recent, now),
+        parentId: PARENT,
+        origin: 'subagent',
+        projectionValues: {
+          subagentTiming: { settledMs: 1_000, lastActivityAt: now },
+        },
+      },
+    }, { hideInactive: true, inactiveAfterMinutes: 60 })} />)
+
+    expect(screen.getByRole('button', { name: '1 个子代理' })).not.toBeNull()
   })
 
   it('renders healthy counts, stable rows, diagnostics, and catalog-addressed navigation', () => {

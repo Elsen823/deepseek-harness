@@ -14,6 +14,7 @@ import {
 import {
   SubagentReadOnlyComposer, type SubagentReadOnlyMatch,
 } from '../src/client/SubagentReadOnlyComposer.tsx'
+import { VisibilitySettingsRow } from '../src/client/VisibilitySettingsRow.tsx'
 import { apply, inject } from '../src/client/index.ts'
 
 function summary(partial: Partial<SessionSummary> & { id: SessionId }): SessionSummary {
@@ -59,6 +60,7 @@ async function provideSlotFaces(ctx: Context): Promise<void> {
     children: {
       'conversation.session.header.lineage': { kind: 'single', scope: 'session' },
       'conversation.composer': { kind: 'chain', scope: 'session' },
+      'settings.general.item': { kind: 'list', scope: 'root' },
     },
   } as never, () => null)
 }
@@ -73,8 +75,9 @@ async function fullBench(sessions: SessionSummary[]) {
   ctx.provide('settingsScope', { bind: () => stubSettingsScope().scope } as never)
   await provideSlotFaces(ctx)
   await ctx.plugin({ inject: localeInject, apply: applyLocale }).await()
-  await ctx.plugin({ inject: [...inject], apply }).await()
-  return { face, ctx }
+  const plugin = ctx.plugin({ inject: [...inject], apply })
+  await plugin.await()
+  return { face, ctx, plugin }
 }
 
 const FAMILY: SessionSummary[] = [
@@ -89,11 +92,11 @@ const FAMILY: SessionSummary[] = [
 
 describe('apply', () => {
   it('declares the services it binds', () => {
-    expect(inject).toEqual(['sessions', 'slots', 'locale'])
+    expect(inject).toEqual(['sessions', 'slots', 'locale', 'settingsScope'])
   })
 
   it('registers catalog actions and selects read-only subagent composers from session facts', async () => {
-    const { ctx, face } = await fullBench(FAMILY)
+    const { ctx, face, plugin } = await fullBench(FAMILY)
     const catalogEntry = ctx.slots.entries('conversation.session.header.lineage')
       .find(entry => entry.component === SubagentHeaderLineage)!
     const actions = (catalogEntry.inject as unknown as (id: SessionId) => SubagentCatalogInjected)(sid('parent'))
@@ -110,6 +113,13 @@ describe('apply', () => {
       { method: 'refreshSubagents', args: [sid('parent')] },
       { method: 'setSubagentCatalogOpen', args: [sid('parent'), true] },
     ])
+    expect(actions.hooks.visibility.getSnapshot()).toEqual({
+      hideInactive: false,
+      inactiveAfterMinutes: 60,
+    })
+    const settingsEntry = ctx.slots.entries('settings.general.item')
+      .find(entry => entry.component === VisibilitySettingsRow)!
+    expect(settingsEntry.options.id).toBe('subagent-visibility')
 
     const composerEntry = ctx.slots.entries('conversation.composer')
       .find(entry => entry.component === SubagentReadOnlyComposer)!
@@ -136,5 +146,13 @@ describe('apply', () => {
     // A RUNNING parent-offline continuable yields the default composer, whose
     // disabled input still carries the primary Stop; stopped, it takes back over.
     expect(select(owner({ address, parentAvailable: false }, true))).toBeNull()
+
+    await plugin.dispose()
+    expect(ctx.slots.entries('settings.general.item')
+      .some(entry => entry.component === VisibilitySettingsRow)).toBe(false)
+    expect(ctx.slots.entries('conversation.session.header.lineage')
+      .some(entry => entry.component === SubagentHeaderLineage)).toBe(false)
+    expect(ctx.slots.entries('conversation.composer')
+      .some(entry => entry.component === SubagentReadOnlyComposer)).toBe(false)
   })
 })
