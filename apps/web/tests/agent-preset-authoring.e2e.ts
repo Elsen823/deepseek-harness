@@ -114,7 +114,7 @@ describe('web e2e: agent-preset authoring is a host-side copy', () => {
     const shipped = await readFile(join(SHIPPED_PRESETS, 'standard', 'agent.cordis.yml'), 'utf8')
     expect(await viewer.locator('pre').textContent()).toBe(shipped)
     expect(await viewer.getByRole('textbox').count()).toBe(0)
-    // The header X and the footer button share the 关闭 name; the footer one
+    // The header X and the footer button share the localized Close name; the footer one
     // is last in the dialog.
     await viewer.getByRole('button', { name: '关闭' }).last().click()
     await viewer.waitFor({ state: 'detached', timeout: 10_000 })
