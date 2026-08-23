@@ -15,9 +15,9 @@ export const name = 'client-ui-subagent-invariant'
 export const inject = ['invariants']
 
 /**
- * No runtime invariant: a single slash-source registration whose disposal is
- * proven by the HMR-safety spec — it emits no cordis events and owns no
- * cross-plugin mutable state.
+ * No runtime invariant: Host settings and browser slot registrations have no
+ * package-owned event/data relation; their removal is covered by the Host and
+ * browser disposal specs.
  */
 const install: InvariantInstaller = () => {}
 

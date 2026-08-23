@@ -366,7 +366,7 @@ describe('StatsLine', () => {
   })
 
   it('renders whole-log wall times and speeds from the projection, not the loaded window', () => {
-    // The 加载更早 hazard beyond counts: LLM/tool durations and the TTFT and
+    // The Load earlier hazard extends beyond counts: LLM/tool durations and the TTFT and
     // throughput figures must not grow per loaded page either. An untimed
     // 1-node window renders the projection's whole-log figures verbatim.
     const { source } = makeSource({ nodes: [assistant(1, 1)] })

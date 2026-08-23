@@ -8,6 +8,8 @@
 export interface SubagentTimingProjection {
   /** Milliseconds accumulated across completed turns after the child's own descriptor. */
   settledMs: number
+  /** Latest child descriptor or open-turn event time, folded monotonically. */
+  lastActivityAt?: number
   /** Same-cut bounds of the currently open turn, when one has not reached `turn/end`. */
   active?: {
     /** Start of the open turn. */

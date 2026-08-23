@@ -43,3 +43,5 @@
   - button "Queue":
     - text: Queue
     - img
+  - text: Hide inactive subagents Hide non-running subagents after 60 minutes without activity.
+  - switch "Off"

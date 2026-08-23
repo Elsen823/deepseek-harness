@@ -30,7 +30,16 @@
       "path": "../../llm/token-meter"
     },
     {
+      "path": "../../session/session-stats"
+    },
+    {
       "path": "../../subagent/subagent"
+    },
+    {
+      "path": "../../settings/settings"
+    },
+    {
+      "path": "../ui-settings"
     },
     {
       "path": "../../runtime-diagnostics/invariants"

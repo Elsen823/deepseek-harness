@@ -7,7 +7,15 @@ import { SubagentHeaderLineage, type SubagentCatalogInjected } from './SubagentH
 import {
   SubagentReadOnlyComposer, type SubagentReadOnlyMatch,
 } from './SubagentReadOnlyComposer.tsx'
+import {
+  SUBAGENT_SETTINGS_NAMESPACE, type SubagentVisibilitySettings,
+} from '../catalog-settings-contract.ts'
+import {
+  VisibilitySettingsRow, type VisibilitySettingsRowInjected,
+} from './VisibilitySettingsRow.tsx'
+import { SubagentVisibilityPolicy } from './visibility-policy.ts'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
+import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import { en, NS, zh, type SubagentKey } from './locales.ts'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
@@ -25,7 +33,7 @@ export type {
 } from './SubagentReadOnlyComposer.tsx'
 
 /** Required services for conversation slots and session navigation. */
-export const inject = ['sessions', 'slots', 'locale']
+export const inject = ['sessions', 'slots', 'locale', 'settingsScope']
 
 /** Claim the composer for one-shot history or an unavailable continuation owner. */
 function selectReadOnlySubagent(owner: ComposerChainProps): SubagentReadOnlyMatch | null {
@@ -46,7 +54,11 @@ function selectReadOnlySubagent(owner: ComposerChainProps): SubagentReadOnlyMatc
 export function apply(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-subagent: dictionaries')
   const sessions = ctx.sessions
+  const visibility = new SubagentVisibilityPolicy(
+    ctx.settingsScope.bind<SubagentVisibilitySettings>({ namespace: SUBAGENT_SETTINGS_NAMESPACE }),
+  )
   const catalogActions = (_parentSessionId: SessionId): SubagentCatalogInjected => ({
+    hooks: { visibility: visibility.settings },
     openChild(address: SubagentAddress) {
       sessions.openSubagent(address)
     },
@@ -57,6 +69,16 @@ export function apply(ctx: ClientContext): void {
       sessions.setSubagentCatalogOpen(parentSessionId, open)
     },
   })
+  ctx.slots.inject('settings.general.item', () => ctx.slots.register({
+    name: 'settings.general.item',
+    id: 'subagent-visibility',
+    order: 30,
+    locale: NS,
+    inject: (): VisibilitySettingsRowInjected => ({
+      hooks: { visibility: visibility.settings },
+      setHideInactive: (enabled) => { visibility.setHideInactive(enabled) },
+    }),
+  }, VisibilitySettingsRow))
   ctx.slots.inject(
     'conversation.session.header.lineage',
     () => ctx.slots.register({

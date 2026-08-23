@@ -16,6 +16,8 @@ import type { SubagentIdentityProjection, SubagentTimingProjection } from './pro
 export interface TimingState {
   /** Milliseconds accumulated across completed post-descriptor turns. */
   settledMs: number
+  /** Latest child descriptor or open-turn event time, folded monotonically. */
+  lastActivityAt?: number | undefined
   /** Current open interval kept paired inside the fold. */
   active?: { since: number; through: number } | undefined
   /** Latest pre-descriptor turn start, promoted when the child's own descriptor arrives. */
@@ -31,14 +33,17 @@ const activeIntervalSchema = z.object({
 
 const projectionSchema: z.ZodType<SubagentTimingProjection> = z.object({
   settledMs: z.number().int().nonnegative(),
+  lastActivityAt: z.number().int().nonnegative().optional(),
   active: activeIntervalSchema.optional(),
-}).strict().transform(({ settledMs, active }) => ({
+}).strict().transform(({ settledMs, lastActivityAt, active }) => ({
   settledMs,
+  ...lastActivityAt === undefined ? {} : { lastActivityAt },
   ...active === undefined ? {} : { active },
 }))
 
 const timingStateSchema: z.ZodType<TimingState> = z.object({
   settledMs: z.number().int().nonnegative(),
+  lastActivityAt: z.number().int().nonnegative().optional(),
   active: activeIntervalSchema.optional(),
   pendingTurnStart: z.number().int().nonnegative().optional(),
   descriptorSeen: z.boolean(),
@@ -66,17 +71,23 @@ export const subagentTimingProjectionDefinition = {
   apply: (state, event) => {
     if (event.type === 'turn/start') {
       return state.descriptorSeen
-        ? { ...state, active: { since: event.time, through: event.time } }
+        ? {
+          ...state,
+          lastActivityAt: Math.max(state.lastActivityAt ?? 0, event.time),
+          active: { since: event.time, through: event.time },
+        }
         : { ...state, pendingTurnStart: event.time }
     }
     if (event.type === 'subagent/descriptor') {
       const activeSince = state.active?.since ?? state.pendingTurnStart
+      const activityAt = Math.max(event.time, activeSince ?? 0)
       return {
         descriptorSeen: true,
         settledMs: 0,
+        lastActivityAt: activityAt,
         ...(activeSince === undefined
           ? {}
-          : { active: { since: activeSince, through: event.time } }),
+          : { active: { since: activeSince, through: activityAt } }),
       }
     }
     if (event.type === 'turn/end') {
@@ -90,19 +101,26 @@ export const subagentTimingProjectionDefinition = {
       return {
         ...rest,
         settledMs: state.settledMs + Math.max(0, event.time - active.since),
+        lastActivityAt: Math.max(state.lastActivityAt ?? 0, active.through, event.time),
       }
     }
     if (state.active === undefined) return state
-    return { ...state, active: { ...state.active, through: event.time } }
+    const through = Math.max(state.active.through, event.time)
+    return {
+      ...state,
+      lastActivityAt: Math.max(state.lastActivityAt ?? 0, through),
+      active: { ...state.active, through },
+    }
   },
   wire: {
     viewSchema: projectionSchema,
     view: state => ({
       settledMs: state.settledMs,
+      ...(state.lastActivityAt === undefined ? {} : { lastActivityAt: state.lastActivityAt }),
       ...(state.active === undefined ? {} : { active: state.active }),
     }),
   },
-  stateVersion: 2,
+  stateVersion: 3,
 } satisfies ProjectionDefinition<'subagentTiming', TimingState>
 
 interface IdentityState {

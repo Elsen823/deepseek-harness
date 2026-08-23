@@ -425,7 +425,7 @@ describe('renderToolsSdkPy', () => {
   })
 
   it('keeps a non-ASCII field name as a TypedDict field and derives its class name from it', () => {
-    // `路径` satisfies `xid_start xid_continue*`, so CPython accepts it as an
+    // The CJK field name satisfies `xid_start xid_continue*`, so CPython accepts it as an
     // attribute and as the `TypedDict` key. Rejecting it would degrade the
     // whole object, dropping every SIBLING field's name, requiredness and type
     // too — and under `mode: 'code'` the native schemas are omitted, so
@@ -507,7 +507,7 @@ describe('renderToolsSdkPy', () => {
   })
 
   it('subscripts a tool name that NFKC-normalizes to something else, while declaring a plain Unicode one', () => {
-    // Same split at the tool-name site: `路径` becomes an `async def`, the
+    // Same split at the tool-name site: the plain CJK name becomes an `async def`, while the
     // ligature name cannot, because `async def ﬁnd` would define `find`. The
     // subscript comment quotes the name, so its exact bytes survive, and its
     // TypedDict is still named and referenced — the name is only unusable as a

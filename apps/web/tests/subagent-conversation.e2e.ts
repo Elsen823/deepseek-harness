@@ -10,6 +10,7 @@ import {
 } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-agent'
 import { snapshotSubagentDescriptor } from '@deepseek-ai/dsh-subagent'
+import { settingsNamespace } from '@deepseek-ai/dsh-settings'
 import {
   acknowledgeReloadConnectionLoss, captureStableAria, compareOrRefreshGolden,
   launchWebScaffold, watchConsole,
@@ -29,6 +30,7 @@ const MODE = webSnapshotMode()
 const LABEL = 'event-sourcing researcher'
 const ONE_SHOT_LABEL = 'event-sourcing reviewer'
 const NESTED_LABEL = 'example editor'
+const OLD_INACTIVE_LABEL = 'old inactive reviewer'
 const PARENT_PROMPT = 'Ask a research subagent to explain event sourcing.'
 const INITIAL_PROMPT = 'Explain event sourcing in one sentence.'
 /** The grandchild's own first message; its arrival is what says its history finished loading. */
@@ -66,6 +68,7 @@ describe('web e2e: persisted subagent conversation and human continuation', () =
   let childId: SessionId
   let oneShotId: SessionId
   let grandchildId: SessionId
+  let oldInactiveId: SessionId
   let tripwire: ReturnType<typeof watchConsole>
   const apiCalls: string[] = []
 
@@ -199,10 +202,49 @@ describe('web e2e: persisted subagent conversation and human continuation', () =
       },
     ] as SessionEvent[])
     await scaffold.ctx.sessionProjectionCache.coldSnapshot(grandchildId)
+    oldInactiveId = sessionId('recorded-old-inactive')
+    const oldInactiveAt = Date.now() - 2 * 60 * 60 * 1_000
+    await scaffold.ctx.sessionPersistence.create({
+      version: SESSION_FORMAT_VERSION,
+      id: oldInactiveId,
+      createdAt: oldInactiveAt,
+      cwd: scaffold.workspaceCwd,
+      parentSession: parent.id,
+      origin: 'subagent',
+      delegationDepth: 1,
+    })
+    await scaffold.ctx.sessionPersistence.append(oldInactiveId, [
+      {
+        type: 'turn/start',
+        seq: 0,
+        time: oldInactiveAt,
+        data: { turn: 1, trigger: { kind: 'message', source: { kind: 'user' } } },
+      },
+      {
+        type: 'subagent/descriptor',
+        seq: 1,
+        time: oldInactiveAt + 1,
+        data: snapshotSubagentDescriptor({
+          mode: 'one-shot', provider: 'spawn', label: OLD_INACTIVE_LABEL,
+        }),
+      },
+      {
+        type: 'turn/end',
+        seq: 2,
+        time: oldInactiveAt + 2,
+        data: { turn: 1, reason: { kind: 'completed' } },
+      },
+    ] as SessionEvent[])
+    await scaffold.ctx.sessionProjectionCache.coldSnapshot(oldInactiveId)
+    await scaffold.ctx.settings.update(settingsNamespace('ui-subagent'), {
+      hideInactive: true,
+    })
     expect(scaffold.ctx.agents.get(childId)).toBeUndefined()
     expect(scaffold.ctx.agents.get(oneShotId)).toBeUndefined()
     expect(scaffold.ctx.agents.get(grandchildId)).toBeUndefined()
-    await expect(scaffold.ctx.subagents.listChildren(parent.id)).resolves.toMatchObject([
+    expect(scaffold.ctx.agents.get(oldInactiveId)).toBeUndefined()
+    const rootChildren = await scaffold.ctx.subagents.listChildren(parent.id)
+    expect(rootChildren).toEqual(expect.arrayContaining([
       {
         kind: 'child', id: oneShotId, mode: 'one-shot',
         label: ONE_SHOT_LABEL, activity: 'inactive', hasChildren: false,
@@ -211,14 +253,18 @@ describe('web e2e: persisted subagent conversation and human continuation', () =
         kind: 'child', id: childId, mode: 'continuable', label: LABEL,
         activity: 'inactive', hasChildren: true,
       },
-    ])
+      {
+        kind: 'child', id: oldInactiveId, mode: 'one-shot',
+        label: OLD_INACTIVE_LABEL, activity: 'inactive', hasChildren: false,
+      },
+    ]))
     await expect(scaffold.ctx.subagents.listChildren(childId)).resolves.toMatchObject([
       {
         kind: 'child', id: grandchildId, mode: 'continuable',
         label: NESTED_LABEL, activity: 'inactive', hasChildren: false,
       },
     ])
-    // These two cold fixtures were authored after the page's initial
+    // These three cold fixtures were authored after the page's initial
     // session.list and intentionally emitted no session-added frame. Reload
     // to exercise the restart baseline that discovers their full lineage.
     const warningStart = tripwire.warnings.length
@@ -229,6 +275,8 @@ describe('web e2e: persisted subagent conversation and human continuation', () =
     await catalogButton.hover()
     const catalogTree = page.getByRole('tree', { name: 'Subagent sessions' })
     await catalogTree.getByRole('treeitem').nth(1).waitFor({ timeout: 15_000 })
+    expect(await catalogTree.getByText(OLD_INACTIVE_LABEL).count()).toBe(0)
+    expect(rootChildren.some(entry => entry.kind === 'child' && entry.id === oldInactiveId)).toBe(true)
     await catalogTree.press('Escape')
     await page.getByRole('button', { name: '3 subagents' }).waitFor({ timeout: 15_000 })
     acknowledgeReloadConnectionLoss(tripwire, warningStart)
@@ -244,6 +292,21 @@ describe('web e2e: persisted subagent conversation and human continuation', () =
     }
     if (failures.length === 1) throw failures[0]
     if (failures.length > 1) throw new AggregateError(failures, 'subagent Web teardown failed')
+  })
+
+  it('toggles inactive-row presentation without removing the child session', async () => {
+    onTestFailed(() => saveFailureShot(page, 'web-e2e-subagent-inactive-toggle'))
+    await page.getByRole('button', { name: 'Settings' }).click()
+    await page.getByRole('switch', { name: 'On' }).click()
+    await page.getByRole('button', { name: 'Close', exact: true }).click()
+    await page.getByRole('button', { name: '4 subagents' }).waitFor({ timeout: 15_000 })
+    expect((await scaffold.ctx.subagents.listChildren(scaffold.ctx.agents.roots()[0]!.id))
+      .some(entry => entry.kind === 'child' && entry.id === oldInactiveId)).toBe(true)
+
+    await page.getByRole('button', { name: 'Settings' }).click()
+    await page.getByRole('switch', { name: 'Off' }).click()
+    await page.getByRole('button', { name: 'Close', exact: true }).click()
+    await page.getByRole('button', { name: '3 subagents' }).waitFor({ timeout: 15_000 })
   })
 
   it('keeps known descendants reachable across a stale empty catalog response', async () => {

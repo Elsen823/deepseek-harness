@@ -44,7 +44,7 @@ describe('subagent timing projection', () => {
       event('turn/end', 5, 4_100),
       event('turn/start', 6, 10_000),
       event('turn/end', 7, 12_000),
-    ])).toEqual({ settledMs: 5_100 })
+    ])).toEqual({ settledMs: 5_100, lastActivityAt: 12_000 })
   })
 
   it('exposes an open turn start and never subtracts time for reversed boundaries', () => {
@@ -54,7 +54,11 @@ describe('subagent timing projection', () => {
       event('turn/end', 2, 900),
       event('turn/start', 3, 2_000),
       event('assistant/chunk', 4, 2_500),
-    ])).toEqual({ settledMs: 0, active: { since: 2_000, through: 2_500 } })
+    ])).toEqual({
+      settledMs: 0,
+      lastActivityAt: 2_500,
+      active: { since: 2_000, through: 2_500 },
+    })
   })
 
   it('ignores completed pre-descriptor turns and unrelated events', () => {
@@ -79,6 +83,26 @@ describe('subagent timing projection', () => {
       event('turn/start', 0, 100),
       event('turn/end', 1, 200),
       event('subagent/descriptor', 2, 300),
-    ])).toEqual({ settledMs: 0 })
+    ])).toEqual({ settledMs: 0, lastActivityAt: 300 })
+  })
+
+  it('keeps the last activity timestamp monotonic when event clocks reverse', () => {
+    expect(fold([
+      event('subagent/descriptor', 0, 2_000),
+      event('turn/start', 1, 2_100),
+      event('assistant/chunk', 2, 2_500),
+      event('turn/end', 3, 2_200),
+    ])).toEqual({ settledMs: 100, lastActivityAt: 2_500 })
+  })
+
+  it('does not move descriptor activity behind an already-open child turn', () => {
+    expect(fold([
+      event('turn/start', 0, 2_500),
+      event('subagent/descriptor', 1, 2_000),
+    ])).toEqual({
+      settledMs: 0,
+      lastActivityAt: 2_500,
+      active: { since: 2_500, through: 2_500 },
+    })
   })
 })
