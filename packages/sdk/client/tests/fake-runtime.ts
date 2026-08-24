@@ -3,8 +3,8 @@
  * Scripted stand-in for the DeepSeek Harness SDK runtime, driven entirely by
  * env vars — no model, no network, no harness imports. Speaks the runtime's
  * newline-delimited JSON-RPC protocol on stdio: answers `initialize`,
- * `session/prompt` (streaming scripted `session.event` notifications, then
- * `session.finished`, then the response), and `shutdown`.
+ * `agent/drivers`, `session/runtime`, `session/prompt` (streaming scripted
+ * notifications and events), and `shutdown`.
  *
  * Script vocabulary (all optional):
  * - `FAKE_TEXT`: assistant text for each turn (default `hello from fake runtime`).
@@ -33,6 +33,7 @@
  *   arrives, then poll for the GO file before answering (deterministic
  *   cancel-during-handshake window).
  * - `FAKE_HANG_PROMPT`: never answer `session/prompt` (for timeout/dispose tests).
+ * - `FAKE_UNAVAILABLE`: answer the prompt, then publish Driver unavailability before inbox receipt.
  * - `FAKE_STREAM_THEN_MALFORMED`: stream a text chunk for the prompt, then
  *   answer `{}` (no accepted) — same-pipe ordering makes the chunk arrive
  *   before the protocol failure (partial-output retention probe).
@@ -72,6 +73,17 @@ function write(message: object): void {
 function notify(method: string, params: object): void {
   write({ jsonrpc: '2.0', method, params })
 }
+
+const drivers = {
+  defaultId: 'dsh',
+  items: [
+    { id: 'dsh', name: 'DeepSeek Harness' },
+    { id: 'codex', name: 'Codex' },
+  ],
+}
+let defaultDriverId = drivers.defaultId
+const sessionDrivers = new Map<string, string>()
+const runtimeStatuses = new Map<string, object>()
 
 let seq = 0
 function event(sessionId: string, type: string, data: object): void {
@@ -153,6 +165,25 @@ function sessionIdOf(params: Record<string, unknown> | undefined): string {
   return typeof value === 'string' ? value : ''
 }
 
+function runtimeStatus(sessionId: string, driverId: string, availability: object, revision: number): object {
+  return {
+    sessionId,
+    driverId,
+    availability,
+    attention: { approvals: 0, userInputs: 0 },
+    operation: 'conversation',
+    revision,
+    updatedAt: revision,
+  }
+}
+
+function initializeResult(version = '0.0.1'): object {
+  return {
+    serverInfo: { name: 'deepseek-harness-sdk-runtime', version },
+    drivers: { ...drivers, defaultId: defaultDriverId },
+  }
+}
+
 const reader = createInterface({ input: process.stdin })
 reader.on('line', (line) => {
   if (line.trim().length === 0) return
@@ -170,7 +201,7 @@ reader.on('line', (line) => {
         const poll = setInterval(() => {
           if (!existsSync(go)) return
           clearInterval(poll)
-          write({ jsonrpc: '2.0', id, result: { serverInfo: { name: 'deepseek-harness-sdk-runtime', version: '0.0.1' } } })
+          write({ jsonrpc: '2.0', id, result: initializeResult() })
         }, 5)
         return
       }
@@ -187,15 +218,69 @@ reader.on('line', (line) => {
         respond({})
         return
       }
+      const requestedDriverId = frame.params?.driverId
+      if (typeof requestedDriverId === 'string') defaultDriverId = requestedDriverId
       if (env.FAKE_ECHO_CWD_IN_INIT !== undefined) {
-        respond({ serverInfo: { name: 'deepseek-harness-sdk-runtime', version: process.cwd() } })
+        respond(initializeResult(process.cwd()))
         return
       }
-      respond({ serverInfo: { name: 'deepseek-harness-sdk-runtime', version: '0.0.1' } })
+      respond(initializeResult())
       return
+    case 'agent/drivers':
+      respond({ ...drivers, defaultId: defaultDriverId })
+      return
+    case 'session/runtime': {
+      const sessionId = sessionIdOf(frame.params)
+      if (env.FAKE_MALFORMED_RUNTIME !== undefined) {
+        respond({
+          status: {
+            sessionId,
+            driverId: 'codex',
+            availability: { kind: 'future' },
+            attention: { approvals: -1, userInputs: 0 },
+            operation: '',
+            revision: 1.5,
+            updatedAt: null,
+          },
+        })
+        return
+      }
+      respond({ status: runtimeStatuses.get(sessionId) ?? null })
+      return
+    }
     case 'session/prompt': {
       const sessionId = sessionIdOf(frame.params)
+      const requestedDriverId = typeof frame.params?.driverId === 'string' ? frame.params.driverId : defaultDriverId
+      const existingDriverId = sessionDrivers.get(sessionId)
+      if (existingDriverId !== undefined && existingDriverId !== requestedDriverId) {
+        write({
+          jsonrpc: '2.0',
+          id: frame.id,
+          error: {
+            code: -32603,
+            message: `session "${sessionId}" is bound to Agent Driver "${existingDriverId}"; requested "${requestedDriverId}". Create a fork to switch Drivers.`,
+          },
+        })
+        return
+      }
+      if (existingDriverId === undefined) {
+        sessionDrivers.set(sessionId, requestedDriverId)
+        const cold = runtimeStatus(sessionId, requestedDriverId, { kind: 'cold' }, 1)
+        runtimeStatuses.set(sessionId, cold)
+        notify('session.created', { sessionId, driverId: requestedDriverId })
+        notify('session.runtime', { status: cold })
+      }
       const messageId = `fake-user-${seq}`
+      if (env.FAKE_UNAVAILABLE !== undefined) {
+        const unavailable = runtimeStatus(sessionId, requestedDriverId, {
+          kind: 'unavailable',
+          reason: { code: 'fake-unavailable', message: 'Fake Driver unavailable.', retryable: true },
+        }, 2)
+        runtimeStatuses.set(sessionId, unavailable)
+        notify('session.runtime', { status: unavailable })
+        respond({ messageId })
+        return
+      }
       event(sessionId, 'agent/inbox/spliced', {
         target: 'next-turn',
         start: 0,

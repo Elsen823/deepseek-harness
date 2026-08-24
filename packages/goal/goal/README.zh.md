@@ -17,7 +17,7 @@
 
 ## 服务约定
 
-`ctx.goals` 只接受以对应 id 注册的完全相同的活跃 `Agent` 实例。`get()` 返回与内部状态脱离的 `GoalView`；变更以 `GoalRef { id, revision }` 作为比较并设置防护，并拒绝陈旧引用。服务通过 [goal.md](../../../docs/subsystems/goal.zh.md#cordis-surface) 的生成区块公开 create、edit、pause、resume、complete、block 和 clear 动词。创建默认值在内部解析。`disarm()` 是仅供生命周期使用的例外：它移除进程本地续行权限，不写入新 revision，也不发出变更事件。
+`ctx.goals` 只属于内置 `dsh` Agent Driver，并且只接受以对应 id 注册的完全相同的活跃 `Agent` 实例。备用 Driver 通过 Driver-neutral projection 暴露其 Objective：`get()` 返回 `undefined`，变更则以 `GOAL_DRIVER_MISMATCH` 失败。对于 `dsh`，`get()` 返回与内部状态脱离的 `GoalView`；变更以 `GoalRef { id, revision }` 作为比较并设置防护，并拒绝陈旧引用。服务通过 [goal.md](../../../docs/subsystems/goal.zh.md#cordis-surface) 的生成区块公开 create、edit、pause、resume、complete、block 和 clear 动词。创建默认值在内部解析。`disarm()` 是仅供生命周期使用的例外：它移除进程本地续行权限，不写入新 revision，也不发出变更事件。
 
 最多只有一个当前目标。创建操作会生成 revision 为 1、phase 为 active 的目标并启用续行。未完成的目标必须编辑、转换或清除；已完成目标可以由拥有全局未使用过的 id 的目标替换。编辑会保留 phase、blocker reason 与 activation。暂停、完成、阻塞和清除都会停用续行。阻塞会记录策略自有的 lower-kebab-case 代码和规范化的自由文本说明；提供方限制、配置预算、执行错误与请求人工输入都使用这一种持久 phase，不会扩增生命周期状态。只有配置的 Round 上限仍有剩余容量时，resume 才接受已停止 phase 或 phase 为 active 但已停用续行的目标；它会清除原 blocker reason。phase 为 active 且已启用续行的目标会拒绝冗余操作。
 
@@ -25,7 +25,7 @@
 
 严格回放只从 `goal/change` 派生生命周期变更，并拒绝形状错误、不连续 revision、非法生命周期转换、每目标时间戳非单调，以及不连续的已准入 Goal Round。只有来源为 goal 且已准入的 `user/message` 事件会推进正数 Round。挂钟时间倒退时，变更时间戳会限制在不早于上一次目标更新的值。增量回放会把游标保留在第一个损坏事件处；`goal/changed` 会在持久事件提交后触发，监听器失败会被隔离处理。
 
-续行启用状态绝不持久化。新缓存与每次触发 `agent/session-start` 时都会停用续行，即使回放找到了持久 phase 为 active 的目标。续行驱动器在卸载前或持久性不确定后也会调用 `disarm()`。因此，会话恢复、fork 与驱动器替换会保留目标、phase、revision 和已准入 Round 数量，却不会启动工作；之后必须通过显式 resume 变更重新启用续行。
+续行启用状态绝不持久化。新缓存与每次触发 `agent/session-start` 时都会停用续行，即使回放找到了持久 phase 为 active 的目标。续行驱动器在卸载前或持久性不确定后也会调用 `disarm()`。同 Driver 的会话恢复与 fork 会保留目标、phase、revision 和已准入 Round 数量，却不会启动工作；之后必须通过显式 resume 变更重新启用续行。跨 Driver fork 会从 seed 中移除 DSH Goal 控制事件，因为执行所有权已经改变。
 
 单独发布的 `./invariant` 配套模块会为每个已挂接会话维护独立折叠。它会在候选事件进入持久日志前拒绝格式错误的 goal 变更、不连续 revision、非法生命周期转换、时间戳回退，以及不连续的已准入 Round。
 

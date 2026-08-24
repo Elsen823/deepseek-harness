@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { CallId } from '@deepseek-ai/dsh-llm'
-import { Session, SessionId } from '@deepseek-ai/dsh-session'
+import { AgentDriverId, Session, SessionId } from '@deepseek-ai/dsh-session'
 import AgentRegistry, { Inbox } from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import TerminalSessionService from '@deepseek-ai/dsh-terminal'
@@ -31,6 +31,7 @@ function agent(ctx: Context, cwd: string | undefined): Agent {
   const scope = ctx.plugin(() => {})
   const session = Session.create(id, [], {
     version: 0,
+    driverId: AgentDriverId('dsh'),
     id,
     createdAt: 0,
     ...cwd === undefined ? {} : { cwd },

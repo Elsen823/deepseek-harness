@@ -3,7 +3,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { createScope } from '@deepseek-ai/dsh-scope'
 import type { Scope } from '@deepseek-ai/dsh-scope'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, SessionId } from '@deepseek-ai/dsh-session'
 import CommandRuntime, { parseCommand, type CommandDefinition } from '@deepseek-ai/dsh-commands'
 import { AttachmentStore } from '@deepseek-ai/dsh-attachment'
 
@@ -24,7 +24,7 @@ async function mount(): Promise<Context> {
 
 /** Mint a scope whose key is a live agent (real session: the executor logs lifecycle events on it). */
 async function mintAgentScope(ctx: Context, name: string): Promise<{ scope: Scope; agent: Agent }> {
-  const session = ctx.sessions.create(SessionId(name))
+  const session = ctx.sessions.create(SessionId(name), { meta: { driverId: AgentDriverId('dsh') } })
   const agent = { id: session.id, session } as Agent
   let scope!: Scope
   await ctx.plugin(Object.assign((inner: Context) => { scope = createScope(inner, agent) }, { inject: ['commands'] }))

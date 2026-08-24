@@ -16,7 +16,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { getOrCreateAnonymousUserId } from '@deepseek-ai/dsh-anonymous-user-id'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
 import { recordFeedback } from '@deepseek-ai/dsh-command-feedback'
-import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, SessionId } from '@deepseek-ai/dsh-session'
 import OpenTelemetrySessionBackend, { Config, DEFAULT_TELEMETRY_MODE, SessionTelemetryMode } from '../src/index.ts'
 
 interface Capture {
@@ -122,7 +122,7 @@ describe('OpenTelemetrySessionBackend wire', () => {
   it('ships session records and the ops shutdown marker through the real SDK pipeline', async () => {
     const { url, captures } = await mockCollector()
     const { ctx, fiber } = await boot(url)
-    const session = ctx.sessions.create(SessionId('wire'), { meta: { cwd: '/tmp/w' } })
+    const session = ctx.sessions.create(SessionId('wire'), { meta: { driverId: AgentDriverId('dsh'), cwd: '/tmp/w' } })
     session.append('turn/start', { turn: 1 })
     session.append('turn/end', { turn: 1, reason: { kind: 'error', error: { message: 'boom', code: 'UNKNOWN' } } })
     ctx.sessionTelemetry.emit({
@@ -185,7 +185,7 @@ describe('OpenTelemetrySessionBackend wire', () => {
       exporter: { url },
       processor: { scheduledDelayMillis: 10 },
     })
-    const session = ctx.sessions.create(SessionId('drain'), { meta: {} })
+    const session = ctx.sessions.create(SessionId('drain'), { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', { turn: 1 })
     await arrived.promise
 
@@ -217,7 +217,7 @@ describe('OpenTelemetrySessionBackend wire', () => {
       processor: { scheduledDelayMillis: 10, exportTimeoutMillis: 60_000 },
       shutdownTimeoutMillis: 50,
     })
-    const session = ctx.sessions.create(SessionId('bounded-shutdown'), { meta: {} })
+    const session = ctx.sessions.create(SessionId('bounded-shutdown'), { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', { turn: 1 })
     await arrived.promise
 
@@ -244,7 +244,7 @@ describe('OpenTelemetrySessionBackend wire', () => {
       mode: SessionTelemetryMode.FULL,
       exporter: { url, compression: 'gzip' },
     } as Config)
-    const session = ctx.sessions.create(SessionId('gzip'), { meta: {} })
+    const session = ctx.sessions.create(SessionId('gzip'), { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', { turn: 1 })
     await fiber.dispose()
 
@@ -259,7 +259,7 @@ describe('OpenTelemetrySessionBackend wire', () => {
     const { url, captures } = await mockCollector()
     const { ctx, fiber } = await boot(url)
     ctx.on('session-telemetry/record', (_record, next) => ({ ...next(), severity: 'warn' }))
-    const session = ctx.sessions.create(SessionId('warn'), { meta: {} })
+    const session = ctx.sessions.create(SessionId('warn'), { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', { turn: 1 })
     // No flush(): the coordinator's optional-call forwarding no-ops, and the
     // batch processor owns export cadence end to end (see the backend note).
@@ -288,7 +288,7 @@ describe('OpenTelemetrySessionBackend wire', () => {
       })
       return next()
     })
-    const session = ctx.sessions.create(SessionId('feedback-only'), { meta: {} })
+    const session = ctx.sessions.create(SessionId('feedback-only'), { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', { turn: 1 })
     recordFeedback(session, 'first report')
     session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
@@ -314,7 +314,7 @@ describe('OpenTelemetrySessionBackend wire', () => {
       mode: SessionTelemetryMode.FEEDBACK_ONLY,
       exporter: { url },
     })
-    const session = ctx.sessions.create(SessionId('no-feedback'), { meta: {} })
+    const session = ctx.sessions.create(SessionId('no-feedback'), { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', { turn: 1 })
     ctx.sessionTelemetry.emit({
       channel: 'ledger',
@@ -347,7 +347,7 @@ describe('OpenTelemetrySessionBackend wire', () => {
       exporter: { url },
       processor: { maxExportBatchSize: 0 },
     })
-    const session = ctx.sessions.create(SessionId('disabled'), { meta: {} })
+    const session = ctx.sessions.create(SessionId('disabled'), { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', { turn: 1 })
     recordFeedback(session, 'local report')
 
@@ -409,7 +409,7 @@ describe('OpenTelemetrySessionBackend wire', () => {
       exporter: { url },
       processor: { maxExportBatchSize: 0 },
     })
-    const session = ctx.sessions.create(SessionId('direct-default'), { meta: {} })
+    const session = ctx.sessions.create(SessionId('direct-default'), { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', { turn: 1 })
     recordFeedback(session, 'local report')
     await ctx.fiber.dispose()

@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import SessionStore from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId } from '@deepseek-ai/dsh-session'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
 import { TypertLookupFailure } from '@deepseek-ai/dsh-typert-protocol'
 import TypertRegistry from '@deepseek-ai/dsh-typert-registry'
@@ -35,7 +35,7 @@ function request<P>(payload: P): RpcRequest<P> {
 }
 
 function header(id: string, createdAt: number, extra: Partial<SessionHeader> = {}): SessionHeader {
-  return { version: 0, id: sid(id), createdAt, cwd: '/proj', ...extra }
+  return { version: 0, driverId: AgentDriverId('dsh'), id: sid(id), createdAt, cwd: '/proj', ...extra }
 }
 
 describe('sessions.list cold merge', () => {
@@ -194,6 +194,7 @@ describe('sessions.list cold merge', () => {
         },
       ],
       meta: {
+        driverId: AgentDriverId('dsh'),
         ...meta.cwd === undefined ? {} : { cwd: meta.cwd },
         createdAt: meta.createdAt,
       },
@@ -234,7 +235,7 @@ describe('attached updatedAt tracks human prompts', () => {
         },
         { type: 'turn/end', seq: 2, time: worked + 1, data: { turn: 1, reason: { kind: 'completed' } } },
       ],
-      meta: { cwd: '/proj', createdAt: 500 },
+      meta: { driverId: AgentDriverId('dsh'), cwd: '/proj', createdAt: 500 },
     })
     ctx.agents.register({ id: resumed.id, session: resumed, status: 'idle', ctx } as Agent)
     const boundary = resumed.events.at(-1)
@@ -385,7 +386,7 @@ describe('Remote Agent and Session lookup policy', () => {
       locate: () => undefined,
     } as never)
     const liveSession = ctx.sessions.create(sid('session-remote-live-child'), {
-      meta: { cwd: '/proj', parentSession: sid('session-parent'), origin: 'subagent' },
+      meta: { driverId: AgentDriverId('dsh'), cwd: '/proj', parentSession: sid('session-parent'), origin: 'subagent' },
     })
     const liveAgent = { id: liveSession.id, session: liveSession, status: 'idle', ctx } as Agent
     ctx.agents.register(liveAgent)
@@ -530,12 +531,12 @@ describe('subagent ownership fence', () => {
     await ctx.plugin(SessionStore)
     await ctx.plugin(AgentRegistry)
     await ctx.plugin(UserQuestionService)
-    const parentSession = ctx.sessions.create(sid('session-parent'), { meta: { cwd: '/proj' } })
+    const parentSession = ctx.sessions.create(sid('session-parent'), { meta: { driverId: AgentDriverId('dsh'), cwd: '/proj' } })
     const parent = { id: parentSession.id, session: parentSession, status: 'idle', ctx } as Agent
     ctx.agents.register(parent)
 
     const originSession = ctx.sessions.create(sid('session-origin-child'), {
-      meta: { cwd: '/proj', parentSession: parent.id, origin: 'subagent' },
+      meta: { driverId: AgentDriverId('dsh'), cwd: '/proj', parentSession: parent.id, origin: 'subagent' },
     })
     const cancel = vi.fn()
     const updateInbox = vi.fn(() => 'applied' as const)
@@ -550,7 +551,7 @@ describe('subagent ownership fence', () => {
     ctx.agents.register(originChild)
 
     const startingSession = ctx.sessions.create(sid('session-starting-child'), {
-      meta: { cwd: '/proj', parentSession: parent.id },
+      meta: { driverId: AgentDriverId('dsh'), cwd: '/proj', parentSession: parent.id },
     })
     const startingChild = { id: startingSession.id, session: startingSession, status: 'idle', ctx } as Agent
     ctx.agents.enter(startingChild, parent)
@@ -595,7 +596,7 @@ describe('subagent ownership fence', () => {
         time: 1,
         data: { version: 2, mode: 'continuable', provider: 'spawn', label: 'ancestor' },
       }],
-      meta: { cwd: '/proj', parentSession: sid('session-source'), seedLength: 1 },
+      meta: { driverId: AgentDriverId('dsh'), cwd: '/proj', parentSession: sid('session-source'), seedLength: 1 },
     })
     const followup = vi.fn()
     const agent = { id: session.id, session, status: 'idle', ctx, followup } as unknown as Agent
@@ -616,7 +617,7 @@ describe('subagent ownership fence', () => {
     await ctx.plugin(SessionStore)
     await ctx.plugin(AgentRegistry)
     await ctx.plugin(UserQuestionService)
-    const session = ctx.sessions.create(sid('session-browser-zone'), { meta: { cwd: '/proj' } })
+    const session = ctx.sessions.create(sid('session-browser-zone'), { meta: { driverId: AgentDriverId('dsh'), cwd: '/proj' } })
     const followup = vi.fn()
     const agent = { id: session.id, session, status: 'idle', ctx, followup } as unknown as Agent
     ctx.agents.register(agent)
@@ -732,7 +733,7 @@ describe('sessions.prompt synchronous rejection', () => {
     await ctx.plugin(SessionStore)
     await ctx.plugin(AgentRegistry)
     await ctx.plugin(UserQuestionService)
-    const session = ctx.sessions.create(sid('session-throwing'))
+    const session = ctx.sessions.create(sid('session-throwing'), { meta: { driverId: AgentDriverId('dsh') } })
     // A live structural stub whose delivery verbs throw synchronously, the
     // shape a disposed loop presents at this gateway boundary.
     ctx.agents.register({
@@ -774,11 +775,11 @@ describe('sessions.prompt synchronous rejection', () => {
     } as never)
     // The raced winner: a live parent-owned subagent publishes the identity
     // while the generic cold resume is in flight, so the resume collides.
-    const parentSession = ctx.sessions.create(sid('race-parent'), { meta: { cwd: '/proj' } })
+    const parentSession = ctx.sessions.create(sid('race-parent'), { meta: { driverId: AgentDriverId('dsh'), cwd: '/proj' } })
     const parent = { id: parentSession.id, session: parentSession, status: 'idle', ctx } as Agent
     ctx.agents.register(parent)
     const childSession = ctx.sessions.create(sessionId, {
-      meta: { cwd: '/proj', parentSession: parent.id, origin: 'subagent' },
+      meta: { driverId: AgentDriverId('dsh'), cwd: '/proj', parentSession: parent.id, origin: 'subagent' },
     })
     const child = { id: sessionId, session: childSession, status: 'idle', ctx } as unknown as Agent
     vi.spyOn(ctx.agents, 'resume').mockImplementationOnce(async () => {

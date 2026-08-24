@@ -3,7 +3,13 @@ import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry, { agentEvents, Inbox } from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { createUserMessage, HarnessError } from '@deepseek-ai/dsh-llm'
-import SessionStore, { Session, SessionId, type UserMessage } from '@deepseek-ai/dsh-session'
+import SessionStore, {
+  AgentDriverId,
+  SESSION_FORMAT_VERSION,
+  Session,
+  SessionId,
+  type UserMessage,
+} from '@deepseek-ai/dsh-session'
 import GoalService, {
   GoalError,
   GoalId,
@@ -78,6 +84,27 @@ function appendRound(session: Session, ref: GoalRef, round: number): void {
 }
 
 describe('GoalService creation and replay', () => {
+  it('keeps DSH Goal unavailable for alternate Agent Drivers', async () => {
+    const ctx = new Context()
+    await ctx.plugin(AgentRegistry)
+    await ctx.plugin(GoalService)
+    const id = SessionId('codex-goal-owner')
+    const session = Session.create(id, undefined, {
+      version: SESSION_FORMAT_VERSION,
+      driverId: AgentDriverId('codex'),
+      id,
+      createdAt: 1,
+    })
+    const { agent } = stubAgentForSession(session)
+    ctx.agents.register(agent)
+
+    expect(ctx.goals.get(agent)).toBeUndefined()
+    expect(() => ctx.goals.create(agent, { objective: 'must not compete' })).toThrow(
+      expect.objectContaining({ code: 'GOAL_DRIVER_MISMATCH' }),
+    )
+    expect(session.events).toHaveLength(0)
+  })
+
   it('applies the configured default and writes one durable goal change', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(1_700_000_000_000)
@@ -170,7 +197,7 @@ describe('GoalService creation and replay', () => {
     await ctx.plugin(SessionStore)
     await ctx.plugin(AgentRegistry)
     await ctx.plugin(GoalService)
-    const parent = stubAgentForSession(ctx.sessions.create(SessionId('goal-fork-parent')))
+    const parent = stubAgentForSession(ctx.sessions.create(SessionId('goal-fork-parent'), { meta: { driverId: AgentDriverId('dsh') } }))
     ctx.agents.register(parent.agent)
     const goal = ctx.goals.create(parent.agent, { objective: 'inherit through fork', maxGoalRounds: 5 })
     appendRound(parent.session, goal, 1)
@@ -424,7 +451,7 @@ describe('GoalService mutations', () => {
     await ctx.plugin(SessionStore)
     await ctx.plugin(AgentRegistry)
     await ctx.plugin(GoalService)
-    const stub = stubAgentForSession(ctx.sessions.create(SessionId('goal-reentrant-observer')))
+    const stub = stubAgentForSession(ctx.sessions.create(SessionId('goal-reentrant-observer'), { meta: { driverId: AgentDriverId('dsh') } }))
     ctx.agents.register(stub.agent)
     let observed: ReturnType<GoalService['get']>
     ctx.on('session/event', (session, event) => {

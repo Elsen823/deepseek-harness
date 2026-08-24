@@ -8,7 +8,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import { SessionId } from '@deepseek-ai/dsh-session'
+import { AgentDriverId, SessionId } from '@deepseek-ai/dsh-session'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import SqliteSessionPersistence from '@deepseek-ai/dsh-session-persistence-sqlite'
 import SubagentService, { seedDescriptorTurn, snapshotSubagentDescriptor } from '@deepseek-ai/dsh-subagent'
@@ -133,7 +133,7 @@ function persistedChild(
   }))
   const child = ctx.sessions.create(childId, {
     seed,
-    meta: { parentSession: rootId, seedLength: 0, origin: 'subagent' },
+    meta: { driverId: AgentDriverId('dsh'), parentSession: rootId, seedLength: 0, origin: 'subagent' },
   })
   child.append('agent/inbox/spliced', {
     target: 'next-turn',
@@ -154,8 +154,8 @@ for (const backend of backends) {
       const activeRootId = SessionId(`${backend.name.toLowerCase()}-active-root`)
       const failedRootId = SessionId(`${backend.name.toLowerCase()}-failed-root`)
       const childId = SessionId(`${backend.name.toLowerCase()}-child`)
-      const activeRoot = first.ctx.agentLoop.create(activeRootId, { provider: 'mock', model: 'mock' })
-      const failedRoot = first.ctx.agentLoop.create(failedRootId, { provider: 'mock', model: 'mock' })
+      const activeRoot = await first.ctx.agentLoop.create(activeRootId, { provider: 'mock', model: 'mock' })
+      const failedRoot = await first.ctx.agentLoop.create(failedRootId, { provider: 'mock', model: 'mock' })
       // Let each root's startup recovery observe the empty initial log before
       // simulating the crash-only provisioning prefix.
       await Promise.resolve()
@@ -229,7 +229,7 @@ for (const backend of backends) {
       const rootId = SessionId(`${backend.name.toLowerCase()}-pending-root`)
       const childId = SessionId(`${backend.name.toLowerCase()}-pending-child`)
       const first = await stack(backend, storageRoot, [])
-      const root = first.ctx.agentLoop.create(rootId, { provider: 'mock', model: 'mock' })
+      const root = await first.ctx.agentLoop.create(rootId, { provider: 'mock', model: 'mock' })
       await Promise.resolve()
       await Promise.resolve()
       root.session.append('team/member', {
@@ -273,7 +273,7 @@ for (const backend of backends) {
       const rootId = SessionId(`${backend.name.toLowerCase()}-mail-root`)
 
       const first = await stack(backend, storageRoot, [textResponse('initial teammate answer')])
-      const firstLead = first.ctx.agentLoop.create(rootId, { provider: 'mock', model: 'mock' })
+      const firstLead = await first.ctx.agentLoop.create(rootId, { provider: 'mock', model: 'mock' })
       const started = await first.ctx.agentTeams.spawnTeammate(firstLead, {
         name: 'mail-worker',
         description: 'mail recovery worker',
@@ -334,7 +334,7 @@ for (const backend of backends) {
       const messageId = TeamMessageId(`${backend.name.toLowerCase()}-recorded-message`)
 
       const first = await stack(backend, storageRoot, [textResponse('initial teammate answer')])
-      const firstLead = first.ctx.agentLoop.create(rootId, { provider: 'mock', model: 'mock' })
+      const firstLead = await first.ctx.agentLoop.create(rootId, { provider: 'mock', model: 'mock' })
       const started = await first.ctx.agentTeams.spawnTeammate(firstLead, {
         name: 'dedup-worker',
         description: 'mail deduplication worker',
@@ -413,7 +413,7 @@ for (const backend of backends) {
       const childId = SessionId(`${backend.name.toLowerCase()}-inbox-child`)
       const messageId = TeamMessageId(`${backend.name.toLowerCase()}-pending-team-message`)
       const first = await stack(backend, storageRoot, [])
-      const root = first.ctx.agentLoop.create(rootId, { provider: 'mock', model: 'mock' })
+      const root = await first.ctx.agentLoop.create(rootId, { provider: 'mock', model: 'mock' })
       await Promise.resolve()
       await Promise.resolve()
       const provisioned = provisioning(childId, 'pending-mail-worker')

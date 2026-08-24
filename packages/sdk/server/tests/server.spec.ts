@@ -8,13 +8,25 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry, { type Agent, type AgentHandle } from '@deepseek-ai/dsh-agent'
 
-import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, SessionId } from '@deepseek-ai/dsh-session'
+import SessionRuntime from '@deepseek-ai/dsh-session-runtime'
 import * as agentCore from '@deepseek-ai/dsh-agent-spine-demo'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import * as LlmDeepSeek from '@deepseek-ai/dsh-llm-deepseek'
 import SubagentRuntime, { type SubagentResult, type SubagentRunEndInfo } from '@deepseek-ai/dsh-subagent'
 import type { JsonRpcTransportPeer } from '@deepseek-ai/dsh-sdk-protocol'
 import { HarnessSdkJsonRpcServer } from '../src/index.ts'
+
+const fakeDriver = { id: AgentDriverId('dsh'), name: 'DeepSeek Harness' }
+
+function fakeAgentRegistry(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    config: { defaultDriverId: fakeDriver.id },
+    getDriver: (id: ReturnType<typeof AgentDriverId>) => id === fakeDriver.id ? fakeDriver : undefined,
+    listDrivers: () => [fakeDriver],
+    ...overrides,
+  }
+}
 
 class FakeTransport implements JsonRpcTransportPeer {
   notifications: { method: string; params?: Record<string, unknown> }[] = []
@@ -62,6 +74,7 @@ async function mockCompletionServer(): Promise<{ url: string; requests: unknown[
 async function makeHarness(storageDir: string) {
   const ctx = new Context()
   await ctx.plugin(agentCore, { workspaceContext: false })
+  await ctx.plugin(SessionRuntime)
   await ctx.plugin(SubagentRuntime)
   await ctx.plugin(JsonlSessionPersistence, { root: storageDir })
   await new Promise(resolve => setTimeout(resolve, 50))
@@ -124,8 +137,14 @@ describe('HarnessSdkJsonRpcServer', () => {
         provider: 'deepseek-official',
         model: 'dsagent-model',
         maxTokens: 321,
-      }) as { serverInfo: { name: string } }
+      }) as { serverInfo: { name: string }; drivers: { defaultId: string; items: { id: string; name: string }[] } }
       expect(init.serverInfo.name).toBe('deepseek-harness-sdk-runtime')
+      expect(init.drivers).toEqual({
+        defaultId: 'dsh',
+        items: [{ id: 'dsh', name: 'DeepSeek Harness' }],
+      })
+      expect(await server.handleRequest('agent/drivers', undefined)).toEqual(init.drivers)
+      expect(await server.handleRequest('session/runtime', { sessionId: 'main' })).toEqual({ status: null })
 
       const receipt = await server.handleRequest('session/prompt', {
         sessionId: 'main',
@@ -141,6 +160,22 @@ describe('HarnessSdkJsonRpcServer', () => {
       expect(body.messages.at(-1)?.role).toBe('user')
       expect(llmServer.headers[0]?.authorization).toBe('Bearer test-key')
       expect(transport.notifications.some(n => n.method === 'session.event')).toBe(true)
+      expect(transport.notifications).toContainEqual({
+        method: 'session.created',
+        params: { sessionId: 'main', driverId: 'dsh' },
+      })
+      expect(transport.notifications.some(n =>
+        n.method === 'session.runtime'
+        && n.params?.status !== null
+        && (n.params?.status as { sessionId?: unknown }).sessionId === 'main',
+      )).toBe(true)
+      expect(await server.handleRequest('session/runtime', { sessionId: 'main' })).toMatchObject({
+        status: {
+          sessionId: 'main',
+          driverId: 'dsh',
+          availability: { kind: 'available' },
+        },
+      })
       await vi.waitFor(() => {
         expect(transport.notifications.findLast(n => n.method === 'session.status')).toEqual({
           method: 'session.status',
@@ -189,7 +224,7 @@ describe('HarnessSdkJsonRpcServer', () => {
     const liveAgents = new Map<string, Agent>([['main', mainAgent], ['other', otherAgent]])
     const ctx = {
       on: vi.fn(() => () => undefined),
-      agents: { create, get: (id: SessionId) => liveAgents.get(String(id)) },
+      agents: fakeAgentRegistry({ create, get: (id: SessionId) => liveAgents.get(String(id)) }),
       get: () => undefined,
     } as unknown as Context
     const server = new HarnessSdkJsonRpcServer(ctx, new FakeTransport())
@@ -209,6 +244,47 @@ describe('HarnessSdkJsonRpcServer', () => {
     expect(otherHandle.dispose).toHaveBeenCalledOnce()
   })
 
+  it('binds a Session to its creation Driver and rejects immutable mismatches', async () => {
+    const followup = vi.fn<Agent['followup']>()
+    const agent = ({
+      id: SessionId('driver-bound'),
+      followup,
+    } satisfies Pick<Agent, 'id' | 'followup'>) as unknown as Agent
+    const handle = { agent, dispose: vi.fn(() => Promise.resolve()) }
+    const drivers = [
+      fakeDriver,
+      { id: AgentDriverId('codex'), name: 'Codex' },
+    ]
+    const create = vi.fn(async () => handle)
+    const ctx = {
+      on: vi.fn(() => () => undefined),
+      agents: fakeAgentRegistry({
+        create,
+        get: () => agent,
+        getDriver: (id: ReturnType<typeof AgentDriverId>) => drivers.find(driver => driver.id === id),
+        listDrivers: () => drivers,
+      }),
+      get: () => undefined,
+    } as unknown as Context
+    const server = new HarnessSdkJsonRpcServer(ctx, new FakeTransport())
+
+    await server.prompt({
+      sessionId: 'driver-bound',
+      driverId: 'codex',
+      contentBlocks: [{ type: 'text', text: 'first' }],
+    })
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ driverId: AgentDriverId('codex') }))
+    await expect(server.prompt({
+      sessionId: 'driver-bound',
+      driverId: 'dsh',
+      contentBlocks: [{ type: 'text', text: 'switch' }],
+    })).rejects.toThrow(
+      'session "driver-bound" is bound to Agent Driver "codex"; requested "dsh". Create a fork to switch Drivers.',
+    )
+    expect(followup).toHaveBeenCalledOnce()
+    await server.shutdown()
+  })
+
   it('rejects a prompt for a session whose agent was disposed outside the server', async () => {
     const followup = vi.fn<Agent['followup']>()
     const agent = ({
@@ -222,10 +298,10 @@ describe('HarnessSdkJsonRpcServer', () => {
     let live = true
     const ctx = {
       on: vi.fn(() => () => undefined),
-      agents: {
+      agents: fakeAgentRegistry({
         create: vi.fn(async () => handle),
         get: (id: SessionId) => (live && String(id) === 'zombie' ? agent : undefined),
-      },
+      }),
       get: () => undefined,
     } as unknown as Context
     const server = new HarnessSdkJsonRpcServer(ctx, new FakeTransport())
@@ -248,7 +324,9 @@ describe('HarnessSdkJsonRpcServer', () => {
     await ctx.plugin(AgentRegistry)
     const transport = new FakeTransport()
     const server = new HarnessSdkJsonRpcServer(ctx, transport)
-    const session = ctx.sessions.create(SessionId('message-outcome'))
+    const session = ctx.sessions.create(SessionId('message-outcome'), {
+      meta: { driverId: AgentDriverId('dsh') },
+    })
     const agent = ({
       id: SessionId('message-outcome'),
       session,
@@ -274,12 +352,20 @@ describe('HarnessSdkJsonRpcServer', () => {
       const server = new HarnessSdkJsonRpcServer(ctx, transport)
 
       ctx.sessions.create(SessionId('root-session'), {
-        meta: { cwd: storageDir },
+        meta: { driverId: AgentDriverId('dsh'), cwd: storageDir },
       })
       ctx.sessions.create(SessionId('child-session'), {
-        meta: { cwd: storageDir, parentSession: SessionId('main') },
+        meta: { driverId: AgentDriverId('dsh'), cwd: storageDir, parentSession: SessionId('main') },
       })
 
+      expect(transport.notifications).toContainEqual({
+        method: 'session.created',
+        params: {
+          sessionId: 'child-session',
+          driverId: 'dsh',
+          parentSessionId: 'main',
+        },
+      })
       expect(transport.notifications).toContainEqual({
         method: 'subagent.started',
         params: {
@@ -838,6 +924,8 @@ describe('HarnessSdkJsonRpcServer', () => {
 
   it('reports no adapter when the LLM service is absent', async () => {
     const ctx = new Context()
+    await ctx.plugin(SessionStore)
+    await ctx.plugin(AgentRegistry)
     try {
       const server = new HarnessSdkJsonRpcServer(ctx, new FakeTransport()) as unknown as {
         hasAdapterFor(model: string): boolean
@@ -879,29 +967,29 @@ describe('HarnessSdkJsonRpcServer', () => {
       .mockResolvedValueOnce(retryHandle)
     const ctx = {
       on: vi.fn(() => () => undefined),
-      agents: { create, get: () => undefined },
+      agents: fakeAgentRegistry({ create, get: () => undefined }),
       get: () => undefined,
     } as unknown as Context
     const server = new HarnessSdkJsonRpcServer(ctx, new FakeTransport()) as unknown as {
-      getOrCreateSession(sessionId: string): Promise<{ handle: AgentHandle }>
+      getOrCreateSession(sessionId: string, driverId: ReturnType<typeof AgentDriverId>): Promise<{ handle: AgentHandle }>
       shutdown(): Promise<Record<string, never>>
     }
 
-    const first = server.getOrCreateSession('shared')
-    const second = server.getOrCreateSession('shared')
+    const first = server.getOrCreateSession('shared', fakeDriver.id)
+    const second = server.getOrCreateSession('shared', fakeDriver.id)
     expect(create).toHaveBeenCalledTimes(1)
     resolveShared?.(sharedHandle)
     const [firstRecord, secondRecord] = await Promise.all([first, second])
     expect(firstRecord).toBe(secondRecord)
 
-    await expect(server.getOrCreateSession('retry')).rejects.toThrow('creation failed')
-    await expect(server.getOrCreateSession('retry')).resolves.toMatchObject({ handle: retryHandle })
+    await expect(server.getOrCreateSession('retry', fakeDriver.id)).rejects.toThrow('creation failed')
+    await expect(server.getOrCreateSession('retry', fakeDriver.id)).resolves.toMatchObject({ handle: retryHandle })
     expect(create).toHaveBeenCalledTimes(3)
 
     await server.shutdown()
     expect(sharedHandle.dispose).toHaveBeenCalledOnce()
     expect(retryHandle.dispose).toHaveBeenCalledOnce()
-    await expect(server.getOrCreateSession('after-shutdown')).rejects.toThrow('SDK server is shutting down')
+    await expect(server.getOrCreateSession('after-shutdown', fakeDriver.id)).rejects.toThrow('SDK server is shutting down')
   })
 
   it('resolves a relative cwd before creating the session', async () => {
@@ -909,17 +997,17 @@ describe('HarnessSdkJsonRpcServer', () => {
       .mockResolvedValue({ agent: {} as Agent, dispose: () => Promise.resolve() })
     const ctx = {
       on: vi.fn(() => () => undefined),
-      agents: { create, get: () => undefined },
+      agents: fakeAgentRegistry({ create, get: () => undefined }),
       get: () => ({ listProviders: () => [{ id: 'mock', name: 'Mock' }] }),
     } as unknown as Context
     const server = new HarnessSdkJsonRpcServer(ctx, new FakeTransport()) as unknown as {
       initialize(params: { cwd: string; provider: string; model: string; maxTokens?: number }): Promise<unknown>
-      getOrCreateSession(sessionId: string): Promise<unknown>
+      getOrCreateSession(sessionId: string, driverId: ReturnType<typeof AgentDriverId>): Promise<unknown>
       shutdown(): Promise<Record<string, never>>
     }
 
     await server.initialize({ cwd: '.', provider: 'mock', model: 'model', maxTokens: 123 })
-    await server.getOrCreateSession('relative')
+    await server.getOrCreateSession('relative', fakeDriver.id)
 
     expect(create).toHaveBeenCalledWith(expect.objectContaining({
       meta: { cwd: process.cwd() },
@@ -933,15 +1021,15 @@ describe('HarnessSdkJsonRpcServer', () => {
     const secondDispose = vi.fn(() => Promise.reject(new Error('second teardown failed')))
     const ctx = {
       on: vi.fn(() => () => undefined),
-      agents: { create: vi.fn(), get: () => undefined },
+      agents: fakeAgentRegistry({ create: vi.fn(), get: () => undefined }),
       get: () => undefined,
     } as unknown as Context
     const server = new HarnessSdkJsonRpcServer(ctx, new FakeTransport()) as unknown as {
-      sessions: Map<string, { handle: AgentHandle; lastTurnEnd: undefined; activePrompt: boolean }>
+      sessions: Map<string, { handle: AgentHandle; driverId: ReturnType<typeof AgentDriverId> }>
       shutdown(): Promise<Record<string, never>>
     }
-    server.sessions.set('first', { handle: { agent: {} as Agent, dispose: firstDispose }, lastTurnEnd: undefined, activePrompt: false })
-    server.sessions.set('second', { handle: { agent: {} as Agent, dispose: secondDispose }, lastTurnEnd: undefined, activePrompt: false })
+    server.sessions.set('first', { handle: { agent: {} as Agent, dispose: firstDispose }, driverId: fakeDriver.id })
+    server.sessions.set('second', { handle: { agent: {} as Agent, dispose: secondDispose }, driverId: fakeDriver.id })
 
     await expect(server.shutdown()).rejects.toThrow('SDK server teardown failed')
     expect(firstDispose).toHaveBeenCalledOnce()
@@ -957,12 +1045,12 @@ describe('HarnessSdkJsonRpcServer', () => {
     })
     const ctx = {
       on,
-      agents: { create: vi.fn(), get: () => undefined },
+      agents: fakeAgentRegistry({ create: vi.fn(), get: () => undefined }),
       get: () => undefined,
     } as unknown as Context
     const server = new HarnessSdkJsonRpcServer(ctx, new FakeTransport())
 
     await expect(server.shutdown()).rejects.toBe(listenerFailure)
-    expect(on).toHaveBeenCalledTimes(4)
+    expect(on).toHaveBeenCalledTimes(5)
   })
 })

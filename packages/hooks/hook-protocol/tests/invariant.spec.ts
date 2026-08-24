@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import SessionStore, { Session, SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, Session, SessionId } from '@deepseek-ai/dsh-session'
 import * as HookInvariant from '@deepseek-ai/dsh-hook-protocol/invariant'
 import InvariantRegistry from '@deepseek-ai/dsh-invariants'
 
@@ -36,7 +36,7 @@ function startTurn(session: Session, turn = 1): void {
 describe('hook-protocol invariants', () => {
   it('pairs serial and repeated handler invocations', async () => {
     const ctx = await setup()
-    const session = ctx.sessions.create()
+    const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     startTurn(session)
     session.append('hook/invoked', invoked())
     session.append('hook/invoked', invoked())
@@ -48,7 +48,7 @@ describe('hook-protocol invariants', () => {
   it('rebuilds pending hook invocations from an existing session', async () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
-    const session = ctx.sessions.create()
+    const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', { turn: 1 })
     session.append('hook/invoked', invoked())
     await ctx.plugin(InvariantRegistry)
@@ -76,7 +76,7 @@ describe('hook-protocol invariants', () => {
 
   it('rejects hook events outside or for a different open turn', async () => {
     const ctx = await setup()
-    const session = ctx.sessions.create()
+    const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     expect(() => session.append('hook/invoked', invoked())).toThrow(/outside any open turn/)
     startTurn(session)
     expect(() => session.append('hook/invoked', invoked({ turn: 2 }))).toThrow(/but open turn is 1/)
@@ -85,7 +85,7 @@ describe('hook-protocol invariants', () => {
   it('rejects an unenclosed hook event when replaying an existing session', async () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
-    const session = ctx.sessions.create()
+    const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     startTurn(session)
     session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
     session.append('hook/invoked', invoked())
@@ -99,14 +99,14 @@ describe('hook-protocol invariants', () => {
     [invoked({ dialect: 'other' }), /unknown dialect/],
   ])('rejects malformed hook invocation %#', async (data, message) => {
     const ctx = await setup()
-    const session = ctx.sessions.create()
+    const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     startTurn(session)
     expect(() => session.append('hook/invoked', data as never)).toThrow(message)
   })
 
   it('rejects unmatched and malformed results', async () => {
     const ctx = await setup()
-    const session = ctx.sessions.create()
+    const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     startTurn(session)
     expect(() => session.append('hook/result', result())).toThrow(/no matching hook\/invoked/)
     session.append('hook/invoked', invoked())

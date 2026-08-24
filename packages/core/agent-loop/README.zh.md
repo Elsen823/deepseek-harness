@@ -2,28 +2,20 @@
 
 [English](README.md) | 中文
 
-agent（智能体）的唯一具体实现插件和循环驱动器。其包内部实现满足 `Agent` 接口，并驱动会话、轮次和步骤的生命周期。
+内置 `dsh` Agent Driver 适配器。其包私有 `ReactLoopAgent` 满足通用 `Agent` 接口，并驱动 DSH 的会话、轮次和步骤执行模型。
 
-这是 harness 中唯一包含具体循环逻辑的包。其他所有内容要么是抽象服务，要么是针对扩展点的插件：新行为应放入插件，而不是这里。
+本包只拥有 DSH 循环行为和声明式 DSH agent 启动。`AgentRegistry` 拥有通用 Driver 选择、Session 准备、未发布 setup、发布、回滚、调用方／提供方所有权和有序 teardown，因此其他注册 Driver 可以共存，而无需在此循环中分支。
 
 ## 服务：`AgentLoop`（ctx 键：`agentLoop`）
 
 ### 公开 API
 
-创建与恢复属于同一个受回滚保护的事务：构造私有会话、具体 agent 和带作用域的上下文；等待可选 setup；进入两个注册表；依次宣告 `session/created` 和 `agent/created`；发出 `agent/session-start`；此后才启动驱动器。Setup 作为受信任的同进程组合代码，接收完整的带作用域 `Context`，并且不得驱动尚未发布的 agent。普通的类型化身份与选项输入按只读约定借用；seed 事件和会话元数据会跨越持久会话边界，因此系统会对其进行验证并创建快照。可选的 `AbortSignal` 只取消加载／setup／发布，并在返回的 handle 可见前分离。
+包私有 Driver 适配器使用稳定 id `dsh` 和不可变发现名称 `DeepSeek Harness` 注册到 `ctx.agents`。它构造未发布 `ReactLoopAgent`、验证 DSH `AgentOptions`，并拥有执行与作用域钩子。`AgentLoop` 只公开声明式启动策略和 `create()` 辅助方法；未发布 prepare 钩子不属于 `ctx.agentLoop`。
 
-调用方 fiber 与 AgentLoop 提供方共同拥有 agent。`AgentFactory.createAgent(ownerCtx, options)` 与 `resume(ownerCtx, options)` 显式接收调用方所有权，而工厂为 `sessions`/`llm`/`tools`/`systemPrompt` 保留自身的依赖上下文；这样，调用方可以只注入 `agents`，而不会缩减新 agent 的服务接口。调用方卸载、handle dispose（资源释放）或提供方卸载都会汇合到同一个记忆化的完全停稳边界。提供方关闭会同时等待资源 teardown，以及已经观测到停用的公开 create/resume 包装层，因此依赖消失后，任何 continuation 都无法继续发布。
+- `ctx.agentLoop.create(id, options?, meta?): Promise<Agent>`：DSH 专用便捷方法，委派到 `ctx.agents.create({ driverId: 'dsh', ... })` 并返回已发布 Agent。
+- `ctx.agents.create(...)` 和 `ctx.agents.resume(...)` 是 Driver 中立的所有权生命周期操作。Resume 读取已存 Session Driver 绑定，因此由其他 Driver 创建的 Session 不会仅因 `dsh` 是部署默认值而由本适配器解释。
 
-每个 agent 与其会话共享一个由调用方选择的 `SessionId`，并假设它在全局唯一；意外的 UUID 冲突不属于受支持模型。两个使用同一 id 的并发操作都可以进行准备，但最终的 `enter()` 调用会裁决发布，所有失败方都会回滚各自的私有资源。每次 detach 都绑定到确切进入的对象，因此陈旧 disposer 无法移除之后出现的同 id 替代项。在同步创建通知期间请求的 detach 会等待该次分发退栈，从而保留 created/disposed 配对。Teardown 按以下顺序执行：停止并排空 → 撤销作用域 → detach agent → detach 会话。私有作用域清理完成后，该 id 即可复用。不具否决能力的普通 `agent/*` 通知通过 `agentEvents(ctx, agent)` 发出；逐步骤组装通过 `assembleContextFor(agent)` 完成。
-
-- `ctx.agentLoop.create(id: SessionId, options?: AgentOptions, meta?: { cwd?: string }): Agent`：在确切共享的 agent／会话 id 下同步创建，不运行 setup，并随调用方 fiber 一同 dispose。声明式配置把 `agents[].id` 视为稳定 label，通常会先生成 `${label}-session-<uuid>`，再调用此边界。应用也可以提供稳定且确切的 `sessionId`：首次使用时创建；重新挂载且持久化内容已存在时，则恢复已经实体化的历史。`resumeSessionId` 要求并加载现有的持久化 id，且与 `sessionId` 互斥。这样，默认情况下每次重启都会创建新会话，从而避免冲突，也无需保留第二个实时路由身份。
-
-`AgentLoop` 还实现 `AgentFactory` 约定，并通过 `ctx.agents.setFactory(this)` 注册自身，因此插件会通过 `ctx.agents` 创建／恢复 agent：
-
-- `ctx.agents.create({ sessionId, meta?, seed?, agentOptions?, setup?, signal? }): Promise<AgentHandle>`：使用调用方提供的共享 id 以编程方式创建。它会等待尚未发布的 setup 事务，然后才返回；`meta` 携带 cwd／谱系／seed 边界元数据，`seed` 则在会话边界验证并快照持久值后，重建 fork 子级的前缀。`signal` 只在此 Promise 结算前生效。返回的 [`AgentHandle`](../agent/README.zh.md) 拥有确切的 teardown 能力。
-- `ctx.agents.resume({ resumeSessionId, agentOptions?, setup?, signal? }): Promise<AgentHandle>`：通过 `ctx.sessionPersistence` 加载持久化会话（参见[会话持久化](../../../.agents/notes/implemented/architecture/2026-06-14-session-persistence.zh.md)），使用同一 id 注册 agent，重建历史，然后针对全新且尚未发布的 agent 作用域等待 setup，再执行受回滚保护的发布。轮次编号和派生历史从已加载日志继续。此操作要求存在会话持久化后端（不会硬注入，因此非持久化 demo 仍能工作；缺少持久化时，`resume` 会以明确错误拒绝）。`signal` 仅用于创建。返回 `AgentHandle`。
-
-配置驱动的 `ctx.agentLoop.create()` 路径让循环 fiber 拥有其 agent（该路径会丢弃 handle）。对于以编程方式创建的 agent，handle 持有者是唯一面向消费方的 teardown 能力；AgentLoop 提供方卸载是一条独立的结构性 teardown 边，而不是向应用代码公开的另一个 handle。
+配置行属于 DSH 启动策略。新建行显式选择 `dsh`；存在持久化且配置稳定 `sessionId` 时先尝试 resume，仅在工件缺失时新建。提供方卸载由注册表中的确切 Driver 代际跟踪，并在该 effect 结算前排空本适配器准备的所有 Agent。
 
 ### 注入的服务
 

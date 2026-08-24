@@ -11,12 +11,18 @@
 export { JsonRpcLineTransport, JsonRpcResponseError } from './transport.ts'
 export type { JsonRpcTransportPeer } from './transport.ts'
 export type {
+  AgentDriverCatalogItem,
+  AgentDriverCatalogResult,
   HarnessSdkNotificationMap,
   HarnessSdkRequestMap,
   InitializeParams,
   InitializeResult,
   SdkRunStatus,
+  SessionCreatedNotification,
   SessionEventNotification,
+  SessionRuntimeNotification,
+  SessionRuntimeParams,
+  SessionRuntimeResult,
   SessionStatusNotification,
   SessionPromptParams,
   SessionPromptResult,

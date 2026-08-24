@@ -6,10 +6,11 @@ import {
 } from '../src/api/rpc.schema.ts'
 import { z } from 'zod'
 import {
-  contentBlockSchema, sessionCancelRequestSchema, sessionCancelValueSchema, sessionCreateRequestSchema,
-  sessionCreateValueSchema, sessionEventSchema, sessionHistoryRequestSchema, sessionHistoryValueSchema,
-  sessionIdSchema, sessionListRequestSchema, sessionListValueSchema, sessionModelsRequestSchema,
-  sessionModelsValueSchema, sessionPromptRequestSchema, sessionPromptValueSchema,
+  agentDriverIdSchema, contentBlockSchema, sessionCancelRequestSchema, sessionCancelValueSchema,
+  sessionCreateRequestSchema, sessionCreateValueSchema, sessionDriversRequestSchema, sessionDriversValueSchema,
+  sessionEventSchema, sessionForkRequestSchema, sessionForkValueSchema, sessionHistoryRequestSchema,
+  sessionHistoryValueSchema, sessionIdSchema, sessionListRequestSchema, sessionListValueSchema,
+  sessionModelsRequestSchema, sessionModelsValueSchema, sessionPromptRequestSchema, sessionPromptValueSchema,
   sessionSearchRequestSchema, sessionSearchValueSchema, sessionSelectModelRequestSchema,
   sessionSelectModelValueSchema, sessionSummarySchema,
   sessionUpdateQueueRequestSchema, sessionUpdateQueueValueSchema,
@@ -61,8 +62,10 @@ describe('rpcErrorSchema', () => {
     expect(rpcErrorSchema.parse({ code: 'cancelled', message: 'm', details: {} }).code).toBe('cancelled')
     expect(rpcErrorSchema.parse({ code: 'session-not-found', message: 'm', details: { sessionId: 's' } }).code).toBe('session-not-found')
     expect(rpcErrorSchema.parse({ code: 'session-conflict', message: 'm', details: { sessionId: 's', requestedCwd: '/a', existingCwd: '/b' } }).code).toBe('session-conflict')
+    expect(rpcErrorSchema.parse({ code: 'agent-driver-not-found', message: 'm', details: { driverId: 'missing' } }).code).toBe('agent-driver-not-found')
+    expect(rpcErrorSchema.parse({ code: 'agent-driver-conflict', message: 'm', details: { sessionId: 's', requestedDriverId: 'codex', existingDriverId: 'dsh' } }).code).toBe('agent-driver-conflict')
     expect(rpcErrorSchema.parse({ code: 'invalid-time-zone', message: 'm', details: { value: 'CST' } }).code).toBe('invalid-time-zone')
-    expect(rpcErrorSchema.parse({ code: 'workspace-attach-failed', message: 'm', details: { sessionId: 's', workspaceId: 'w' } }).code).toBe('workspace-attach-failed')
+    expect(rpcErrorSchema.parse({ code: 'workspace-attach-failed', message: 'm', details: { sessionId: 's', workspaceId: 'w', driverId: 'dsh' } }).code).toBe('workspace-attach-failed')
     expect(rpcErrorSchema.parse({ code: 'workspace-not-found', message: 'm', details: { workspaceId: 'w' } }).code).toBe('workspace-not-found')
     expect(rpcErrorSchema.parse({ code: 'workspace-invalid-path', message: 'm', details: { path: '/x' } }).code).toBe('workspace-invalid-path')
     expect(rpcErrorSchema.parse({ code: 'workspace-name-conflict', message: 'm', details: { name: 'x' } }).code).toBe('workspace-name-conflict')
@@ -138,8 +141,8 @@ describe('sessions domain schemas', () => {
   it('validates ids, summaries, and the event passthrough envelope', () => {
     expect(sessionIdSchema.parse('s1')).toBe('s1')
     expect(() => sessionIdSchema.parse('')).toThrow()
-    expect(sessionSummarySchema.parse({ sessionId: 's1', updatedAt: 1, running: false, blank: true })).toMatchObject({ sessionId: 's1', blank: true })
-    expect(sessionSummarySchema.parse({ sessionId: 's1', updatedAt: 1, running: true, blank: false, parentSessionId: 'p', cwd: '/x' }).cwd).toBe('/x')
+    expect(sessionSummarySchema.parse({ sessionId: 's1', driverId: 'dsh', updatedAt: 1, running: false, blank: true })).toMatchObject({ sessionId: 's1', blank: true })
+    expect(sessionSummarySchema.parse({ sessionId: 's1', driverId: 'dsh', updatedAt: 1, running: true, blank: false, parentSessionId: 'p', cwd: '/x' }).cwd).toBe('/x')
     // blank is mandatory: a summary without it fails the parse.
     expect(() => sessionSummarySchema.parse({ sessionId: 's1', updatedAt: 1, running: false })).toThrow()
     const event = sessionEventSchema.parse({
@@ -158,6 +161,13 @@ describe('sessions domain schemas', () => {
   })
 
   it('validates the per-method request/value pairs', () => {
+    expect(agentDriverIdSchema.parse('dsh')).toBe('dsh')
+    expect(() => agentDriverIdSchema.parse('')).toThrow()
+    expect(sessionDriversRequestSchema.parse({})).toEqual({})
+    expect(sessionDriversValueSchema.parse({
+      defaultId: 'dsh',
+      items: [{ id: 'codex', name: 'Codex' }, { id: 'dsh', name: 'DeepSeek Harness' }],
+    }).defaultId).toBe('dsh')
     expect(sessionListRequestSchema.parse({})).toEqual({})
     expect(sessionListRequestSchema.parse({ cursor: 'c' }).cursor).toBe('c')
     expect(sessionListValueSchema.parse({ items: [] }).items).toEqual([])
@@ -191,11 +201,13 @@ describe('sessions domain schemas', () => {
       ),
       hasMore: true,
     })).toThrow()
-    expect(sessionCreateRequestSchema.parse({ cwd: '/w' }).cwd).toBe('/w')
+    expect(sessionCreateRequestSchema.parse({ cwd: '/w', driverId: 'codex' }).driverId).toBe('codex')
     // The refine's both-sides branch: workspaceId alone passes, workspaceId+cwd rejects.
     expect(sessionCreateRequestSchema.parse({ workspaceId: 'w1', sessionId: 's1' }).sessionId).toBe('s1')
     expect(() => sessionCreateRequestSchema.parse({ workspaceId: 'w1', cwd: '/w' })).toThrow(/not both/)
-    expect(sessionCreateValueSchema.parse({ sessionId: 's1' }).sessionId).toBe('s1')
+    expect(sessionCreateValueSchema.parse({ sessionId: 's1', driverId: 'dsh' }).sessionId).toBe('s1')
+    expect(sessionForkRequestSchema.parse({ sessionId: 's1', atSeq: 3, driverId: 'codex' }).driverId).toBe('codex')
+    expect(sessionForkValueSchema.parse({ sessionId: 's2', driverId: 'codex' })).toEqual({ sessionId: 's2', driverId: 'codex' })
     expect(sessionHistoryRequestSchema.parse({ sessionId: 's1', beforeSeq: 3, maxMessages: 5 }).beforeSeq).toBe(3)
     expect(() => sessionHistoryRequestSchema.parse({ sessionId: 's1', maxMessages: 0 })).toThrow()
     expect(sessionHistoryValueSchema.parse({
@@ -515,8 +527,8 @@ describe('events frame schemas', () => {
 
   it('accepts every host frame branch', () => {
     const frames = [
-      { type: 'host/session-added', sessionId: 's', blank: true, parentSessionId: 'p' },
-      { type: 'host/session-added', sessionId: 's', blank: true },
+      { type: 'host/session-added', sessionId: 's', driverId: 'dsh', blank: true, parentSessionId: 'p' },
+      { type: 'host/session-added', sessionId: 's', driverId: 'dsh', blank: true },
       { type: 'host/session-removed', sessionId: 's' },
       { type: 'host/session-status', sessionId: 's', running: true },
       { type: 'host/agent-error', sessionId: 's', message: 'boom' },

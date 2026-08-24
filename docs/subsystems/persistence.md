@@ -40,7 +40,7 @@ interface SessionLocation {
 
 ## `SessionHeader` — metadata beside the log
 
-Per-session metadata travels **separately** from the event log: format version, cwd, lineage, and the seed boundary are storage concerns, not conversation events, so they stay out of `SessionEventMap` and never reach `deriveMessages()`. The header is attached to a `Session` via `session.header`.
+Per-session metadata travels **separately** from the event log: format version, agent driver binding, cwd, lineage, and the seed boundary are storage concerns, not conversation events, so they stay out of `SessionEventMap` and never reach `deriveMessages()`. The header is attached to a `Session` via `session.header`. Persisted and restored headers must carry `driverId`; only a detached in-memory `Session` created without a supplied header receives the built-in `dsh` binding.
 
 Source: [`packages/core/session/src/types.ts`](../../packages/core/session/src/types.ts)
 
@@ -55,6 +55,8 @@ interface SessionHeader {
    * (no migration — see the constant).
    */
   readonly version: number
+  /** Agent driver that owns creation, resume, and continuation of this session. */
+  readonly driverId: AgentDriverId
   /** The session's id (mirrors the {@link Session}'s id). */
   readonly id: SessionId
   /** Non-negative safe-integer Unix epoch milliseconds when the session was created. */
@@ -95,7 +97,7 @@ A backend refuses a log it cannot faithfully interpret with `SessionFormatUnsupp
 
 ## `CreateSessionOptions` — seeding and metadata
 
-Creating a `Session` through the store takes a `seed` (initial replay or fork history) and `meta` (the storage-level fields the store folds into a `SessionHeader`). The store fills in `version`/`id` and defaults `createdAt`; the caller may supply the validated absolute `cwd`, the `parentSession` lineage, the `seedLength` seed boundary, the optional coarse `origin`, the `delegationDepth`, the `agentPreset` the agent was composed from, and an existing `createdAt`. `origin: 'subagent'` lets product navigation hide duplicate child rows; it does not prove that a descriptor is valid or that the child can resume.
+Creating a `Session` through the store takes a `seed` (initial replay or fork history) and required `meta` (the storage-level fields the store folds into a `SessionHeader`). The caller must provide `driverId`; the store fills in `version`/`id` and defaults `createdAt`. The caller may also supply the validated absolute `cwd`, the `parentSession` lineage, the `seedLength` seed boundary, the optional coarse `origin`, the `delegationDepth`, the `agentPreset` the agent was composed from, and an existing `createdAt`. A fork inherits the source header's `driverId`. `origin: 'subagent'` lets product navigation hide duplicate child rows; it does not prove that a descriptor is valid or that the child can resume.
 
 ```ts type-equiv
 /**
@@ -110,7 +112,9 @@ interface CreateSessionOptions {
    * Storage metadata read once before publication. `seedLength` is explicit
    * because a resumed seed contains the full stored log, not only its inherited prefix.
    */
-  readonly meta?: {
+  readonly meta: {
+    /** Agent driver that owns the new session lifecycle. */
+    readonly driverId: AgentDriverId
     readonly cwd?: string
     readonly parentSession?: SessionId
     readonly createdAt?: number

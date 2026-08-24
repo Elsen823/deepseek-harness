@@ -12,7 +12,7 @@ import type { SessionId } from '@deepseek-ai/dsh-api-remotes/client'
 import { ProjectionValueStore } from '../src/client/sessions/projection-store.ts'
 import { Session } from '../src/client/sessions/session.ts'
 import { SessionManager } from '../src/client/sessions/manager.ts'
-import { FakeApiClient, fakeRemote, ok } from './fake-api.client.ts'
+import { DRIVER_ID, FakeApiClient, fakeRemote, ok } from './fake-api.client.ts'
 import { entries, plainTurn } from './event-script.client.ts'
 
 // Test-domain keys merged into the projection map (the Service Definition package's
@@ -160,7 +160,7 @@ describe('manager frame routing', () => {
     const api = new FakeApiClient()
     const manager = new SessionManager(api, fakeRemote())
     api.onList = () => Promise.resolve(ok({
-      items: [{ sessionId: sid('s1'), updatedAt: 1, running: false, blank: false }],
+      items: [{ sessionId: sid('s1'), driverId: DRIVER_ID, updatedAt: 1, running: false, blank: false }],
     }) as never)
     await manager.refreshList()
     manager.handleMuxEnvelope({
@@ -184,7 +184,7 @@ describe('manager frame routing', () => {
     const manager = new SessionManager(api, fakeRemote())
     api.onList = () => Promise.resolve(ok({
       items: [{
-        sessionId: sid('s1'), updatedAt: 1, running: false, blank: false,
+        sessionId: sid('s1'), driverId: DRIVER_ID, updatedAt: 1, running: false, blank: false,
         projections: {
           asOfSeq: 2,
           values: { 'test/marks': { marks: ['baseline'] } },
@@ -213,7 +213,7 @@ describe('manager frame routing', () => {
     const api = new FakeApiClient()
     const manager = new SessionManager(api, fakeRemote())
     api.onList = () => Promise.resolve(ok({
-      items: [{ sessionId: sid('s1'), updatedAt: 1, running: false, blank: false }],
+      items: [{ sessionId: sid('s1'), driverId: DRIVER_ID, updatedAt: 1, running: false, blank: false }],
     }) as never)
     await manager.refreshList()
     manager.handleMuxEnvelope({

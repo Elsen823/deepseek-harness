@@ -11,7 +11,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, SessionId } from '@deepseek-ai/dsh-session'
 import type { Session } from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import SessionTitleService from '@deepseek-ai/dsh-session-title'
@@ -23,7 +23,7 @@ async function harness(withTitleService: boolean): Promise<{ ctx: Context; sessi
   await ctx.plugin(SessionStore)
   await ctx.plugin(SessionProjectionRegistry)
   if (withTitleService) await ctx.plugin(SessionTitleService, CONFIG)
-  return { ctx, session: ctx.sessions.create(SessionId('titled')) }
+  return { ctx, session: ctx.sessions.create(SessionId('titled'), { meta: { driverId: AgentDriverId('dsh') } }) }
 }
 
 /** Append one session/title event directly (the replay-plane shape the unit folds). */

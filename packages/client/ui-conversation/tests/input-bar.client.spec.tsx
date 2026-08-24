@@ -70,6 +70,7 @@ interface BenchOptions {
   }
   draft?: string
   running?: boolean
+  runtime?: ConversationSnapshot['runtime']
   subagent?: Exclude<ConversationSnapshot['subagent'], null>
   disabled?: boolean
   inert?: boolean
@@ -114,6 +115,7 @@ function bench(over?: BenchOptions) {
   const lex = over?.lexicon
   const session = createSnapshotStore<ConversationSnapshot>(snapshotOf({
     running: over?.running ?? false,
+    ...(over?.runtime === undefined ? {} : { runtime: over.runtime }),
     subagent: over?.subagent ?? null,
     removed: over?.disabled ?? false,
     promptError: over?.promptError ?? null,
@@ -1480,6 +1482,25 @@ describe('command launcher chrome and control seats', () => {
     ])
     expect(view.queryByLabelText('Plan mode')).toBeNull()
     expect(view.queryByLabelText('Model')).toBeNull()
+  })
+
+  it('hides built-in permission controls for an alternate Agent Driver', () => {
+    const permissions = {
+      options: [{ value: 'workspace-write', name: 'workspace-write' }],
+      currentValue: 'workspace-write',
+    }
+    const runtime = {
+      sessionId: SID,
+      driverId: 'codex',
+      availability: { kind: 'cold' },
+      attention: { approvals: 0, userInputs: 0 },
+      operation: 'conversation',
+      revision: 1,
+      updatedAt: 1,
+    } as NonNullable<ConversationSnapshot['runtime']>
+    const { view } = bench({ permissions, runtime })
+
+    expect(view.queryByLabelText(/^访问模式/)).toBeNull()
   })
 
   it('passes the textarea selection to the command menu launcher and reflects its expanded state', () => {

@@ -3,7 +3,7 @@ import { PassThrough } from 'node:stream'
 import { resolve } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
-import SessionStore, { Session, SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, Session, SessionId } from '@deepseek-ai/dsh-session'
 import AgentRegistry, { Inbox, type Agent } from '@deepseek-ai/dsh-agent'
 import SandboxProvider from '@deepseek-ai/dsh-sandbox'
 import type { ConfinedArgv, SandboxPolicy } from '@deepseek-ai/dsh-sandbox'
@@ -49,7 +49,7 @@ function config(): ResolvedConfig {
 
 function agent(ctx: Context, cwd?: string): Agent {
   const id = SessionId('agent')
-  const session = Session.create(id, undefined, { version: 0, id, createdAt: 0, ...cwd === undefined ? {} : { cwd } })
+  const session = Session.create(id, undefined, { version: 0, driverId: AgentDriverId('dsh'), id, createdAt: 0, ...cwd === undefined ? {} : { cwd } })
   return {
     id, options: {}, session, inbox: new Inbox(session, { inserted: () => {}, discarded: () => {}, claimed: () => {} }),
     status: 'idle',
@@ -501,7 +501,7 @@ describe('terminal-bash plugin shape', () => {
     await ctx.plugin(StubSubprocessRuntime)
     await ctx.plugin(ptyLocal, config())
 
-    const session = ctx.sessions.create(SessionId('unowned-mode'))
+    const session = ctx.sessions.create(SessionId('unowned-mode'), { meta: { driverId: AgentDriverId('dsh') } })
     expect(() => {
       session.append('turn/start', { turn: 1 })
     }).not.toThrow()
@@ -517,7 +517,7 @@ describe('terminal-bash plugin shape', () => {
     await ctx.plugin(SandboxPolicyService, { mode: 'danger-full-access', workspaceRoot: '/tmp' })
     await ctx.plugin(StubSubprocessRuntime)
 
-    const session = ctx.sessions.create(SessionId('mode-owner'))
+    const session = ctx.sessions.create(SessionId('mode-owner'), { meta: { driverId: AgentDriverId('dsh') } })
     const ownerFiber = await ctx.plugin(() => {})
     const owner: Agent = {
       id: session.id, options: {}, session, inbox: new Inbox(session, { inserted: () => {}, discarded: () => {}, claimed: () => {} }),
@@ -532,7 +532,7 @@ describe('terminal-bash plugin shape', () => {
     const providerFiber = await registerStubLocalBackend(ctx, () => stubLocalSession())
     const created = await ctx.terminals.spawn(owner, { type: 'stub' })
 
-    const unrelated = ctx.sessions.create(SessionId('unrelated-mode'))
+    const unrelated = ctx.sessions.create(SessionId('unrelated-mode'), { meta: { driverId: AgentDriverId('dsh') } })
     expect(() => { setSandboxMode(unrelated, 'read-only') }).not.toThrow()
     expect(() => {
       session.append('turn/start', { turn: 1 })
@@ -566,7 +566,7 @@ describe('terminal-bash plugin shape', () => {
     await ctx.plugin(SandboxPolicyService, { mode: 'danger-full-access', workspaceRoot: '/tmp' })
     await ctx.plugin(StubSubprocessRuntime)
 
-    const session = ctx.sessions.create(SessionId('pending-mode-owner'))
+    const session = ctx.sessions.create(SessionId('pending-mode-owner'), { meta: { driverId: AgentDriverId('dsh') } })
     const ownerFiber = await ctx.plugin(() => {})
     const owner: Agent = {
       id: session.id, options: {}, session, inbox: new Inbox(session, { inserted: () => {}, discarded: () => {}, claimed: () => {} }),

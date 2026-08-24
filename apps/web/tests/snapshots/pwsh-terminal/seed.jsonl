@@ -1,4 +1,4 @@
-{"type":"session","version":0,"id":"{{sessionId}}","createdAt":1784974100747}
+{"type":"session","version":0,"driverId":"dsh","id":"{{sessionId}}","createdAt":1784974100747}
 {"type":"turn/start","data":{"turn":1,"trigger":{"kind":"message","source":{"kind":"user","rpcId":"{{rpcId}}"}}}}
 {"type":"user/message","data":{"content":[{"type":"text","text":"Run a PowerShell command that fails, then stop."}],"source":{"kind":"user","rpcId":"{{rpcId}}"}},"surfaceOp":"append"}
 {"type":"session/title","data":{"title":"Run a PowerShell command","messageSeqs":[1],"source":{"kind":"fallback"}}}

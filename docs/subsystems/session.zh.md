@@ -26,6 +26,34 @@ interface UserMessage extends Message {
  */
 interface SessionEventMap {
   /**
+   * Whole activation snapshot emitted by any Agent Driver. The outer fields
+   * remain readable when its Driver plugin is unloaded; an unknown nested
+   * `driver.kind` falls back to those fields. Log-only.
+   */
+  'agent-driver/activation': AgentDriverActivationSnapshot
+  /**
+   * Exact model-visible request plus captured execution policy. It contains no
+   * `AbortSignal`, provider credentials, or other live authority. Log-only.
+   */
+  'agent-driver/model-request': AgentDriverModelRequestSnapshot
+  /** One execution attempt under a captured model-request policy. Log-only. */
+  'agent-driver/model-attempt': AgentDriverModelAttemptSnapshot
+  /**
+   * Whole semantic activity item or group snapshot. It is not a synthetic DSH
+   * `tool/*` event and contributes no derived model history. Log-only.
+   */
+  'agent-driver/activity': AgentDriverActivitySnapshot
+  /**
+   * Driver-neutral current Objective snapshot, or `null` when the owner reports
+   * no current Objective. DSH `goal/change` remains the authoritative DSH Goal
+   * stream and is adapted by `@deepseek-ai/dsh-objective` without duplication.
+   */
+  'agent-driver/objective': { objective: AgentDriverObjectiveSnapshot | null; driver?: AgentDriverDetail }
+  /** Whole durable Proposed Plan document snapshot, or `null` when the owner has no current document. */
+  'agent-driver/proposed-plan': { plan: AgentDriverProposedPlanSnapshot | null; driver?: AgentDriverDetail }
+  /** Whole checkpoint lifecycle snapshot with provenance and compatibility facts. Log-only. */
+  'agent-driver/checkpoint': AgentDriverCheckpointSnapshot
+  /**
    * Opens turn `turn` before the loop claims queued input or runs pre-step.
    * Rejection, empty input, cancellation, or failure may close it with no
    * step; otherwise the following identified `user/message` event or batch
@@ -132,7 +160,7 @@ interface SessionEventMap {
 
 ### `TodoItem`：一条待办项
 
-这是 `todo/write` 事件全量列表快照中的单元。它有意保持精简：一行 `content` 加一个三态 `status`（没有 id、优先级或 `activeForm`）；列表在每次写入时整体替换，因此条目无需稳定标识。见 [todo_write Agent Note](../../.agents/notes/implemented/feature/2026-06-29-todo-write-tool.zh.md)。
+这是核心 Session 的 `todo/write` 整表快照单元。它有意保持精简：一行 `content` 加一个三态 `status`（没有 id、优先级或 `activeForm`）；每个事件都会替换完整 Checklist，因此条目无需稳定标识。[`dsh-todo`](../../packages/todo/todo/README.zh.md) 拥有可移植的 `todos` SessionProjection；[`dsh-tool-todo`](../../packages/todo/tool-todo/README.zh.md) 是可选的模型侧 Consumer。见 [todo_write Agent Note](../../.agents/notes/implemented/feature/2026-06-29-todo-write-tool.zh.md)。
 
 ```ts type-equiv
 /**
@@ -379,10 +407,11 @@ declare class Session {
   /** The ordered surface over this session's event log. */
   get surface(): SessionSurface;
   /**
-   * Detached, deep-frozen creation metadata (format version, cwd, lineage,
-   * seed boundary). Supplied by the store via `ctx.sessions.create()`. When a
-   * `Session` is created without a store-owned header, a minimal header is
-   * synthesized (stamped with the current {@link SESSION_FORMAT_VERSION}) so
+   * Detached, deep-frozen creation metadata (format version, driver, cwd,
+   * lineage, seed boundary). Supplied by the store via `ctx.sessions.create()`.
+   * When a detached `Session` is created without a store-owned header, a minimal
+   * header bound to the built-in `dsh` driver is synthesized (stamped with the
+   * current {@link SESSION_FORMAT_VERSION}) so
    * `session.header` is always present. Kept out of the event log — it is a
    * storage concern, not replayable conversation state.
    */
@@ -620,6 +649,78 @@ interface TurnEndReasonMap {
 
 Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnpm run verify-cordis-catalog` in doc-sync; regenerate with `pnpm run gen-cordis-catalog`) — the language sides differ only in locale-specific paired document paths. Signature blocks use a `ts cordis-catalog` fence and keep the original source JSDoc; dispatch modes are defined in the [primer](../cordis-primer.zh.md#dispatch-modes), and the framework-inherited `ctx` API lives in [cordis-api/inherited.md](../cordis-api/inherited.md).
 
+<a id="ctxsessionruntimes--sessionruntimeregistry"></a>
+
+### `ctx.sessionRuntimes` — `SessionRuntimeRegistry`
+
+Registry of current process-local Session execution state. Durable history remains in the Session log; this service reports only resources and attention that exist in the current Host process.
+
+```ts cordis-catalog
+/**
+ * Observe one durable Session header and materialize its cold current value.
+ * Re-observation is idempotent and rejects an immutable Driver conflict.
+ * @param header - validated durable Session header.
+ * @returns the immutable current runtime value.
+ */
+observe(header: SessionHeader): SessionRuntimeStatus
+
+/**
+ * Read one current runtime value.
+ * @param sessionId - durable Session identity.
+ * @returns the immutable current value, or `undefined` before observation.
+ */
+get(sessionId: SessionId): SessionRuntimeStatus | undefined
+
+/**
+ * List current values deterministically by Session id.
+ * @returns a fresh array containing immutable values.
+ */
+list(): SessionRuntimeStatus[]
+
+/**
+ * Begin one exclusive effect-scoped Driver activation contribution. A live
+ * Agent, when published, overrides its activating or unavailable availability
+ * while retaining this contribution's operation and detail.
+ * @param header - exact durable Session and Driver binding.
+ * @param spec - initial activating phase, operation, and Driver detail.
+ * @returns the capability that alone can mutate this contribution.
+ */
+begin(header: SessionHeader, spec: SessionRuntimeActivationSpec): SessionRuntimeActivation
+
+/**
+ * Record a process-local unavailable diagnosis that remains after a failed
+ * activation contribution is released and is cleared by the next activation.
+ * @param header - exact durable Session and Driver binding.
+ * @param reason - stable diagnosis and retryability.
+ */
+setUnavailable(header: SessionHeader, reason: SessionRuntimeUnavailableReason): void
+
+/**
+ * Clear a stored unavailable diagnosis to the cold baseline.
+ * @param header - exact durable Session and Driver binding.
+ */
+setCold(header: SessionHeader): void
+
+/**
+ * Contribute one effect-scoped pending human-attention request. Independent
+ * contributors are counted, so approvals and user-input requests can coexist.
+ * @param header - exact durable Session and Driver binding.
+ * @param kind - attention request category.
+ * @returns exact effect disposer for this contribution.
+ */
+attend(header: SessionHeader, kind: SessionRuntimeAttentionKind): () => Promise<void> | void
+
+/**
+ * Remove an unowned cold/unavailable entry when its durable Session is deleted.
+ * @param sessionId - deleted durable Session identity.
+ */
+forget(sessionId: SessionId): void
+```
+
+Types: [SessionHeader](persistence.zh.md) · [SessionId](core.zh.md)
+
+Source: [`packages/session/session-runtime/src/index.ts`](../../packages/session/session-runtime/src/index.ts)
+
 <a id="ctxsessions--sessionstore"></a>
 
 ### `ctx.sessions` — `SessionStore`
@@ -633,9 +734,10 @@ Persistence is intentionally not implemented here — persistence plugins subscr
  * Create a session owned by the calling fiber: disposing that fiber stops
  * event notification and removes the session from the store. `options.seed`
  * populates the session with a copy of those events (replay/fork);
- * `options.meta` attaches creation metadata (validated absolute `cwd`, seed
- * and parent lineage, and delegation depth) as the immutable
- * {@link SessionHeader} (the store fills `version`/`id`/`createdAt`).
+ * `options.meta` attaches the required driver id and creation metadata
+ * (validated absolute `cwd`, seed and parent lineage, and delegation depth)
+ * as the immutable {@link SessionHeader} (the store fills
+ * `version`/`id`/`createdAt`).
  *
  * For an agent whose session must be torn down IN ORDER with its loop (so the
  * loop's final events are published before the store attachment ends), do NOT use this
@@ -646,9 +748,10 @@ Persistence is intentionally not implemented here — persistence plugins subscr
  * @param id - the session id; omitted, the store mints `session-<n>`.
  * @param options - seed events and/or creation metadata for the header.
  * @returns the live session, already entered and announced.
- * @throws if a session with `id` already exists, metadata is not a plain
- *   lossless-JSON record with valid scalar fields, or `meta.cwd` is a
- *   non-absolute path (storage backends key directories off it).
+ * @throws if a session with `id` already exists, creation metadata or its
+ *   driver id is missing, metadata is not a plain lossless-JSON record with
+ *   valid scalar fields, or `meta.cwd` is a non-absolute path (storage
+ *   backends key directories off it).
  */
 create(id?: SessionId, options?: CreateSessionOptions): Session
 
@@ -668,9 +771,9 @@ create(id?: SessionId, options?: CreateSessionOptions): Session
  *   frozen in place through {@link Session.fromRestore}, so the caller must
  *   retain no mutable aliases.
  * @returns the constructed session, NOT yet in the store.
- * @throws if a session with `id` already exists, metadata is not a plain
- *   lossless-JSON record with valid scalar fields, or `meta.cwd` is a
- *   non-absolute path.
+ * @throws if a session with `id` already exists, creation metadata or its
+ *   driver id is missing, metadata is not a plain lossless-JSON record with
+ *   valid scalar fields, or `meta.cwd` is a non-absolute path.
  */
 prepare(id?: SessionId, options?: PrepareSessionOptions): Session
 
@@ -854,4 +957,27 @@ Awaited parallel durability checkpoint: every listener runs and the caller await
 Types: [Scoped](scope.zh.md)
 
 Source: [`packages/core/session/src/index.ts`](../../packages/core/session/src/index.ts)
+
+<a id="session-runtime-events"></a>
+
+### `session-runtime/*` events
+
+<a id="session-runtimestatus--emit"></a>
+
+#### `session-runtime/status` — emit
+
+Announces one committed process-local Session runtime value. Observer failures are contained after every listener receives the value.
+
+```ts cordis-catalog
+/**
+ * Announces one committed process-local Session runtime value. Observer
+ * failures are contained after every listener receives the value.
+ * @param payload.status - new immutable current value.
+ * @param payload.previous - preceding value, absent for first observation.
+ * @mode emit
+ */
+'session-runtime/status'(payload: { status: SessionRuntimeStatus previous?: SessionRuntimeStatus }): void
+```
+
+Source: [`packages/session/session-runtime/src/index.ts`](../../packages/session/session-runtime/src/index.ts)
 <!-- END GENERATED cordis-surface -->

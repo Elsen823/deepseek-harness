@@ -1,6 +1,6 @@
 /**
- * Agent service: live registry, factory delegation, and process-local
- * initiator scope. Concrete creation and driving belong to the loop.
+ * Agent service: live registry, named Driver lifecycle, and process-local
+ * initiator scope. Concrete execution belongs to registered Driver adapters.
  *
  * @module @deepseek-ai/dsh-agent
  */
@@ -9,14 +9,21 @@ import { Context, FiberState, getTraceable, Service, symbols } from '@deepseek-a
 import type { Fiber } from '@deepseek-ai/cordis'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { isPromise } from 'node:util/types'
+import z from '@deepseek-ai/schemastery'
 import { scopeTarget } from '@deepseek-ai/dsh-scope'
 import type { Scoped } from '@deepseek-ai/dsh-scope'
+import { AgentDriverId, SessionPreparation } from '@deepseek-ai/dsh-session'
 import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
+import type {} from '@deepseek-ai/dsh-session-persistence'
 import type { TypertContext, TypertLookup } from '@deepseek-ai/dsh-typert-protocol'
-import type { Agent, AgentOptions } from './runtime-types.ts'
+import { DSH_AGENT_DRIVER_ID } from './driver.ts'
+import type { AgentDriver, AgentDriverInfo, PreparedAgentDriver } from './driver.ts'
+import { emitAgentEvent } from './dispatch.ts'
+import type { Agent, AgentOptions, SessionStartSource } from './runtime-types.ts'
 
 export * from './runtime-types.ts'
 export * from './types.ts'
+export * from './driver.ts'
 export * from './inbox.ts'
 export * from './consumed-work.ts'
 export * from './model-selection.ts'
@@ -71,15 +78,17 @@ export type AgentSetup = (
 ) => AgentSetupCommit | Promise<AgentSetupCommit | void> | void
 
 /**
- * Options for programmatically creating an agent through the registry factory
+ * Options for programmatically creating an agent through the Driver registry
  * ({@link AgentRegistry.create}). The caller supplies the single live
  * `sessionId` shared by the agent registry and session log (e.g. an
  * ACP-generated id), plus optional session metadata (the validated `cwd`, fork
- * lineage); the factory creates the session and agent under that identity.
+ * lineage); the registry creates the session and agent under that identity.
  */
 export interface CreateAgentOptions {
   /** The live agent/session identity. */
   readonly sessionId: SessionId
+  /** Agent Driver to bind durably; omission uses the registry default. */
+  readonly driverId?: AgentDriverId
   /**
    * Session creation metadata: validated absolute `cwd`, `parentSession`
    * fork lineage, the `seedLength` seed boundary, the coarse `origin`
@@ -115,7 +124,7 @@ export interface CreateAgentOptions {
    * Creation-time composition of the agent's scoped world. The factory awaits
    * setup after minting `agentCtx` but BEFORE inserting or announcing either
    * the session or agent, so observers can never see a partially configured
-   * world. Setup may return an {@link AgentSetupCommit}; the factory invokes its
+   * world. Setup may return an {@link AgentSetupCommit}; the registry invokes its
    * synchronous `commit()` after every setup await settles and immediately
    * before registry publication. This lets mutable provisioning revalidate at
    * the exact publication boundary. Everything registered through `agentCtx`
@@ -145,7 +154,7 @@ export interface ResumeAgentOptions {
   readonly signal?: AbortSignal
   /**
    * Resume-time composition of the agent's fresh scoped world. Persistence is
-   * loaded first; the factory then mints `agentCtx` and awaits setup while the
+   * loaded first; the selected Driver then mints `agentCtx` and setup runs while the
    * reconstructed session and agent remain unpublished. The callback has the
    * same trusted composition-only contract and optional synchronous
    * publication commit as {@link CreateAgentOptions.setup}: all registrations
@@ -158,11 +167,10 @@ export interface ResumeAgentOptions {
 /**
  * An owned agent plus its disposer, returned by {@link AgentRegistry.create} /
  * {@link AgentRegistry.resume}. The disposer is a CAPABILITY: among consumers,
- * only the holder can tear this agent down. The registered factory provider is
- * also a structural owner because the scoped agent depends on that provider's
- * service API; provider unload stops and drains every live handle it made.
- * `dispose()` stops the loop, awaits its exit, unregisters the agent, removes
- * its session from the store, and finally unwinds its scoped world.
+ * only the holder can tear this agent down. The exact registered Driver
+ * generation is also a structural owner because the scoped Agent depends on
+ * that provider; unload stops, drains, and unwinds every live handle it made
+ * before detaching the Agent and Session registry entries.
  *
  * `ctx.agents.get(id)` still returns a bare {@link Agent} — the handle is
  * exposed only to the consumer owner that created it; the structural provider
@@ -174,47 +182,17 @@ export interface AgentHandle {
   dispose(): Promise<void>
 }
 
-/**
- * The agent-creation factory the loop implementation provides to the registry
- * via {@link AgentRegistry.setFactory}. Kept on the `dsh-agent` interface so
- * consumers (e.g. the ACP bridge) program against `ctx.agents` without
- * depending on the concrete `dsh-agent-loop` package.
- */
-export interface AgentFactory {
-  /**
-   * Create a new agent on a caller-supplied session id. Async because creation
-   * awaits unpublished setup, invokes its optional synchronous commit, inserts
-   * both session and agent, emits their creation notifications in order, emits
-   * `agent/session-start`, and only then starts the loop. The sequence is
-   * rollback-covered, but notifications delivered before a later listener
-   * failure remain observable; every agent or session creation announcement
-   * that began is paired by `agent/disposed` or `session/disposed` during
-   * rollback. The owner disposes the resolved handle to stop/drain,
-   * unregister, remove the session, and unwind the scope.
-   * The registry passes a context carrying the `create()` caller's fiber and
-   * scope as `ownerCtx`. The implementation attaches the unpublished
-   * transaction and resulting lifecycle to that owner; it must not infer
-   * ownership from the factory object's registration context.
-   * @param ownerCtx - caller-bound context that owns the transaction and live handle.
-   * @param options - agent/session identity, configuration, and optional setup.
-   * @returns the owned handle after setup, both announcements, and loop start complete.
-   */
-  createAgent(ownerCtx: Context, options: CreateAgentOptions): Promise<AgentHandle>
-  /**
-   * Prepare a persisted session and resume an agent on it. Async because it awaits
-   * both `ctx.sessionPersistence.prepare` and the optional unpublished setup
-   * transaction; must be called after that service exists (consumers inject
-   * `sessionPersistence`). Publication follows the same setup-commit and
-   * ordered boundary as {@link createAgent}.
-   * @param ownerCtx - caller-bound context that owns load, setup, and the live handle.
-   * @param options - persisted identity, configuration, and optional setup.
-   * @returns the owned handle after setup, both announcements, and loop start complete.
-   */
-  resume(ownerCtx: Context, options: ResumeAgentOptions): Promise<AgentHandle>
+/** Agent registry configuration. */
+export interface Config {
+  /** Driver selected for fresh Sessions whose caller omits `driverId`. */
+  defaultDriverId?: AgentDriverId
 }
 
-/** Thrown when create/resume is called before an agent factory is registered. */
-const NO_FACTORY_MESSAGE = 'no agent factory registered (load an agent-loop plugin)'
+/** Agent registry configuration after defaults. */
+type ResolvedConfig = Readonly<{ defaultDriverId: AgentDriverId }>
+
+/** Thrown when a selected Agent Driver is not registered. */
+const NO_DRIVER_MESSAGE = (id: AgentDriverId): string => `no agent driver "${id}" is registered`
 const NO_INITIATOR_MESSAGE = 'no initiating agent is active'
 const DISPOSED_INITIATOR_MESSAGE = 'agent initiator scope is disposed'
 
@@ -236,16 +214,100 @@ interface InitiatorRun {
   readonly parent: InitiatorRun | undefined
 }
 
-/** Plain holder prevents Cordis from tracing the factory field before the caller context is known. */
-interface FactorySlot {
-  readonly target: AgentFactory
+/** Provider-owned registration state for one exact Driver generation. */
+class DriverRegistration {
+  readonly signal: AbortSignal
+  private readonly abort = new AbortController()
+  private readonly live = new Set<() => Promise<void>>()
+  private readonly pending = new Set<Promise<void>>()
+  private disposing: Promise<void> | undefined
+
+  constructor(
+    readonly info: AgentDriverInfo,
+    readonly target: AgentDriver,
+  ) {
+    this.signal = this.abort.signal
+  }
+
+  /** Join one public lifecycle wrapper until every continuation settles. */
+  track(job: Promise<unknown>): void {
+    const settled = job.then(() => undefined, () => undefined)
+    this.pending.add(settled)
+    void settled.finally(() => { this.pending.delete(settled) })
+  }
+
+  /** Track one live lifecycle until its shared disposer runs. */
+  trackLive(dispose: () => Promise<void>): () => void {
+    this.live.add(dispose)
+    return () => { this.live.delete(dispose) }
+  }
+
+  /** Abort unpublished work, quiesce live Agents, and join every wrapper admitted before drain completion. */
+  dispose(): Promise<void> {
+    return (this.disposing ??= (async () => {
+      this.abort.abort(new Error(`agent driver "${this.info.id}" is not active`))
+      const failures: unknown[] = []
+      while (this.live.size > 0 || this.pending.size > 0) {
+        const settled = await Promise.allSettled([
+          ...[...this.live].map(dispose => dispose()),
+          ...this.pending,
+        ])
+        const failed = settled.find(result => result.status === 'rejected')
+        if (failed?.status === 'rejected') failures.push(failed.reason)
+      }
+      if (failures.length > 0) throw failures[0]
+    })())
+  }
+}
+
+/** Await an operation or reject promptly with one normalized abort reason. */
+async function raceAbort<T>(operation: PromiseLike<T> | T, signal: AbortSignal, id: SessionId): Promise<T> {
+  const abortError = (): Error => signal.reason instanceof Error
+    ? signal.reason
+    : new Error(`agent "${id}" creation aborted`, { cause: signal.reason })
+  if (signal.aborted) throw abortError()
+  const aborted = Promise.withResolvers<never>()
+  const listener = (): void => { aborted.reject(abortError()) }
+  signal.addEventListener('abort', listener, { once: true })
+  try {
+    return await Promise.race([Promise.resolve(operation), aborted.promise])
+  } finally {
+    signal.removeEventListener('abort', listener)
+  }
+}
+
+/** Start an abortable operation and release a value that resolves after cancellation. */
+async function raceAbortCall<T>(
+  operation: () => PromiseLike<T> | T,
+  signal: AbortSignal,
+  id: SessionId,
+  releaseAbandoned: (value: T) => PromiseLike<void> | void,
+  settleAbandoned?: (error?: unknown) => void,
+): Promise<T> {
+  if (signal.aborted) return raceAbort(Promise.resolve(undefined as never), signal, id)
+  const pending = Promise.resolve().then(operation)
+  try {
+    return await raceAbort(pending, signal, id)
+  } catch (error: unknown) {
+    // oxlint-disable-next-line typescript/no-unnecessary-condition -- the signal may abort while the pending operation is awaited.
+    if (signal.aborted) {
+      void pending.then(
+        (value) => {
+          void Promise.resolve().then(() => releaseAbandoned(value)).then(
+            () => { settleAbandoned?.() },
+            (releaseError: unknown) => { settleAbandoned?.(releaseError) },
+          )
+        },
+        () => { settleAbandoned?.() },
+      )
+    }
+    throw error
+  }
 }
 
 /**
- * Agent service (`ctx.agents`): tracks live agents and carries the initiating
- * Agent through one process-local asynchronous driver chain. Agent *creation*
- * is provided by whichever plugin implements the {@link AgentFactory}
- * (`@deepseek-ai/dsh-agent-loop`), registered via {@link setFactory}.
+ * Agent service (`ctx.agents`): tracks live agents, registered Agent Drivers,
+ * and the initiating Agent through one process-local asynchronous driver chain.
  *
  * Initiator methods provide same-process causal attribution only. Ambient
  * presence is neither liveness proof nor authorization; subjects and owners
@@ -254,8 +316,17 @@ interface FactorySlot {
  * nested lineage that starts an owning-fiber unload is excluded from its own drain.
  */
 export class AgentRegistry extends Service {
+  static Config = z.object({
+    defaultDriverId: z.string().min(1).default(DSH_AGENT_DRIVER_ID),
+  }) as z<Config>
+
+  /** Validated registry configuration. */
+  readonly config: ResolvedConfig
+  /** Untraced provider context used for registry-owned Session and event operations. */
+  private readonly runtime: { ctx: Context }
   private store = new Map<SessionId, AgentEntry>()
-  private factory: FactorySlot | undefined
+  private readonly drivers = new Map<AgentDriverId, DriverRegistration>()
+  private readonly retirements = new Map<SessionId, Promise<void>>()
   private readonly initiators = new AsyncLocalStorage<Agent | undefined>()
   private readonly initiatorRuns = new AsyncLocalStorage<InitiatorRun>()
   private initiatorState: 'active' | 'closing' | 'disposed' = 'active'
@@ -263,8 +334,12 @@ export class AgentRegistry extends Service {
   private initiatorDrain: PromiseWithResolvers<void> | undefined
   private initiatorDisposal: Promise<void> | undefined
 
-  constructor(ctx: Context) {
+  constructor(ctx: Context, config: Config = {}) {
     super(ctx, 'agents')
+    this.config = {
+      defaultDriverId: config.defaultDriverId ?? DSH_AGENT_DRIVER_ID,
+    }
+    this.runtime = { ctx }
     ctx.inject(['typert'], (typeCtx) => {
       typeCtx.typert.lookups.register('agent', {
         parameter: 'agent',
@@ -358,75 +433,280 @@ export class AgentRegistry extends Service {
   }
 
   /**
-   * Register the agent-creation factory (the loop calls this on construction,
-   * effect-scoped). A traced Cordis service is canonicalized to its concrete
-   * target; each create/resume call is then traced through that caller's
-   * context so ownership follows the caller without stacking proxy layers.
-   * Throws if a factory is already registered. Returns the disposer; on
-   * dispose the factory slot is cleared.
-   * @param factory - the loop-owned factory {@link create}/{@link resume} delegate to.
-   * @returns the disposer that clears the factory slot. The exact
-   *   Cordis effect disposer (single-shot): composite (generator) effects may
-   *   yield it directly — exact identity nests the teardown in order.
+   * Register one named Agent Driver as a reversible provider contribution.
+   * Discovery metadata is detached, frozen, and returned in Driver-id order.
+   * Provider unload aborts unpublished work, drains every live Agent prepared by
+   * this generation, and only then removes the registration.
+   * @param driver - Driver implementation and immutable discovery metadata.
+   * @returns the exact Cordis effect disposer for the registration.
    */
-  setFactory(factory: AgentFactory): () => void {
+  registerDriver(driver: AgentDriver): () => void {
     const dispose = this.ctx.effect(() => {
-      if (this.factory !== undefined) throw new Error('an agent factory is already registered')
-      // Avoid stacking two Cordis shadow layers when a caller passes a Service
-      // already read through a context. Calls are re-traced through their
-      // actual owner context below.
-      const target = (factory as AgentFactory & { [symbols.original]?: AgentFactory })[symbols.original] ?? factory
-      this.factory = { target }
-      return () => { this.factory = undefined }
-    }, 'agents.setFactory()')
-    // The exact cordis effect disposer (the agents.register() convention): a
-    // caller's composite effect can yield it for in-order teardown; the
-    // loop's constructor effect returns it directly, identity-nesting the
-    // registration under that effect.
-    // oxlint-disable-next-line typescript/no-misused-promises -- synchronous cleanup; direct return preserves disposer identity
+      const id = AgentDriverId(driver.info.id)
+      if (this.drivers.has(id)) throw new Error(`agent driver "${id}" is already registered`)
+      const target = (driver as AgentDriver & { [symbols.original]?: AgentDriver })[symbols.original] ?? driver
+      const info = Object.freeze({ id, name: driver.info.name })
+      const registration = new DriverRegistration(info, target)
+      this.drivers.set(id, registration)
+      return async () => {
+        try {
+          await registration.dispose()
+        } finally {
+          if (this.drivers.get(id) === registration) this.drivers.delete(id)
+        }
+      }
+    }, `agents.registerDriver(${driver.info.id})`)
+    // oxlint-disable-next-line typescript/no-misused-promises -- exact effect identity preserves provider teardown ordering
     return dispose
   }
 
-  /** Return the active creation factory. */
-  private requireFactory(): FactorySlot {
-    if (this.factory === undefined) throw new Error(NO_FACTORY_MESSAGE)
-    return this.factory
+  /**
+   * Look up immutable discovery information for one registered Driver.
+   * @param id - stable Driver id.
+   * @returns a frozen detached record, or `undefined` when inactive.
+   */
+  getDriver(id: AgentDriverId): AgentDriverInfo | undefined {
+    return this.drivers.get(id)?.info
   }
 
   /**
-   * Create and publish a new agent through the registered factory.
-   * Distinct from {@link register} (which records an already-constructed
-   * agent): this constructs the agent and its session. Rejects if no factory is
-   * registered or creation/setup fails. The resolved {@link AgentHandle} lets
-   * the owner tear down exactly this agent.
-   * @param options - shared identity, session seed/metadata, and agent options.
-   * @returns the handle after setup, rollback-covered publication, and loop start complete.
+   * List registered Drivers deterministically by id.
+   * @returns a fresh array of frozen discovery records.
+   */
+  listDrivers(): AgentDriverInfo[] {
+    return [...this.drivers.values()]
+      .map(registration => registration.info)
+      .sort((left, right) => left.id.localeCompare(right.id))
+  }
+
+  /** Resolve one exact Driver generation; acquisition rejects a generation already draining. */
+  private requireDriver(id: AgentDriverId): DriverRegistration {
+    const registration = this.drivers.get(id)
+    if (registration === undefined) throw new Error(NO_DRIVER_MESSAGE(id))
+    return registration
+  }
+
+  /** Wait only for a known managed same-id lifecycle already retiring. */
+  private async waitForRetirement(id: SessionId, signal?: AbortSignal): Promise<void> {
+    const retirement = this.retirements.get(id)
+    if (retirement === undefined) return
+    if (signal === undefined) await retirement
+    else await raceAbort(retirement, signal, id)
+  }
+
+  /**
+   * Create and publish a fresh Agent through an explicit or default Driver.
+   * The selected id is written into the immutable Session header before Driver
+   * preparation. The caller and Driver provider co-own the returned lifecycle.
+   * @param options - shared identity, Driver selection, metadata, setup, and Agent options.
+   * @returns the handle after setup, ordered publication, notification, and start.
    */
   async create(options: CreateAgentOptions): Promise<AgentHandle> {
     const ownerCtx = this.ctx
-    // Re-trace a Service-backed factory through the accessing context
-    // explicitly. This preserves AgentLoop's dependency origin while binding
-    // its effects to ownerCtx; plain factories receive ownerCtx as an explicit
-    // capability and need no Cordis tracker magic.
-    const { target } = this.requireFactory()
-    const receiver = getTraceable(ownerCtx, target)
-    // oxlint-disable-next-line typescript/unbound-method -- Reflect.apply intentionally supplies the caller-traced receiver
-    return Reflect.apply(target.createAgent, receiver, [ownerCtx, options])
+    await this.waitForRetirement(options.sessionId, options.signal)
+    const driverId = options.driverId ?? this.config.defaultDriverId
+    const registration = this.requireDriver(driverId)
+    const sessions = this.runtime.ctx.get('sessions')
+    if (sessions === undefined) throw new Error('cannot create an agent: SessionStore is not configured')
+    const preparation = SessionPreparation.create(sessions.prepare(options.sessionId, {
+      ...options.seed === undefined ? {} : { seed: options.seed },
+      meta: {
+        ...options.meta,
+        driverId,
+      },
+    }))
+    const created = this.publishPrepared(
+      ownerCtx,
+      registration,
+      preparation,
+      options.agentOptions ?? {},
+      options.setup,
+      options.signal,
+      'startup',
+    )
+    registration.track(created)
+    return created
   }
 
   /**
-   * Load a persisted session and resume an agent on it through the registered
-   * factory. Rejects if no factory is registered; the factory rejects if
-   * session persistence is not configured or persistence/setup fails.
-   * @param options - persisted identity, configuration, and optional setup.
-   * @returns the handle after setup, rollback-covered publication, and loop start complete.
+   * Prepare persistence exactly once, select the Driver stored in its header,
+   * and publish a resumed Agent. A caller cannot override the durable binding.
+   * @param options - persisted identity, setup, cancellation, and Agent options.
+   * @returns the handle after load, setup, ordered publication, notification, and start.
    */
   async resume(options: ResumeAgentOptions): Promise<AgentHandle> {
+    const persistence = this.runtime.ctx.get('sessionPersistence')
+    if (persistence === undefined) {
+      throw new Error('cannot resume: session persistence is not configured (load a dsh-session-persistence backend)')
+    }
     const ownerCtx = this.ctx
-    const { target } = this.requireFactory()
-    const receiver = getTraceable(ownerCtx, target)
-    // oxlint-disable-next-line typescript/unbound-method -- Reflect.apply intentionally supplies the caller-traced receiver
-    return Reflect.apply(target.resume, receiver, [ownerCtx, options])
+    const id = options.resumeSessionId
+    await this.waitForRetirement(id, options.signal)
+    const ownerAbort = new AbortController()
+    const unfollowOwner = ownerCtx.effect(() => () => {
+      ownerAbort.abort(new Error(`agent "${id}" setup aborted: owner disposed during setup`))
+    }, `agents.resume-load(${id})`)
+    const fused = AbortSignal.any([
+      ...options.signal === undefined ? [] : [options.signal],
+      ownerAbort.signal,
+    ])
+    let preparation: SessionPreparation | undefined
+    try {
+      preparation = await raceAbortCall(
+        () => persistence.prepare(id, fused),
+        fused,
+        id,
+        (abandoned) => { abandoned[Symbol.dispose]() },
+      )
+    } finally {
+      await unfollowOwner()
+    }
+    try {
+      ownerCtx.fiber.assertActive()
+      const registration = this.requireDriver(preparation.session.header.driverId)
+      const resumed = this.publishPrepared(
+        ownerCtx,
+        registration,
+        preparation,
+        options.agentOptions ?? {},
+        options.setup,
+        options.signal,
+        'resume',
+      )
+      registration.track(resumed)
+      return await resumed
+    } catch (error: unknown) {
+      preparation[Symbol.dispose]()
+      throw error
+    }
+  }
+
+  /** Run setup and the complete publication/teardown transaction. */
+  private async publishPrepared(
+    ownerCtx: Context,
+    registration: DriverRegistration,
+    preparation: SessionPreparation,
+    agentOptions: AgentOptions,
+    setup: AgentSetup | undefined,
+    callerSignal: AbortSignal | undefined,
+    source: SessionStartSource,
+  ): Promise<AgentHandle> {
+    using ownedPreparation = preparation
+    const id = ownedPreparation.session.id
+    ownerCtx.fiber.assertActive()
+    const ownerAbort = new AbortController()
+    const lifecycleAbort = new AbortController()
+    const relayAbort = (source: AbortSignal): void => {
+      if (lifecycleAbort.signal.aborted) return
+      lifecycleAbort.abort(source.reason instanceof Error
+        ? source.reason
+        : new Error(`agent "${id}" creation aborted`, { cause: source.reason }))
+    }
+    const followAbort = (source: AbortSignal | undefined): (() => void) => {
+      if (source === undefined) return () => {}
+      const listener = (): void => { relayAbort(source) }
+      if (source.aborted) listener()
+      else source.addEventListener('abort', listener, { once: true })
+      return () => { source.removeEventListener('abort', listener) }
+    }
+    const detachCallerSignal = followAbort(callerSignal)
+    const detachOwnerSignal = followAbort(ownerAbort.signal)
+    const detachDriverSignal = followAbort(registration.signal)
+    const fused = lifecycleAbort.signal
+    const assertLive = (): void => {
+      if (!fused.aborted) return
+      throw fused.reason instanceof Error
+        ? fused.reason
+        : new Error(`agent "${id}" creation aborted`, { cause: fused.reason })
+    }
+    let prepared: PreparedAgentDriver | undefined
+    let prepareStarted = false
+    const prepareSettled = Promise.withResolvers<void>()
+    let detachSession: (() => void) | undefined
+    let detachAgent: (() => void) | undefined
+    let disposing: Promise<void> | undefined
+    let untrack = (): void => {}
+    let unfollowOwner: () => Promise<void> | void = () => {}
+    const dispose = (ownerTriggered = false): Promise<void> => {
+      if (disposing !== undefined) return disposing
+      const retirement = disposing = (async () => {
+        ownerAbort.abort(new Error(`agent "${id}" lifecycle disposed`))
+        try {
+          if (prepareStarted && prepared === undefined) await prepareSettled.promise
+          await prepared?.dispose()
+        } finally {
+          try {
+            detachAgent?.()
+            detachSession?.()
+          } finally {
+            detachCallerSignal()
+            detachOwnerSignal()
+            detachDriverSignal()
+            untrack()
+            if (!ownerTriggered) await unfollowOwner()
+          }
+        }
+      })()
+      this.retirements.set(id, retirement)
+      const clearRetirement = (): void => {
+        if (this.retirements.get(id) === retirement) this.retirements.delete(id)
+      }
+      void retirement.then(clearRetirement, clearRetirement)
+      return retirement
+    }
+    untrack = registration.trackLive(dispose)
+    try {
+      unfollowOwner = ownerCtx.effect(() => () => {
+        if (disposing !== undefined) return
+        ownerAbort.abort(new Error(`agent "${id}" setup aborted: owner disposed during setup`))
+        return dispose(true)
+      }, `agents.lifecycle(${id})`)
+      const receiver = getTraceable(ownerCtx, registration.target)
+      assertLive()
+      prepareStarted = true
+      try {
+        prepared = await raceAbortCall(
+          // oxlint-disable-next-line typescript/unbound-method -- receiver is deliberately caller-traced
+          () => Reflect.apply(registration.target.prepare, receiver, [ownedPreparation.session, agentOptions, fused]),
+          fused,
+          id,
+          abandoned => abandoned.dispose(),
+          (error) => {
+            if (error === undefined) prepareSettled.resolve()
+            else prepareSettled.reject(error)
+          },
+        )
+      } finally {
+        if (prepared !== undefined || !fused.aborted) prepareSettled.resolve()
+      }
+      if (prepared.agent.id !== id || prepared.agent.session !== ownedPreparation.session) {
+        throw new Error(`agent driver "${registration.info.id}" returned an Agent for the wrong Session`)
+      }
+      const setupCommit = await raceAbort(setup?.(prepared.agent.ctx), fused, id)
+      assertLive()
+      setupCommit?.commit()
+      assertLive()
+      const sessions = this.runtime.ctx.get('sessions')
+      if (sessions === undefined) throw new Error('cannot publish an agent: SessionStore is not configured')
+      const sessionReceiver = getTraceable(prepared.agent.ctx, sessions)
+      // oxlint-disable-next-line typescript/unbound-method -- receiver preserves Agent scope while using the SessionStore provider context
+      detachSession = Reflect.apply(sessions.enter, sessionReceiver, [ownedPreparation.session])
+      detachAgent = this.enter(prepared.agent, ownerCtx.agent)
+      // oxlint-disable-next-line typescript/unbound-method -- receiver preserves Agent scope while using the SessionStore provider context
+      Reflect.apply(sessions.announce, sessionReceiver, [ownedPreparation.session])
+      assertLive()
+      this.announce(prepared.agent)
+      assertLive()
+      emitAgentEvent(this.runtime.ctx, prepared.agent, 'agent/session-start', { source })
+      assertLive()
+      prepared.start(source)
+      assertLive()
+      detachCallerSignal()
+      return { agent: prepared.agent, dispose }
+    } catch (error: unknown) {
+      await dispose()
+      throw error
+    }
   }
 
   /**

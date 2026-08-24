@@ -5,6 +5,7 @@ import { createUserMessage, CallId, HarnessError , createMessage } from '@deepse
 import { MAX_TIMER_DELAY_MS, TimeoutReason } from '@deepseek-ai/dsh-timeout'
 import * as TimeoutPolicy from '@deepseek-ai/dsh-tool-call-timeout-policy'
 import SessionStore, {
+  AgentDriverId,
   SESSION_FORMAT_VERSION,
   SessionId,
   type Session,
@@ -40,6 +41,7 @@ afterEach(async () => {
 function header(id: string, cwd: string | undefined, createdAt = 1, parentSession?: SessionIdValue): SessionHeader {
   return {
     version: SESSION_FORMAT_VERSION,
+    driverId: AgentDriverId('dsh'),
     id: SessionId(id),
     createdAt,
     ...cwd === undefined ? {} : { cwd },
@@ -56,6 +58,7 @@ function createSession(
 ): Session {
   return ctx.sessions.create(SessionId(id), {
     meta: {
+      driverId: AgentDriverId('dsh'),
       createdAt,
       ...cwd === undefined ? {} : { cwd },
       ...parentSession === undefined ? {} : { parentSession },

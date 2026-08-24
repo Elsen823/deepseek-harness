@@ -9,6 +9,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from 'node:
 import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
 import { CallId } from '@deepseek-ai/dsh-llm'
+import { AgentDriverId } from '@deepseek-ai/dsh-session'
 import SystemPrompt, { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime, { type ToolResult } from '@deepseek-ai/dsh-tools'
 import { FileSystem, FsError, FsTargetKey, FsVersion } from '@deepseek-ai/dsh-fs'
@@ -805,7 +806,7 @@ describe('sandbox escalation API (write/edit)', () => {
     return {
       id: 'agent-fs-esc',
       session: {
-        header: { version: 0, id: 'sess-fs-esc', createdAt: 0, cwd: '/session-project' },
+        header: { version: 0, driverId: AgentDriverId('dsh'), id: 'sess-fs-esc', createdAt: 0, cwd: '/session-project' },
         events: [{ type: 'turn/start' }, ...events],
         append: (type: string, data: Record<string, unknown>) => { events.push({ type, data }) },
       },

@@ -7,7 +7,8 @@
 import type { MessageId } from '@deepseek-ai/dsh-llm/brand'
 import type { AttachmentIdType, ImageAttachmentLimits, ImageAttachmentRef, ImageMediaType } from '@deepseek-ai/dsh-attachment'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm/types'
-import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session/types'
+import type { AgentDriverId, SessionEvent, SessionId } from '@deepseek-ai/dsh-session/types'
+import type { SessionRuntimeStatus } from '@deepseek-ai/dsh-session-runtime/types'
 // The pure-type outlet: api/ is browser-importable, and the package root's
 // cordis Context merge (via dsh-agent) must not enter client aggregates.
 import type { SessionProjectionMap } from '@deepseek-ai/dsh-session-projection/types'
@@ -177,9 +178,25 @@ export type QueueAction =
   | { kind: 'remove' }
   | { kind: 'steer' }
 
+/** One active Agent Driver offered for fresh Sessions. */
+export interface AgentDriverCatalogItem {
+  id: AgentDriverId
+  name: string
+}
+
+/** Host-resolved Agent Driver catalog and fresh-Session default. */
+export interface AgentDriverCatalog {
+  defaultId: AgentDriverId
+  items: AgentDriverCatalogItem[]
+}
+
 /** One Session list entry. */
 export interface SessionSummary {
   sessionId: SessionId
+  /** Immutable Driver binding stored in the Session header. */
+  driverId: AgentDriverId
+  /** Latest process-local execution availability and attention state, when the capability is mounted. */
+  runtime?: SessionRuntimeStatus
   /**
    * The later of creation and the latest human-authored prompt. Attached
    * Sessions fold their live log; cold Sessions use a projection-cache hint or
@@ -234,6 +251,9 @@ export interface SessionSearchItem {
 
 /** Session-domain unary methods (the map keys session.* of RpcMethodMap). */
 export interface SessionsApi {
+  /** Lists active Agent Drivers and the Host-resolved default for a fresh Session. */
+  drivers(request: RpcRequest<{}>): Promise<RpcResponse<AgentDriverCatalog>>
+
   /** Lists persisted sessions (updatedAt descending). v1 returns everything; cursor is a reserved seat, unimplemented. */
   list(request: RpcRequest<{ cursor?: string }>): Promise<RpcResponse<{ items: SessionSummary[] }>>
 
@@ -255,6 +275,9 @@ export interface SessionsApi {
    * creation attaches the session after publication; an attach failure
    * returns `workspace-attach-failed` with the published session id.
    *
+   * `driverId` selects one active Agent Driver; omission lets the Host resolve
+   * its configured default. The exact result is immutable in the Session header.
+   *
    * `agentPreset` names the composition the new session's agent is built
    * from; omitted, the effective default applies — the user's stored choice
    * where one exists, else the deployment's own. The resolved id is stored on
@@ -262,8 +285,13 @@ export interface SessionsApi {
    * id fails with `agent-preset-not-found`, and a preset whose composition
    * cannot be mounted fails with `agent-preset-invalid`.
    */
-  create(request: RpcRequest<{ workspaceId?: WorkspaceId; cwd?: string; sessionId?: SessionId; agentPreset?: string }>):
-  Promise<RpcResponse<{ sessionId: SessionId; agentPreset?: string }>>
+  create(request: RpcRequest<{
+    workspaceId?: WorkspaceId
+    cwd?: string
+    sessionId?: SessionId
+    driverId?: AgentDriverId
+    agentPreset?: string
+  }>): Promise<RpcResponse<{ sessionId: SessionId; driverId: AgentDriverId; agentPreset?: string }>>
 
   /**
    * Reads a window of history events; page boundaries align to append-origin message
@@ -333,13 +361,15 @@ export interface SessionsApi {
    * turn is still open fails with `fork-unavailable` instead of clipping to
    * an earlier turn. The child inherits the source cwd, latest logged model
    * target and `parentSessionId` lineage; the seed prefix carries the source
-   * title. Reading the source uses attached state or persistence inspection
+   * title. `driverId` defaults to the source binding; choosing another active
+   * Driver creates the immutable Driver-switch fork required after work begins.
+   * Reading the source uses attached state or persistence inspection
    * without acquiring an Agent. Workspace attachment follows the source
    * directly, or the nearest workspace-owning ancestor when the source is a
    * subagent.
    */
-  fork(request: RpcRequest<{ sessionId: SessionId; atSeq?: number }>):
-  Promise<RpcResponse<{ sessionId: SessionId }>>
+  fork(request: RpcRequest<{ sessionId: SessionId; atSeq?: number; driverId?: AgentDriverId }>):
+  Promise<RpcResponse<{ sessionId: SessionId; driverId: AgentDriverId }>>
 
   /**
    * Sends text and temporary image bytes to an ordinary session Agent after durable host admission.

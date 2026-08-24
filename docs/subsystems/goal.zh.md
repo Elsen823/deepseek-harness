@@ -140,6 +140,10 @@ interface GoalChanged {
 }
 ```
 
+## 便携 Objective projection
+
+[`@deepseek-ai/dsh-objective`](../../packages/goal/objective/README.zh.md) 注册 Driver 中立的 `objective` SessionProjection。原生 Driver 追加静态已知的 `agent-driver/objective` 全量快照，其中包含 `owner`、objective 文本、归一化 phase、可选 budget/attention/stop 事实，以及不透明 routing JSON。该 projection 也把权威 `goal/change` 快照适配为 owner `dsh`；它不发出重复事件，也不把 Goal id/revision/CAS 当作公共 Objective 字段。Goal clear tombstone 或原生 `objective: null` 产生 `null`。
+
 ## 服务行为
 
 [`GoalService`](../../packages/goal/goal/src/index.ts) 解析创建默认值、从持久 `goal/change` 事件执行严格回放折叠、校验传入的 agent（智能体）是注册表中的确切活跃实例、以比较并设置方式执行变更，并发出 `goal/changed` 通知；监听器故障会被隔离。包 [README](../../packages/goal/goal/README.zh.md) 定义可调用 API 和面向模型的约定。
@@ -156,7 +160,7 @@ Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnp
 
 ### `ctx.goals` — `GoalService`
 
-Goal service (`ctx.goals`) backed exclusively by the owning session log.
+Built-in `dsh` Goal service (`ctx.goals`) backed exclusively by the owning Session log. Alternate Drivers return no Goal on reads and reject every mutation with `GOAL_DRIVER_MISMATCH`.
 
 ```ts cordis-catalog
 /**

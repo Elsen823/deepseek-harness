@@ -167,7 +167,13 @@ describe('dsh-sdk-jsonrpc-server plugin apply', () => {
       expect(response).toEqual({
         jsonrpc: '2.0',
         id: 'init-1',
-        result: { serverInfo: { name: 'deepseek-harness-sdk-runtime', version: '0.0.1' } },
+        result: {
+          serverInfo: { name: 'deepseek-harness-sdk-runtime', version: '0.0.1' },
+          drivers: {
+            defaultId: 'dsh',
+            items: [{ id: 'dsh', name: 'DeepSeek Harness' }],
+          },
+        },
       })
       expect(harness.exits()).toEqual([])
     } finally {

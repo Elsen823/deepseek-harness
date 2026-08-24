@@ -8,7 +8,7 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import LlmRuntime, { createUserMessage, LlmAdapter  } from '@deepseek-ai/dsh-llm'
 import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
-import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, SessionId } from '@deepseek-ai/dsh-session'
 import SessionTitleService from '@deepseek-ai/dsh-session-title'
 import * as providerPlugin from '@deepseek-ai/dsh-session-title-first-prompt-llm'
 
@@ -90,7 +90,7 @@ describe('session-title Loader composition', () => {
 
     const adapter = new LoaderAdapter()
     ctx.llm.registerAdapter(['title-route'], adapter)
-    const session = ctx.sessions.create(SessionId('loader-title'))
+    const session = ctx.sessions.create(SessionId('loader-title'), { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', {
       turn: 1,
     })

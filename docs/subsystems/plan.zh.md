@@ -34,9 +34,13 @@ interface PlanModeConfig {
 
 当 [`ctx.commands`](commands.zh.md) 被组合时，插件注册 `/plan [off|message]`：单独的 `/plan` 选择计划模式；任何其他非空消息先选择计划模式，再通过 `agent.steer()` 提交该文本，使其在计划指引下成为下一步骤的普通已记录用户消息；确切参数 `off` 选择未激活，这还会在待生效条目被追加并对请求可见之前将其取消。
 
+## Proposed Plan 文档
+
+[`@deepseek-ai/dsh-plan-proposal`](../../packages/plan/plan-proposal/README.zh.md) 在静态已知的 `agent-driver/proposed-plan` 全量文档事件之上注册独立的 `proposedPlan` SessionProjection。文档包含 branded id、owner、标题、Markdown 内容、生命周期（`proposed`、`accepted`、`rejected` 或 `superseded`），以及可选 relation/routing JSON；`null` 会清除当前文档。它不是 Plan Mode 协作状态或 Checklist 进度，本包也不提供 controller 或模型工具。
+
 ## 服务
 
-`ctx.planMode` 拥有已记录的计划状态，在步骤开始时应用并叙述选中的状态，还拥有 `plan:policy` 段落、`/plan` 命令和稳定注册的退出工具；`get`/`set` 签名见生成的[服务目录](#ctxplanmode--planmodecontroller)。
+`ctx.planMode` 拥有内置 `dsh` Driver 的已记录计划状态，在步骤开始时应用并叙述选中的状态，还拥有 `plan:policy` 段落、`/plan` 命令和稳定注册的退出工具。备用 Driver 保持原生规划状态独立；`get()` 报告未激活，`set()` 失败。签名见生成的[服务目录](#ctxplanmode--planmodecontroller)。
 
 <!-- BEGIN GENERATED cordis-surface (gen-cordis-catalog.ts) — do not edit between markers -->
 
@@ -58,7 +62,7 @@ Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnp
  * accepted in-turn pre-step.
  *
  * @param agent The agent to read.
- * @returns Current logged state plus a pending selection, when present.
+ * @returns Current logged state plus a pending selection, when present; alternate Drivers report inactive.
  */
 get(agent: Agent): { active: boolean; pending?: boolean }
 
@@ -77,6 +81,7 @@ get(agent: Agent): { active: boolean; pending?: boolean }
  * next accepted in-turn pre-step), `cancelled` (an opposite pending selection
  * was cleared; the logged state already matches), or `noop` (already in that
  * state).
+ * @throws when the Session is bound to an alternate Agent Driver.
  */
 set(agent: Agent, active: boolean): 'committed' | 'queued' | 'cancelled' | 'noop'
 ```

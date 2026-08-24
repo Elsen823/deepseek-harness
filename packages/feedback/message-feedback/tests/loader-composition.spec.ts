@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import Include from '@deepseek-ai/cordis-plugin-include'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
-import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, SessionId } from '@deepseek-ai/dsh-session'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import Storage from '@deepseek-ai/dsh-storage'
 import * as StorageDomain from '@deepseek-ai/dsh-storage-domain'
@@ -86,7 +86,7 @@ describe('message feedback through a real Loader composition', () => {
       .toEqual(['list', 'put', 'delete'])
 
     const session = first.sessions.create(SessionId('loader-feedback'), {
-      meta: { cwd: root },
+      meta: { driverId: AgentDriverId('dsh'), cwd: root },
     })
     const fixture = appendMessageFixture(session)
     const put = await first.messageFeedback.put({

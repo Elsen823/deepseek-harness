@@ -11,7 +11,8 @@ import type { ApprovalOutcome, ApprovalRequestId } from '@deepseek-ai/dsh-user-a
 import type { Message } from '@deepseek-ai/dsh-llm/types'
 import type { MessageId } from '@deepseek-ai/dsh-llm/brand'
 import type { CallId } from '@deepseek-ai/dsh-llm/brand'
-import type { JsonValue, SessionEvent, SessionId } from '@deepseek-ai/dsh-session/types'
+import type { AgentDriverId, JsonValue, SessionEvent, SessionId } from '@deepseek-ai/dsh-session/types'
+import type { SessionRuntimeStatus } from '@deepseek-ai/dsh-session-runtime/types'
 import type { ToolCallView, ToolResultView } from '@deepseek-ai/dsh-tools/presentation'
 import type { RpcError, RpcId, RpcRequest } from './rpc.ts'
 import type { JobView } from './jobs.ts'
@@ -128,6 +129,7 @@ export type HostFrame =
   | {
     type: 'host/session-added'
     sessionId: SessionId
+    driverId: AgentDriverId
     blank: boolean
     parentSessionId?: SessionId
     origin?: 'subagent'
@@ -136,6 +138,7 @@ export type HostFrame =
   }
   | { type: 'host/session-removed'; sessionId: SessionId }
   | { type: 'host/session-status'; sessionId: SessionId; running: boolean }
+  | { type: 'host/session-runtime'; status: SessionRuntimeStatus }
   | { type: 'host/agent-error'; sessionId: SessionId; message: string }
   | { type: 'host/workspace-changed'; workspace: WorkspaceView }
   | { type: 'host/workspace-removed'; workspaceId: WorkspaceView['workspaceId'] }

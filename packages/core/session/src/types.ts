@@ -5,6 +5,9 @@ import type {
   LlmCallConfig,
   LlmCallConfigAdapterDefaults,
   LlmFailure,
+  Message,
+  ModelModality,
+  ResolvedRetryPolicy,
   StreamChunk,
   TokenUsage,
   ToolResultMessage,
@@ -17,6 +20,18 @@ import type { JsonValue } from './json.ts'
 // contract carrying JSON data must not import the root entry, which merges
 // `ctx.sessions` (a Host-only SessionStore) into every consumer's program.
 export type { JsonValue } from './json.ts'
+
+/** Identifies the agent driver bound to one session lifecycle. */
+export type AgentDriverId = Branded<'AgentDriverId'>
+
+/**
+ * Brand a string as an {@link AgentDriverId}.
+ * @param id - the raw agent driver id string.
+ * @returns the same string, branded (a compile-time cast — no runtime cost).
+ */
+export function AgentDriverId(id: string): AgentDriverId {
+  return id as AgentDriverId
+}
 
 /** Identifies one session in the store (and its persistence artifacts). */
 export type SessionId = Branded<'SessionId'>
@@ -65,6 +80,8 @@ export interface SessionHeader {
    * (no migration — see the constant).
    */
   readonly version: number
+  /** Agent driver that owns creation, resume, and continuation of this session. */
+  readonly driverId: AgentDriverId
   /** The session's id (mirrors the {@link Session}'s id). */
   readonly id: SessionId
   /** Non-negative safe-integer Unix epoch milliseconds when the session was created. */
@@ -110,7 +127,9 @@ export interface CreateSessionOptions {
    * Storage metadata read once before publication. `seedLength` is explicit
    * because a resumed seed contains the full stored log, not only its inherited prefix.
    */
-  readonly meta?: {
+  readonly meta: {
+    /** Agent driver that owns the new session lifecycle. */
+    readonly driverId: AgentDriverId
     readonly cwd?: string
     readonly parentSession?: SessionId
     readonly createdAt?: number
@@ -227,6 +246,327 @@ export interface RequestContext {
  */
 export type RequestHeaderReason = 'initial' | 'resume' | 'change'
 
+/** Identifies one live ownership period of an Agent Driver. */
+export type AgentDriverActivationId = Branded<'AgentDriverActivationId'>
+
+/**
+ * Brand a string as an {@link AgentDriverActivationId}.
+ * @param id - raw activation id.
+ * @returns the branded id.
+ */
+export function AgentDriverActivationId(id: string): AgentDriverActivationId {
+  return id as AgentDriverActivationId
+}
+
+/** Identifies one exact model-visible request captured by an Agent Driver. */
+export type AgentDriverModelRequestId = Branded<'AgentDriverModelRequestId'>
+
+/**
+ * Brand a string as an {@link AgentDriverModelRequestId}.
+ * @param id - raw model-request id.
+ * @returns the branded id.
+ */
+export function AgentDriverModelRequestId(id: string): AgentDriverModelRequestId {
+  return id as AgentDriverModelRequestId
+}
+
+/** Identifies one execution attempt of a captured model request. */
+export type AgentDriverModelAttemptId = Branded<'AgentDriverModelAttemptId'>
+
+/**
+ * Brand a string as an {@link AgentDriverModelAttemptId}.
+ * @param id - raw model-attempt id.
+ * @returns the branded id.
+ */
+export function AgentDriverModelAttemptId(id: string): AgentDriverModelAttemptId {
+  return id as AgentDriverModelAttemptId
+}
+
+/** Identifies one semantic Agent Driver activity item or group. */
+export type AgentDriverActivityId = Branded<'AgentDriverActivityId'>
+
+/**
+ * Brand a string as an {@link AgentDriverActivityId}.
+ * @param id - raw activity id.
+ * @returns the branded id.
+ */
+export function AgentDriverActivityId(id: string): AgentDriverActivityId {
+  return id as AgentDriverActivityId
+}
+
+/** Identifies one durable Agent Driver checkpoint. */
+export type AgentDriverCheckpointId = Branded<'AgentDriverCheckpointId'>
+
+/**
+ * Brand a string as an {@link AgentDriverCheckpointId}.
+ * @param id - raw checkpoint id.
+ * @returns the branded id.
+ */
+export function AgentDriverCheckpointId(id: string): AgentDriverCheckpointId {
+  return id as AgentDriverCheckpointId
+}
+
+/** Identifies one Proposed Plan document across lifecycle snapshots. */
+export type AgentDriverProposedPlanId = Branded<'AgentDriverProposedPlanId'>
+
+/**
+ * Brand a string as an {@link AgentDriverProposedPlanId}.
+ * @param id - raw Proposed Plan id.
+ * @returns the branded id.
+ */
+export function AgentDriverProposedPlanId(id: string): AgentDriverProposedPlanId {
+  return id as AgentDriverProposedPlanId
+}
+
+/**
+ * Driver-owned detail nested below a statically known outer event. Consumers
+ * that do not recognize `kind` retain `payload` and fall back to the event's
+ * core fields instead of discarding or reinterpreting the durable fact.
+ */
+export interface AgentDriverDetail {
+  /** Driver-specific discriminant. Unknown values are valid. */
+  readonly kind: string
+  /** Lossless-JSON data interpreted only by the owning Driver integration. */
+  readonly payload?: JsonValue
+}
+
+/** Provider-credential-free failure facts shared by activation, attempts, and checkpoints. */
+export interface AgentDriverFailure {
+  /** Stable machine-routing code. */
+  readonly code: string
+  /** Human-readable account safe to retain in the Session log. */
+  readonly message: string
+  /** Whether the producer considered the failure retryable. */
+  readonly retryable?: boolean
+  /** Additional credential-free Driver detail. */
+  readonly detail?: AgentDriverDetail
+}
+
+/** Provenance of an activation or checkpoint without exposing provider credentials. */
+export interface AgentDriverProvenance {
+  /** How the durable Driver state came into use. */
+  readonly kind: 'created' | 'resumed' | 'reconstructed' | 'imported'
+  /** Prior activation when this fact continues or reconstructs one. */
+  readonly sourceActivationId?: AgentDriverActivationId
+  /** Opaque native conversation identity, when safe to persist. */
+  readonly nativeConversationId?: string
+  /** Driver-specific provenance fields with unknown-kind fallback. */
+  readonly detail?: AgentDriverDetail
+}
+
+/** Compatibility facts captured when native Driver state is opened or checkpointed. */
+export interface AgentDriverCompatibility {
+  /** Driver runtime/version that produced or consumed the state. */
+  readonly runtime: string
+  /** Driver-native durable format or schema identifier, when known. */
+  readonly format?: string
+  /** Result of comparing this runtime with prior native state. */
+  readonly status: 'same' | 'certified' | 'reconstructed' | 'incompatible' | 'unknown'
+  /** Prior runtime/version, when a transition was evaluated. */
+  readonly previousRuntime?: string
+  /** Driver-specific compatibility facts with unknown-kind fallback. */
+  readonly detail?: AgentDriverDetail
+}
+
+/** An explicit break in native Driver continuity retained by the DSH Session. */
+export interface AgentDriverDiscontinuity {
+  /** Stable generic classification. */
+  readonly kind: 'conversation' | 'history' | 'runtime' | 'checkpoint'
+  /** Human-readable consequence for the retained Session. */
+  readonly message: string
+  /** Driver-specific discontinuity facts with unknown-kind fallback. */
+  readonly detail?: AgentDriverDetail
+}
+
+/** One whole lifecycle snapshot for a Driver activation. */
+export interface AgentDriverActivationSnapshot {
+  readonly owner: AgentDriverId
+  readonly activationId: AgentDriverActivationId
+  /** Current generic activation phase. */
+  readonly phase: 'starting' | 'active' | 'stopping' | 'stopped' | 'failed' | 'unavailable'
+  readonly provenance?: AgentDriverProvenance
+  readonly compatibility?: AgentDriverCompatibility
+  readonly discontinuity?: AgentDriverDiscontinuity
+  readonly failure?: AgentDriverFailure
+  /** Driver-specific activation state with unknown-kind fallback. */
+  readonly driver?: AgentDriverDetail
+}
+
+/** Exact input and captured policy for one model-visible Driver request. */
+export interface AgentDriverModelRequestSnapshot {
+  readonly owner: AgentDriverId
+  readonly activationId: AgentDriverActivationId
+  readonly requestId: AgentDriverModelRequestId
+  readonly turn: number
+  readonly step: number
+  /** Ordered messages exactly visible to the model, including image blocks. */
+  readonly messages: readonly Message[]
+  /** Provider system slot, when present. */
+  readonly system?: string
+  /** Driver-native instruction slot when it is distinct from `system`. */
+  readonly instructions?: string
+  /** Tool schemas exactly visible to the model. */
+  readonly tools?: readonly ToolSchema[]
+  /** Fully resolved provider/model call configuration. */
+  readonly config: LlmCallConfig
+  /** Fields materialized by exact-route adapter resolution. */
+  readonly adapterDefaults?: LlmCallConfigAdapterDefaults
+  /** Retry policy captured before the first attempt. */
+  readonly retryPolicy: ResolvedRetryPolicy
+  /** Captured exact-route capacity metadata. */
+  readonly context?: RequestContext
+  /** Captured input/output modalities; absence means the Driver did not know. */
+  readonly modalities?: {
+    readonly input?: readonly ModelModality[]
+    readonly output?: readonly ModelModality[]
+  }
+  /** Driver-specific request data. Credentials and live cancellation handles are forbidden. */
+  readonly driver?: AgentDriverDetail
+}
+
+/** One captured-policy execution attempt for an exact model request. */
+export interface AgentDriverModelAttemptSnapshot {
+  readonly owner: AgentDriverId
+  readonly activationId: AgentDriverActivationId
+  readonly requestId: AgentDriverModelRequestId
+  readonly attemptId: AgentDriverModelAttemptId
+  /** Zero-based attempt number under the request's captured retry policy. */
+  readonly attempt: number
+  readonly outcome: 'succeeded' | 'failed' | 'aborted'
+  readonly usage?: TokenUsage
+  readonly failure?: AgentDriverFailure
+  /** Delay selected before the following attempt, when another attempt was scheduled. */
+  readonly retryDelayMs?: number
+  /** Driver-specific attempt facts with unknown-kind fallback. */
+  readonly driver?: AgentDriverDetail
+}
+
+/** Maximum UTF-8 byte count allowed in an inline activity snapshot. */
+export const AGENT_DRIVER_ACTIVITY_INLINE_MAX_BYTES = 16 * 1024
+
+/** Immutable reference to activity data stored outside the Session event. */
+export interface AgentDriverActivitySpillRef {
+  /** Opaque retrieval locator; consumers do not parse it. */
+  readonly locator: string
+  /** Content digest including algorithm, for example `sha256:<hex>`. */
+  readonly digest: string
+  /** Exact stored byte length. */
+  readonly bytes: number
+  /** Media type when known. */
+  readonly mediaType?: string
+}
+
+/** Bounded content attached to a whole activity snapshot. */
+export type AgentDriverActivityData =
+  | {
+    readonly storage: 'inline'
+    /** UTF-8 byte length of the serialized `data`; bounded by {@link AGENT_DRIVER_ACTIVITY_INLINE_MAX_BYTES}. */
+    readonly bytes: number
+    readonly data: JsonValue
+  }
+  | {
+    readonly storage: 'spill'
+    readonly ref: AgentDriverActivitySpillRef
+  }
+
+/** One whole semantic activity item or group snapshot. */
+export interface AgentDriverActivitySnapshot {
+  readonly owner: AgentDriverId
+  readonly activationId: AgentDriverActivationId
+  readonly activityId: AgentDriverActivityId
+  /** Generic, merge-extensible activity classification. */
+  readonly kind: string
+  /** Generic phase interpreted as a whole-value replacement. */
+  readonly phase: string
+  readonly parentId?: AgentDriverActivityId
+  readonly groupId?: AgentDriverActivityId
+  readonly title?: string
+  readonly summary?: string
+  readonly data?: AgentDriverActivityData
+  /** Driver-specific activity fields with unknown-kind fallback. */
+  readonly driver?: AgentDriverDetail
+}
+
+/** Normalized Driver-neutral Objective phase. */
+export type AgentDriverObjectivePhase =
+  | 'pending'
+  | 'active'
+  | 'paused'
+  | 'blocked'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+
+/** Explicit resource accounting for an Objective. */
+export interface AgentDriverObjectiveBudget {
+  /** Owner-defined budget classification, such as `goal-rounds` or `tokens`. */
+  readonly kind: string
+  /** Unit used by `limit` and `consumed`. */
+  readonly unit: string
+  readonly limit?: number
+  readonly consumed?: number
+}
+
+/** Human attention requested by the Objective owner. */
+export interface AgentDriverObjectiveAttention {
+  readonly kind: string
+  readonly message?: string
+}
+
+/** Why Objective execution stopped or cannot continue. */
+export interface AgentDriverObjectiveStopReason {
+  readonly kind: string
+  readonly message?: string
+}
+
+/** Driver-neutral whole snapshot of one owner's current Objective. */
+export interface AgentDriverObjectiveSnapshot {
+  readonly owner: AgentDriverId
+  readonly objective: string
+  readonly phase: AgentDriverObjectivePhase
+  readonly budget?: AgentDriverObjectiveBudget
+  readonly attention?: AgentDriverObjectiveAttention
+  readonly stopReason?: AgentDriverObjectiveStopReason
+  /** Owner routing data observed by the adapter, never interpreted as common Goal identity or CAS state. */
+  readonly routing?: JsonValue
+}
+
+/** Lifecycle of a durable Proposed Plan document. */
+export type AgentDriverProposedPlanLifecycle = 'proposed' | 'accepted' | 'rejected' | 'superseded'
+
+/** Optional relation from one Proposed Plan to another durable subject. */
+export interface AgentDriverProposedPlanRelation {
+  readonly kind: string
+  readonly planId?: AgentDriverProposedPlanId
+  readonly data?: JsonValue
+}
+
+/** Driver-neutral whole snapshot of one Proposed Plan document. */
+export interface AgentDriverProposedPlanSnapshot {
+  readonly id: AgentDriverProposedPlanId
+  readonly owner: AgentDriverId
+  readonly title: string
+  readonly content: string
+  readonly lifecycle: AgentDriverProposedPlanLifecycle
+  readonly relation?: AgentDriverProposedPlanRelation
+  /** Owner routing data observed by the adapter. */
+  readonly routing?: JsonValue
+}
+
+/** One whole lifecycle snapshot for a Driver checkpoint. */
+export interface AgentDriverCheckpointSnapshot {
+  readonly owner: AgentDriverId
+  readonly activationId: AgentDriverActivationId
+  readonly checkpointId: AgentDriverCheckpointId
+  readonly phase: 'captured' | 'restored' | 'failed'
+  readonly provenance?: AgentDriverProvenance
+  readonly compatibility?: AgentDriverCompatibility
+  readonly discontinuity?: AgentDriverDiscontinuity
+  readonly failure?: AgentDriverFailure
+  /** Driver-specific checkpoint fields with unknown-kind fallback. */
+  readonly driver?: AgentDriverDetail
+}
+
 /**
  * The merge-extensible, append-only source of truth for an agent interaction.
  * Message history is derived from this log. Every event is lossless JSON and
@@ -234,6 +574,34 @@ export type RequestHeaderReason = 'initial' | 'resume' | 'change'
  * store the canonical log verbatim.
  */
 export interface SessionEventMap {
+  /**
+   * Whole activation snapshot emitted by any Agent Driver. The outer fields
+   * remain readable when its Driver plugin is unloaded; an unknown nested
+   * `driver.kind` falls back to those fields. Log-only.
+   */
+  'agent-driver/activation': AgentDriverActivationSnapshot
+  /**
+   * Exact model-visible request plus captured execution policy. It contains no
+   * `AbortSignal`, provider credentials, or other live authority. Log-only.
+   */
+  'agent-driver/model-request': AgentDriverModelRequestSnapshot
+  /** One execution attempt under a captured model-request policy. Log-only. */
+  'agent-driver/model-attempt': AgentDriverModelAttemptSnapshot
+  /**
+   * Whole semantic activity item or group snapshot. It is not a synthetic DSH
+   * `tool/*` event and contributes no derived model history. Log-only.
+   */
+  'agent-driver/activity': AgentDriverActivitySnapshot
+  /**
+   * Driver-neutral current Objective snapshot, or `null` when the owner reports
+   * no current Objective. DSH `goal/change` remains the authoritative DSH Goal
+   * stream and is adapted by `@deepseek-ai/dsh-objective` without duplication.
+   */
+  'agent-driver/objective': { objective: AgentDriverObjectiveSnapshot | null; driver?: AgentDriverDetail }
+  /** Whole durable Proposed Plan document snapshot, or `null` when the owner has no current document. */
+  'agent-driver/proposed-plan': { plan: AgentDriverProposedPlanSnapshot | null; driver?: AgentDriverDetail }
+  /** Whole checkpoint lifecycle snapshot with provenance and compatibility facts. Log-only. */
+  'agent-driver/checkpoint': AgentDriverCheckpointSnapshot
   /**
    * Opens turn `turn` before the loop claims queued input or runs pre-step.
    * Rejection, empty input, cancellation, or failure may close it with no

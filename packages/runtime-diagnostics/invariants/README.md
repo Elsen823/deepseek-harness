@@ -42,7 +42,7 @@ The current executable companions protect these relationships:
 | `dsh-fs`, `dsh-subagent`, `dsh-workflow` | Filesystem event identity, provider/child pairing, and workflow/agent lifecycle identity. |
 | `dsh-goal`, `dsh-goal-round-driver` | Durable goal source/content agreement, revision and lifecycle transitions, timestamps, sequential admitted rounds, and reconstructed continuation prompts. |
 | `dsh-permission-presets`, `dsh-user-approval` | Active-preset references and approval asked/decided audit pairing. |
-| `dsh-jobs`, `dsh-tool-todo` | Task snapshot lifecycle/ownership fields and durable whole-list todo structure. |
+| `dsh-jobs`, `dsh-todo`, `dsh-tool-todo` | Task snapshot lifecycle/ownership fields, schema-validated Checklist projection values, and durable whole-list todo structure. |
 | `dsh-time-context` | Durable clock readings agree with the session's open turn and next pre-step position and elapsed baseline; rendered time parses and does not postdate its event. |
 
 The root entrypoint of each owner remains independent of diagnostics. Loading the service alone installs no product checks, and loading a companion without the service waits on its declared `invariants` injection.

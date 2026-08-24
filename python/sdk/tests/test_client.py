@@ -36,7 +36,7 @@ for line in sys.stdin:
     method = msg.get("method")
     if method == "initialize":
         json.dump(msg.get("params"), open(os.environ["INIT_DUMP"], "w"))
-        print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {"serverInfo": {"name": "fake-runtime"}}}), flush=True)
+        print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {"serverInfo": {"name": "fake-runtime", "version": "0.0.1"}, "drivers": {"defaultId": "dsh", "items": [{"id": "dsh", "name": "DeepSeek Harness"}, {"id": "codex", "name": "Codex"}]}}}), flush=True)
     elif method == "session/prompt":
         params = msg.get("params") or {}
         print(json.dumps({"jsonrpc": "2.0", "method": "session.event", "params": {"sessionId": params["sessionId"], "event": {"type": "agent/inbox/spliced", "data": {"target": "next-turn", "start": 0, "inserted": [{"id": "message-1"}]}}}}), flush=True)
@@ -94,6 +94,7 @@ for line in sys.stdin:
     with DeepSeekHarness(
         model="deepseek-v4-flash",
         max_tokens=4096,
+        driver_id="codex",
         cwd=str(tmp_path),
         cordis=str(tmp_path / "cordis.yml"),
         session_root=str(tmp_path / "sessions"),
@@ -121,7 +122,147 @@ for line in sys.stdin:
         "provider": "deepseek-official",
         "model": "deepseek-v4-flash",
         "maxTokens": 4096,
+        "driverId": "codex",
     }
+
+
+def test_python_sdk_projects_driver_catalog_runtime_lookup_and_session_binding(tmp_path: Path) -> None:
+    script = tmp_path / "driver_runtime.py"
+    capture = tmp_path / "requests.jsonl"
+    script.write_text(
+        """
+import json
+import os
+import sys
+
+catalog = {
+    "defaultId": "codex",
+    "items": [
+        {"id": "dsh", "name": "DeepSeek Harness"},
+        {"id": "codex", "name": "Codex"},
+    ],
+}
+status = None
+for line in sys.stdin:
+    msg = json.loads(line)
+    method = msg.get("method")
+    params = msg.get("params") or {}
+    if method == "initialize":
+        with open(os.environ["CAPTURE"], "a") as output:
+            output.write(json.dumps({"method": method, "params": params}) + "\\n")
+        print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {
+            "serverInfo": {"name": "fake-runtime", "version": "0.0.1"},
+            "drivers": catalog,
+        }}), flush=True)
+    elif method == "agent/drivers":
+        print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": catalog}), flush=True)
+    elif method == "session/runtime":
+        print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {"status": status}}), flush=True)
+    elif method == "session/prompt":
+        with open(os.environ["CAPTURE"], "a") as output:
+            output.write(json.dumps({"method": method, "params": params}) + "\\n")
+        if os.environ.get("UNAVAILABLE"):
+            status = {
+                "sessionId": params["sessionId"],
+                "driverId": params["driverId"],
+                "availability": {"kind": "unavailable", "reason": {
+                    "code": "fake-unavailable", "message": "Fake Driver unavailable.", "retryable": True
+                }},
+                "attention": {"approvals": 0, "userInputs": 0},
+                "operation": "conversation",
+                "revision": 2,
+                "updatedAt": 20,
+            }
+            print(json.dumps({"jsonrpc": "2.0", "method": "session.runtime", "params": {"status": status}}), flush=True)
+            print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {"messageId": "message-unavailable"}}), flush=True)
+            continue
+        status = {
+            "sessionId": params["sessionId"],
+            "driverId": params["driverId"],
+            "availability": {"kind": "available"},
+            "activity": "running",
+            "attention": {"approvals": 0, "userInputs": 0},
+            "operation": "conversation",
+            "revision": 2,
+            "updatedAt": 20,
+        }
+        print(json.dumps({"jsonrpc": "2.0", "method": "session.created", "params": {
+            "sessionId": params["sessionId"], "driverId": params["driverId"]
+        }}), flush=True)
+        print(json.dumps({"jsonrpc": "2.0", "method": "session.runtime", "params": {"status": status}}), flush=True)
+        print(json.dumps({"jsonrpc": "2.0", "method": "session.event", "params": {
+            "sessionId": params["sessionId"],
+            "event": {"type": "agent/inbox/spliced", "data": {"inserted": [{"id": "message-1"}]}}
+        }}), flush=True)
+        print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {"messageId": "message-1"}}), flush=True)
+        print(json.dumps({"jsonrpc": "2.0", "method": "session.status", "params": {
+            "sessionId": params["sessionId"], "status": "idle"
+        }}), flush=True)
+    elif method == "shutdown":
+        print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {}}), flush=True)
+        break
+""".strip()
+    )
+
+    with DeepSeekHarness(
+        driver_id="codex",
+        launch_args_override=(sys.executable, str(script)),
+        cwd=str(tmp_path),
+        env={"CAPTURE": str(capture)},
+    ) as harness:
+        assert harness.drivers().model_dump() == {
+            "defaultId": "codex",
+            "items": [
+                {"id": "dsh", "name": "DeepSeek Harness"},
+                {"id": "codex", "name": "Codex"},
+            ],
+        }
+        assert harness.runtime("main").status is None
+        session = harness.start_session("main")
+        assert session.driver_id == "codex"
+        session.run("go")
+        runtime = harness.runtime("main").status
+        assert runtime is not None
+        assert runtime.sessionId == "main"
+        assert runtime.driverId == "codex"
+        assert runtime.availability.kind == "available"
+
+    with DeepSeekHarness(
+        driver_id="codex",
+        launch_args_override=(sys.executable, str(script)),
+        cwd=str(tmp_path),
+        env={"CAPTURE": str(capture), "UNAVAILABLE": "1"},
+    ) as unavailable_harness:
+        with pytest.raises(SdkProtocolError, match="fake-unavailable"):
+            unavailable_harness.run("go", session_id="unavailable")
+
+    requests = [json.loads(line) for line in capture.read_text().splitlines()]
+    assert requests[0]["params"]["driverId"] == "codex"
+    assert requests[1]["params"]["driverId"] == "codex"
+
+
+def test_session_runtime_notifications_route_by_nested_status_session_id() -> None:
+    client = HarnessClient()
+    with client.subscribe_session_notifications("main") as subscription:
+        client._handle_message({
+            "jsonrpc": "2.0",
+            "method": "session.runtime",
+            "params": {
+                "status": {
+                    "sessionId": "main",
+                    "driverId": "dsh",
+                    "availability": {"kind": "cold"},
+                    "attention": {"approvals": 0, "userInputs": 0},
+                    "operation": "conversation",
+                    "revision": 1,
+                    "updatedAt": 1,
+                }
+            },
+        })
+        notification = subscription.next()
+
+    assert notification.method == "session.runtime"
+    assert notification.payload["status"]["sessionId"] == "main"
 
 
 def test_session_run_invokes_notification_callback_before_returning(tmp_path: Path) -> None:
@@ -135,7 +276,7 @@ for line in sys.stdin:
     msg = json.loads(line)
     method = msg.get("method")
     if method == "initialize":
-        print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {"serverInfo": {"name": "fake-runtime"}}}), flush=True)
+        print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {"serverInfo": {"name": "fake-runtime", "version": "0.0.1"}, "drivers": {"defaultId": "dsh", "items": [{"id": "dsh", "name": "DeepSeek Harness"}, {"id": "codex", "name": "Codex"}]}}}), flush=True)
     elif method == "session/prompt":
         print(json.dumps({"jsonrpc": "2.0", "method": "session.event", "params": {"sessionId": "main", "event": {"type": "agent/inbox/spliced", "data": {"target": "next-turn", "start": 0, "inserted": [{"id": "message-1"}]}}}}), flush=True)
         print(json.dumps({"jsonrpc": "2.0", "method": "session.status", "params": {"sessionId": "main", "status": "running"}}), flush=True)
@@ -174,7 +315,7 @@ for line in sys.stdin:
     msg = json.loads(line)
     method = msg.get("method")
     if method == "initialize":
-        print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {"serverInfo": {"name": "fake-runtime"}}}), flush=True)
+        print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {"serverInfo": {"name": "fake-runtime", "version": "0.0.1"}, "drivers": {"defaultId": "dsh", "items": [{"id": "dsh", "name": "DeepSeek Harness"}, {"id": "codex", "name": "Codex"}]}}}), flush=True)
     elif method == "session/prompt":
         params = msg.get("params") or {}
         print(json.dumps({"jsonrpc": "2.0", "method": "session.event", "params": {"sessionId": params["sessionId"], "event": {"type": "agent/inbox/spliced", "data": {"target": "next-turn", "start": 0, "inserted": [{"id": "message-1"}]}}}}), flush=True)
@@ -213,7 +354,7 @@ for line in sys.stdin:
     msg = json.loads(line)
     if msg.get("method") == "initialize":
         json.dump({"process": os.getcwd(), "environment": os.environ.get("DSH_CWD"), "wire": msg["params"]["cwd"]}, open(os.environ["CAPTURE"], "w"))
-        print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {"serverInfo": {"name": "fake-runtime"}}}), flush=True)
+        print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {"serverInfo": {"name": "fake-runtime", "version": "0.0.1"}, "drivers": {"defaultId": "dsh", "items": [{"id": "dsh", "name": "DeepSeek Harness"}, {"id": "codex", "name": "Codex"}]}}}), flush=True)
     elif msg.get("method") == "shutdown":
         print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {}}), flush=True)
         break
@@ -248,7 +389,7 @@ for line in sys.stdin:
     msg = json.loads(line)
     method = msg.get("method")
     if method == "initialize":
-        print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {"serverInfo": {"name": "fake-runtime"}}}), flush=True)
+        print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {"serverInfo": {"name": "fake-runtime", "version": "0.0.1"}, "drivers": {"defaultId": "dsh", "items": [{"id": "dsh", "name": "DeepSeek Harness"}, {"id": "codex", "name": "Codex"}]}}}), flush=True)
     elif method == "session/prompt":
         print(json.dumps({"jsonrpc": "2.0", "method": "session.event", "params": {"sessionId": "main", "event": {"type": "agent/inbox/spliced", "data": {"target": "next-turn", "start": 0, "inserted": [{"id": "message-1"}]}}}}), flush=True)
         print(json.dumps({"jsonrpc": "2.0", "method": "session.status", "params": {"sessionId": "main", "status": "running"}}), flush=True)
@@ -290,7 +431,7 @@ for line in sys.stdin:
     msg = json.loads(line)
     method = msg.get("method")
     if method == "initialize":
-        print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {"serverInfo": {"name": "fake-runtime"}}}), flush=True)
+        print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {"serverInfo": {"name": "fake-runtime", "version": "0.0.1"}, "drivers": {"defaultId": "dsh", "items": [{"id": "dsh", "name": "DeepSeek Harness"}, {"id": "codex", "name": "Codex"}]}}}), flush=True)
     elif method == "session/prompt":
         root = (msg.get("params") or {})["sessionId"]
         print(json.dumps({"jsonrpc": "2.0", "method": "session.event", "params": {"sessionId": root, "event": {"type": "agent/inbox/spliced", "data": {"target": "next-turn", "start": 0, "inserted": [{"id": "message-1"}]}}}}), flush=True)
@@ -350,7 +491,7 @@ for line in sys.stdin:
     msg = json.loads(line)
     method = msg.get("method")
     if method == "initialize":
-        print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {"serverInfo": {"name": "fake-runtime"}}}), flush=True)
+        print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {"serverInfo": {"name": "fake-runtime", "version": "0.0.1"}, "drivers": {"defaultId": "dsh", "items": [{"id": "dsh", "name": "DeepSeek Harness"}, {"id": "codex", "name": "Codex"}]}}}), flush=True)
     elif method == "session/prompt":
         params = msg.get("params") or {}
         print(json.dumps({"jsonrpc": "2.0", "method": "session.event", "params": {"sessionId": "other", "event": {"type": "assistant/message", "data": {"content": [{"type": "text", "text": "wrong session"}]}}}}), flush=True)
@@ -387,7 +528,7 @@ for line in sys.stdin:
     msg = json.loads(line)
     method = msg.get("method")
     if method == "initialize":
-        print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {"serverInfo": {"name": "fake-runtime"}}}), flush=True)
+        print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {"serverInfo": {"name": "fake-runtime", "version": "0.0.1"}, "drivers": {"defaultId": "dsh", "items": [{"id": "dsh", "name": "DeepSeek Harness"}, {"id": "codex", "name": "Codex"}]}}}), flush=True)
     elif method == "session/prompt":
         params = msg.get("params") or {}
         print(json.dumps({"jsonrpc": "2.0", "method": "session.event", "params": {"sessionId": params["sessionId"], "event": {"type": "agent/inbox/spliced", "data": {"target": "next-turn", "start": 0, "inserted": [{"id": "message-1"}]}}}}), flush=True)
@@ -419,7 +560,7 @@ for line in sys.stdin:
     msg = json.loads(line)
     method = msg.get("method")
     if method == "initialize":
-        print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {"serverInfo": {"name": "fake-runtime"}}}), flush=True)
+        print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {"serverInfo": {"name": "fake-runtime", "version": "0.0.1"}, "drivers": {"defaultId": "dsh", "items": [{"id": "dsh", "name": "DeepSeek Harness"}, {"id": "codex", "name": "Codex"}]}}}), flush=True)
     elif method == "session/prompt":
         turn += 1
         params = msg.get("params") or {}
@@ -461,7 +602,7 @@ for line in sys.stdin:
     msg = json.loads(line)
     method = msg.get("method")
     if method == "initialize":
-        print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {"serverInfo": {"name": "fake-dsh"}}}), flush=True)
+        print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {"serverInfo": {"name": "fake-dsh", "version": "0.0.1"}, "drivers": {"defaultId": "dsh", "items": [{"id": "dsh", "name": "DeepSeek Harness"}, {"id": "codex", "name": "Codex"}]}}}), flush=True)
     elif method == "session/prompt":
         params = msg.get("params") or {}
         print(json.dumps({"jsonrpc": "2.0", "method": "llm/request", "params": {"requestId": "req-1", "sessionId": params["sessionId"], "model": "dsagent", "messages": []}}), flush=True)
@@ -598,7 +739,7 @@ for line in sys.stdin:
     msg = json.loads(line)
     method = msg.get("method")
     if method == "initialize":
-        print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {"serverInfo": {"name": "fake-dsh"}}}), flush=True)
+        print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {"serverInfo": {"name": "fake-dsh", "version": "0.0.1"}, "drivers": {"defaultId": "dsh", "items": [{"id": "dsh", "name": "DeepSeek Harness"}, {"id": "codex", "name": "Codex"}]}}}), flush=True)
     elif method in {"emit-first", "emit-second"}:
         print(json.dumps({"jsonrpc": "2.0", "method": "tick", "params": {"source": method}}), flush=True)
     elif method == "session/prompt":
@@ -640,7 +781,7 @@ for line in sys.stdin:
     msg = json.loads(line)
     method = msg.get("method")
     if method == "initialize":
-        print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {"serverInfo": {"name": "fake-dsh"}}}), flush=True)
+        print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {"serverInfo": {"name": "fake-dsh", "version": "0.0.1"}, "drivers": {"defaultId": "dsh", "items": [{"id": "dsh", "name": "DeepSeek Harness"}, {"id": "codex", "name": "Codex"}]}}}), flush=True)
     elif method == "session/prompt":
         print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {"accepted": False}}), flush=True)
     elif method == "shutdown":
@@ -666,7 +807,7 @@ for line in sys.stdin:
     msg = json.loads(line)
     method = msg.get("method")
     if method == "initialize":
-        print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {"serverInfo": {"name": "fake-dsh"}}}), flush=True)
+        print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {"serverInfo": {"name": "fake-dsh", "version": "0.0.1"}, "drivers": {"defaultId": "dsh", "items": [{"id": "dsh", "name": "DeepSeek Harness"}, {"id": "codex", "name": "Codex"}]}}}), flush=True)
         print(json.dumps({"jsonrpc": "2.0", "id": "bridge-req-1", "method": "llm.request", "params": {"requestId": "req-1", "sessionId": "main", "model": "dsagent", "messages": []}}), flush=True)
     elif "id" in msg and "method" not in msg:
         print(json.dumps({"jsonrpc": "2.0", "method": "response/seen", "params": {"result": msg.get("result")}}), flush=True)
@@ -703,7 +844,7 @@ print("node warning: experimental loader", flush=True)
 for line in sys.stdin:
     msg = json.loads(line)
     if msg.get("method") == "initialize":
-        print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {"serverInfo": {"name": "fake-dsh"}}}), flush=True)
+        print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {"serverInfo": {"name": "fake-dsh", "version": "0.0.1"}, "drivers": {"defaultId": "dsh", "items": [{"id": "dsh", "name": "DeepSeek Harness"}, {"id": "codex", "name": "Codex"}]}}}), flush=True)
     elif msg.get("method") == "shutdown":
         print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {}}), flush=True)
         break
@@ -759,7 +900,7 @@ signal.signal(signal.SIGTERM, signal.SIG_IGN)
 for line in sys.stdin:
     msg = json.loads(line)
     if msg.get("method") == "initialize":
-        print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {"serverInfo": {"name": "fake-dsh"}}}), flush=True)
+        print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {"serverInfo": {"name": "fake-dsh", "version": "0.0.1"}, "drivers": {"defaultId": "dsh", "items": [{"id": "dsh", "name": "DeepSeek Harness"}, {"id": "codex", "name": "Codex"}]}}}), flush=True)
     elif msg.get("method") == "shutdown":
         time.sleep(60)
 """.strip()
@@ -822,6 +963,11 @@ def test_public_signatures_omit_unsupported_wire_parameters() -> None:
     assert "system_prompt" not in DeepSeekHarnessConfig.__dataclass_fields__
     assert "max_tokens" in DeepSeekHarnessConfig.__dataclass_fields__
     assert "max_tokens" in inspect.signature(HarnessClient.initialize).parameters
+    assert "driver_id" in inspect.signature(HarnessClient.initialize).parameters
+    assert "driver_id" in inspect.signature(HarnessClient.session_prompt).parameters
+    assert "driver_id" in inspect.signature(DeepSeekHarness.run).parameters
+    assert "driver_id" in inspect.signature(DeepSeekHarness.start_session).parameters
+    assert "driver_id" in DeepSeekHarnessConfig.__dataclass_fields__
     assert "client_name" not in HarnessConfig.__dataclass_fields__
     assert "client_version" not in HarnessConfig.__dataclass_fields__
 
@@ -838,7 +984,7 @@ import sys
 for line in sys.stdin:
     msg = json.loads(line)
     if msg.get("method") == "initialize":
-        print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {"serverInfo": {"name": "fake-dsh"}}}), flush=True)
+        print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {"serverInfo": {"name": "fake-dsh", "version": "0.0.1"}, "drivers": {"defaultId": "dsh", "items": [{"id": "dsh", "name": "DeepSeek Harness"}, {"id": "codex", "name": "Codex"}]}}}), flush=True)
     elif msg.get("method") == "shutdown":
         print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {}}), flush=True)
         break
@@ -888,7 +1034,7 @@ with open(os.environ["SEEN"], "w") as seen:
         seen.flush()
         msg = json.loads(line)
         if "id" in msg and msg.get("method") == "initialize":
-            print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {"serverInfo": {"name": "fake-dsh"}}}), flush=True)
+            print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {"serverInfo": {"name": "fake-dsh", "version": "0.0.1"}, "drivers": {"defaultId": "dsh", "items": [{"id": "dsh", "name": "DeepSeek Harness"}, {"id": "codex", "name": "Codex"}]}}}), flush=True)
         elif "id" in msg and msg.get("method") == "shutdown":
             print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {}}), flush=True)
             break
@@ -933,7 +1079,7 @@ json.dump({"DSH_CORDIS_CONFIG": os.environ.get("DSH_CORDIS_CONFIG")}, open(os.en
 for line in sys.stdin:
     msg = json.loads(line)
     if msg.get("method") == "initialize":
-        print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {"serverInfo": {"name": "bundled-runtime"}}}), flush=True)
+        print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {"serverInfo": {"name": "bundled-runtime", "version": "0.0.1"}, "drivers": {"defaultId": "dsh", "items": [{"id": "dsh", "name": "DeepSeek Harness"}]}}}), flush=True)
     elif msg.get("method") == "shutdown":
         print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {}}), flush=True)
         break

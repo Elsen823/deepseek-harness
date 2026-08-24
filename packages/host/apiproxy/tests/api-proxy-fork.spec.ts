@@ -3,10 +3,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry, { agentEvents } from '@deepseek-ai/dsh-agent'
-import type { Agent, AgentHandle, CreateAgentOptions } from '@deepseek-ai/dsh-agent'
+import type { Agent } from '@deepseek-ai/dsh-agent'
 import { createUserMessage, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import { CommandId } from '@deepseek-ai/dsh-commands/brand'
 import type { LlmCallConfig } from '@deepseek-ai/dsh-llm'
-import SessionStore from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, AgentDriverProposedPlanId } from '@deepseek-ai/dsh-session'
 import type { Session, SessionEvent, SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import UserQuestionService from '@deepseek-ai/dsh-user-questions'
@@ -14,6 +15,7 @@ import type { Workspace } from '@deepseek-ai/dsh-workspace'
 import type { RpcRequest } from '@deepseek-ai/dsh-host-apiproxy/api/rpc'
 import { RpcId } from '@deepseek-ai/dsh-host-apiproxy/api/rpc'
 import { createApiProxy } from '@deepseek-ai/dsh-host-apiproxy'
+import { registerFakeAgentDriver } from './fake-agent-driver.ts'
 
 const sid = (id: string): SessionId => id as SessionId
 
@@ -29,21 +31,11 @@ async function composed(workspaces: readonly Workspace[] = []): Promise<Context>
   await ctx.plugin(AgentRegistry)
   await ctx.plugin(UserQuestionService)
   ctx.provide('workspaceRegistry', { list: () => workspaces } as never)
-  ctx.agents.setFactory({
-    createAgent: async (ownerCtx: Context, options: CreateAgentOptions): Promise<AgentHandle> => {
-      const session = ctx.sessions.create(options.sessionId, {
-        ...options.seed === undefined ? {} : { seed: [...options.seed] },
-        ...options.meta === undefined ? {} : { meta: options.meta },
-      })
-      const agent = {} as Agent
-      const agentCtx = ownerCtx.extend({ agent })
-      Object.assign(agent, { id: session.id, session, status: 'idle', ctx: agentCtx })
-      await options.setup?.(agentCtx)
-      ctx.agents.register(agent)
-      return { agent, dispose: () => Promise.resolve() }
-    },
-    resume: () => Promise.reject(new Error('fork test sources are live')),
-  })
+  registerFakeAgentDriver(ctx, session => ({
+    id: session.id,
+    session,
+    status: 'idle',
+  } as Agent))
   return ctx
 }
 
@@ -57,7 +49,7 @@ function liveAgent(
   tail: Tail = 'none',
   lineage: { parentSession?: SessionId; origin?: 'subagent' } = {},
 ): Session {
-  const session = ctx.sessions.create(sid(id), { meta: { cwd: '/proj', ...lineage } })
+  const session = ctx.sessions.create(sid(id), { meta: { driverId: AgentDriverId('dsh'), cwd: '/proj', ...lineage } })
   for (let turn = 1; turn <= turns; turn++) {
     session.append('turn/start', { turn })
     session.append('user/message', createUserMessage({
@@ -99,6 +91,50 @@ describe('sessions.fork', () => {
     ])
     expect(child?.header.parentSession).toBe(source.id)
     expect(child?.header.cwd).toBe('/proj')
+    await ctx.fiber.dispose()
+  })
+
+  it('forks through another registered Driver when explicitly selected', async () => {
+    const ctx = await composed()
+    const codex = AgentDriverId('codex')
+    registerFakeAgentDriver(ctx, session => ({
+      id: session.id,
+      session,
+      status: 'idle',
+    } as Agent), codex, 'Codex')
+    const source = liveAgent(ctx, 'session-source-other-driver', 1)
+    const planCommandId = CommandId('cross-driver-plan')
+    source.append('command/run', { commandId: planCommandId, name: 'plan', args: '', source: { kind: 'user' } })
+    source.append('command/done', { commandId: planCommandId, kind: 'success', text: 'Plan mode on.' })
+    source.append('plan/mode', { active: true })
+    source.append('permission/preset', { preset: 'workspace-write' })
+    source.append('sandbox/mode', { mode: 'workspace-write' })
+    source.append('approval/policy', { policy: 'ask' })
+    source.append('todo/write', { todos: [] })
+    source.append('agent-driver/objective', {
+      objective: { owner: AgentDriverId('dsh'), objective: 'Do not transfer control', phase: 'active' },
+    })
+    source.append('agent-driver/proposed-plan', {
+      plan: {
+        id: AgentDriverProposedPlanId('source-plan'),
+        owner: AgentDriverId('dsh'),
+        title: 'Source plan',
+        content: '# Source plan',
+        lifecycle: 'proposed',
+      },
+    })
+
+    const response = await api(ctx).sessions.fork(request({ sessionId: source.id, driverId: codex }))
+
+    expect(response.result.ok).toBe(true)
+    if (!response.result.ok) return
+    expect(response.result.value.driverId).toBe(codex)
+    const child = ctx.sessions.get(response.result.value.sessionId)
+    expect(child?.header.driverId).toBe(codex)
+    expect(child?.header.seedLength).toBe(3)
+    expect(child?.events.map(event => event.type)).toEqual([
+      'turn/start', 'user/message', 'turn/end', 'session/end-seed',
+    ])
     await ctx.fiber.dispose()
   })
 
@@ -153,6 +189,7 @@ describe('sessions.fork', () => {
     const parentId = sid('session-cold-parent')
     const header: SessionHeader = {
       version: 0,
+      driverId: AgentDriverId('dsh'),
       id: sourceId,
       createdAt: 1,
       cwd: '/proj',

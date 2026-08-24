@@ -9,7 +9,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type {
-  RpcResult, SessionId, SubagentAddress,
+  AgentDriverCatalog, AgentDriverId, RpcResult, SessionId, SubagentAddress, WorkspaceId,
 } from '@deepseek-ai/dsh-api-remotes/client'
 import type { HostObservable, SessionMaybeProvideInfo } from '@deepseek-ai/dsh-client-ui-slots'
 import type { AgentContext } from '../agents/scope.ts'
@@ -73,6 +73,15 @@ export interface ISessions {
   noteAgentPreset(sessionId: SessionId, agentPreset: string): void
   /** Clear the current selection into the no-session view state. */
   clear(): void
+  /** Read the active Agent Driver catalog and Host-resolved default. */
+  drivers(): Promise<AgentDriverCatalog>
+  /** Create a new immutable-Driver Session and return its id. */
+  create(opts?: {
+    workspaceId?: WorkspaceId
+    cwd?: string
+    sessionId?: SessionId
+    driverId?: AgentDriverId
+  }): Promise<SessionId>
   /**
    * Search the Host's visible message-content index. Results stay
    * request-local; the list snapshot remains the metadata authority.
@@ -94,7 +103,12 @@ export interface ISessions {
    * @returns the child session id.
    * @throws when the fork fails, or when a requested child-title rename fails after creation.
    */
-  fork(opts: { sessionId: SessionId; atSeq?: number; increaseTitle?: boolean }): Promise<SessionId>
+  fork(opts: {
+    sessionId: SessionId
+    atSeq?: number
+    driverId?: AgentDriverId
+    increaseTitle?: boolean
+  }): Promise<SessionId>
   /**
    * Register a per-session standard-props provider (hooks become `use<Name>`
    * selector hooks on the render side; props spread verbatim).

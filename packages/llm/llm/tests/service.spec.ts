@@ -842,8 +842,11 @@ describe('LlmRuntime', () => {
     )
     ctx.llm.registerAdapter(['route'], adapter)
     const prepared = await ctx.llm.prepareCall({ provider: 'route', model: 'model' })
+    const retryAttempt = prepared.nextAttempt()
     expect(Object.isFrozen(prepared.config)).toBe(true)
     expect(Object.isFrozen(prepared.adapterDefaults)).toBe(true)
+    expect(retryAttempt.config).toBe(prepared.config)
+    expect(retryAttempt.retryPolicy).toBe(prepared.retryPolicy)
     expect(prepared.adapterDefaults).toEqual({ reasoningEffort: true })
     expect(() => prepared.stream({
       ...prepared.config,
@@ -856,6 +859,14 @@ describe('LlmRuntime', () => {
     }))
     expect(() => prepared.stream({
       ...prepared.config,
+      messages: [],
+    })).toThrow(expect.objectContaining({ code: 'INVALID_PREPARED_CALL' }))
+    await collect(retryAttempt.stream({
+      ...retryAttempt.config,
+      messages: [],
+    }))
+    expect(() => retryAttempt.stream({
+      ...retryAttempt.config,
       messages: [],
     })).toThrow(expect.objectContaining({ code: 'INVALID_PREPARED_CALL' }))
 

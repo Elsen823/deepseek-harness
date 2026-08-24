@@ -1,4 +1,4 @@
-{"type":"session","version":0,"id":"cccccccc-0000-4000-8000-000000000003","createdAt":1783352127001,"cwd":"{{cwd}}","parentSession":"aaaaaaaa-0000-4000-8000-000000000001","origin":"subagent","delegationDepth":1}
+{"type":"session","version":0,"driverId":"dsh","id":"cccccccc-0000-4000-8000-000000000003","createdAt":1783352127001,"cwd":"{{cwd}}","parentSession":"aaaaaaaa-0000-4000-8000-000000000001","origin":"subagent","delegationDepth":1}
 {"type":"approval/policy","data":{"policy":"never","source":"delegation"}}
 {"type":"agent/inbox/spliced","data":{"target":"next-turn","start":0,"inserted":[{"content":[{"type":"text","text":"Reply with exactly the word ALPHA and nothing else."}],"source":{"kind":"user"},"role":"user","id":"d2b36d19-0f3b-472f-b19b-558890c7351f"}]}}
 {"type":"turn/start","data":{"turn":1}}

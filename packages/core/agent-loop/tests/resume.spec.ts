@@ -1,6 +1,6 @@
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
+import { afterEach, describe, expect, it } from 'vitest'
+import { Context, symbols } from '@deepseek-ai/cordis'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -9,7 +9,7 @@ import SessionStore, { SESSION_FORMAT_VERSION, Session, SessionId, SessionPrepar
 import type { SessionEvent, SessionHeader } from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
-import AgentRegistry, { type Agent } from '@deepseek-ai/dsh-agent'
+import AgentRegistry, { DSH_AGENT_DRIVER_ID, type Agent } from '@deepseek-ai/dsh-agent'
 
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
@@ -46,7 +46,7 @@ async function persistSession(sessionId: SessionId): Promise<string> {
     { type: 'turn/start', seq: 0, time: 1, data: { turn: 1 } },
     { type: 'turn/end', seq: 1, time: 2, data: { turn: 1, reason: { kind: 'completed' } } },
   ]
-  const session = ctx.sessions.create(sessionId, { seed })
+  const session = ctx.sessions.create(sessionId, { seed, meta: { driverId: DSH_AGENT_DRIVER_ID } })
   await ctx.sessions.flush(session)
   await ctx.fiber.dispose()
   return root
@@ -94,6 +94,7 @@ describe('the session-persistence Agent Note: AgentLoop factory create/resume', 
     const first = await persistentHarness(new MockAdapter([]))
     await first.ctx.sessionPersistence.create({
       version: SESSION_FORMAT_VERSION,
+      driverId: DSH_AGENT_DRIVER_ID,
       id: sessionId,
       createdAt: 1,
     })
@@ -359,7 +360,7 @@ describe('the session-persistence Agent Note: AgentLoop factory create/resume', 
       resumeSessionId: sessionId,
       agentOptions: { provider: 'mock', model: 'mock' },
     })
-    const transactionLabels = [`agentLoop.lifecycle(${sessionId})`]
+    const transactionLabels = [`agents.lifecycle(${sessionId})`]
 
     expect(ctx.fiber.getEffects().map(effect => effect.label)).toEqual(expect.arrayContaining(transactionLabels))
     await handle.dispose()
@@ -516,7 +517,7 @@ describe('the session-persistence Agent Note: AgentLoop factory create/resume', 
     await ctx.fiber.dispose()
   })
 
-  it('AgentLoop unload aborts persistence preparation and awaits wrapper settlement', async () => {
+  it('preselection persistence preparation is caller-owned rather than Driver-owned', async () => {
     const sessionId = SessionId('resume-load-factory-unload')
     const root = await persistSession(sessionId)
     const ctx = new Context()
@@ -542,11 +543,16 @@ describe('the session-persistence Agent Note: AgentLoop factory create/resume', 
     ctx.on('session/created', () => void published.push('session/created'))
     ctx.on('agent/created', () => void published.push('agent/created'))
 
-    const resuming = ctx.agents.resume({ resumeSessionId: sessionId, agentOptions: { provider: 'mock', model: 'mock' } })
+    const controller = new AbortController()
+    const resuming = ctx.agents.resume({
+      resumeSessionId: sessionId,
+      agentOptions: { provider: 'mock', model: 'mock' },
+      signal: controller.signal,
+    })
     await preparationStarted.promise
-    const rejection = expect(promptly(resuming)).rejects.toThrow(/agent loop is not active/)
     await promptly(loopFiber.dispose())
-    await rejection
+    controller.abort(new Error('caller cancelled persistence preparation'))
+    await expect(promptly(resuming)).rejects.toThrow('caller cancelled persistence preparation')
 
     expect(published).toEqual([])
     expect(ctx.agents.get(sessionId)).toBeUndefined()
@@ -571,7 +577,7 @@ describe('the session-persistence Agent Note: AgentLoop factory create/resume', 
     const { ctx: ctx1, root } = await persistentHarness(adapter1)
     const forked = ctx1.sessions.create(SessionId('forked-sess'), {
       seed,
-      meta: { cwd: '/w', parentSession: SessionId('parent-sess'), seedLength: seed.length, delegationDepth: 1 },
+      meta: { driverId: DSH_AGENT_DRIVER_ID, cwd: '/w', parentSession: SessionId('parent-sess'), seedLength: seed.length, delegationDepth: 1 },
     })
     await ctx1.sessions.flush(forked)
     await ctx1.fiber.dispose()
@@ -790,20 +796,19 @@ describe('creation and resume cancellation edges', () => {
     await ctx.fiber.dispose()
   })
 
-  it('releases a restored preparation if the loop becomes inactive before setup', async () => {
+  it('rejects after preparation when the stored Driver is unavailable', async () => {
     const sessionId = SessionId('resume-loop-inactive-after-prepare')
     const root = await persistSession(sessionId)
     const ctx = await mountPersistentHarness(root, new MockAdapter([]))
-    const loop = ctx.agentLoop as unknown as {
-      ownership: { isActive: () => boolean }
-    }
-    vi.spyOn(loop.ownership, 'isActive').mockReturnValueOnce(false)
+    const rawLoop = (ctx.agentLoop as AgentLoop & { [symbols.original]?: AgentLoop })[symbols.original] ?? ctx.agentLoop
+    await (rawLoop as unknown as { ctx: Context }).ctx.fiber.dispose()
 
     await expect(ctx.agents.resume({
       resumeSessionId: sessionId,
       agentOptions: { provider: 'mock', model: 'mock' },
-    })).rejects.toThrow('agent loop is not active')
+    })).rejects.toThrow(/no agent driver "dsh" is registered/)
     expect(ctx.agents.get(sessionId)).toBeUndefined()
+    expect(ctx.sessions.get(sessionId)).toBeUndefined()
     await ctx.fiber.dispose()
   })
 

@@ -14,15 +14,19 @@ The shared wire protocol for the DeepSeek Harness SDK runtime: one newline-delim
 
 | Direction | Method | Types |
 |---|---|---|
-| client→server | `initialize` | `InitializeParams` → `InitializeResult` |
+| client→server | `initialize` | `InitializeParams` → `InitializeResult` (server identity and active Driver catalog) |
+| client→server | `agent/drivers` | no params → `AgentDriverCatalogResult` |
+| client→server | `session/runtime` | `SessionRuntimeParams` → `SessionRuntimeResult` |
 | client→server | `session/prompt` | `SessionPromptParams` → `SessionPromptResult` (durable enqueue receipt) |
 | client→server | `shutdown` | no params → `{}` |
 | server→client | `session.event` | `SessionEventNotification` (every session in the runtime, unfiltered) |
-| server→client | `session.status` | `SessionStatusNotification` (whole-agent `running`/`idle` transition) |
+| server→client | `session.created` | `SessionCreatedNotification` (immutable Driver binding and optional parent) |
+| server→client | `session.runtime` | `SessionRuntimeNotification` (process-local availability, activity, operation, and attention) |
+| server→client | `session.status` | `SessionStatusNotification` (binary whole-agent `running`/`idle` transition) |
 | server→client | `subagent.started` | `SubagentStartedNotification` |
 | server→client | `subagent.finished` | `SubagentFinishedNotification` (in-process runs only) |
 
-`HarnessSdkRequestMap` and `HarnessSdkNotificationMap` index these by method name. `SessionPromptResult.messageId` identifies the queued `UserMessage`; it does not identify a later assistant message, turn ending, or prompt result. Clients combine the open-ended `session.event` stream with agent-wide `session.status` according to their own activity ownership. `SubagentFinishedNotification.lastAssistantMessage` contains the child's last non-empty assistant message or, when no such message exists, its accumulated assistant text; the field is absent when the child produced neither. `InitializeParams.maxTokens` is an optional positive safe integer that caps each conversation-model output for SDK-created agents and their in-process descendants; omission allows the selected adapter's exact-model default to apply, or otherwise preserves provider behavior. The notification payload types depend on `SessionEvent` (`dsh-session`), `ContentBlock` (`dsh-llm`), and `SubagentStopReason` (`dsh-subagent`) — the protocol streams full session-log envelopes, so the session vocabulary is part of the wire contract. `serverInfo.name` stays the wire-stable `deepseek-harness-sdk-runtime`.
+`HarnessSdkRequestMap` and `HarnessSdkNotificationMap` index these by method name. `InitializeParams.driverId` selects the default immutable Driver binding for SDK-created Sessions; an omitted value uses the runtime registry default, and `InitializeResult.drivers` reports the active catalog. `SessionPromptParams.driverId` applies only to lazy creation and must equal an existing Session's binding. `SessionPromptResult.messageId` identifies the queued `UserMessage`; it does not identify a later assistant message, turn ending, or prompt result. Clients combine the open-ended `session.event` stream with binary agent-wide `session.status` and the richer process-local `session.runtime` current value according to their own activity ownership. `SubagentFinishedNotification.lastAssistantMessage` contains the child's last non-empty assistant message or, when no such message exists, its accumulated assistant text; the field is absent when the child produced neither. `InitializeParams.maxTokens` is an optional positive safe integer that caps each conversation-model output for SDK-created agents and their in-process descendants; omission allows the selected adapter's exact-model default to apply, or otherwise preserves provider behavior. The notification payload types depend on `SessionEvent` (`dsh-session`), `SessionRuntimeStatus` (`dsh-session-runtime`), `ContentBlock` (`dsh-llm`), and `SubagentStopReason` (`dsh-subagent`). `serverInfo.name` stays the wire-stable `deepseek-harness-sdk-runtime`.
 
 ## Model Experience
 

@@ -10,6 +10,7 @@ import { assertNever } from '@deepseek-ai/dsh-llm'
 import type { CallId } from '@deepseek-ai/dsh-llm'
 import type { InvariantFailure, InvariantInstaller } from '@deepseek-ai/dsh-invariants'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
+import { AGENT_DRIVER_ACTIVITY_INLINE_MAX_BYTES } from './types.ts'
 import { TOOL_NOT_STARTED } from './repair.ts'
 
 const PACKAGE_NAME = '@deepseek-ai/dsh-session'
@@ -144,6 +145,19 @@ function validateEvent(
     }
     case 'user/message':
       break
+    case 'agent-driver/activity': {
+      const content = event.data.data
+      if (content?.storage !== 'inline') break
+      const actualBytes = new TextEncoder().encode(JSON.stringify(content.data)).byteLength
+      if (!Number.isSafeInteger(content.bytes) || content.bytes < 0
+        || content.bytes > AGENT_DRIVER_ACTIVITY_INLINE_MAX_BYTES) {
+        fail(`agent-driver/activity inline bytes must be a non-negative safe integer no greater than ${AGENT_DRIVER_ACTIVITY_INLINE_MAX_BYTES}`)
+      }
+      if (content.bytes !== actualBytes) {
+        fail(`agent-driver/activity inline bytes ${content.bytes} do not match serialized data length ${actualBytes}`)
+      }
+      break
+    }
     case 'session/end-seed':
       // Unconstrained: an unbalanced seed legally puts it inside an open turn.
       break

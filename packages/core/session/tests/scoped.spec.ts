@@ -4,6 +4,7 @@ import { createScope, scopeOf } from '@deepseek-ai/dsh-scope'
 import type { Scope, ScopeKey } from '@deepseek-ai/dsh-scope'
 import SessionStore from '@deepseek-ai/dsh-session'
 import type { Session } from '@deepseek-ai/dsh-session'
+import { AgentDriverId } from '@deepseek-ai/dsh-session'
 
 async function mount(): Promise<Context> {
   const ctx = new Context()
@@ -39,7 +40,7 @@ describe('session dispatch carriers', () => {
     scope.ctx.on('session/created', session => void heard.push(`owner-created:${session.id}`))
     otherScope.ctx.on('session/created', session => void heard.push(`other-created:${session.id}`))
 
-    const session = scope.ctx.sessions.create()
+    const session = scope.ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', { turn: 1 })
 
     expect(heard).toEqual([
@@ -56,7 +57,7 @@ describe('session dispatch carriers', () => {
     ctx.on('session/event', (_s, event) => void heard.push(`global:${event.type}`))
     scope.ctx.on('session/event', (_s, event) => void heard.push(`owner:${event.type}`))
 
-    const bare = ctx.sessions.create()
+    const bare = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     bare.append('turn/start', { turn: 1 })
     expect(heard).toEqual(['global:turn/start'])
   })
@@ -70,7 +71,7 @@ describe('session dispatch carriers', () => {
     owner.ctx.on('session/disposed', (session) => { heard.push(`owner:${session.id}`) })
     other.ctx.on('session/disposed', (session) => { heard.push(`other:${session.id}`) })
 
-    const session = owner.ctx.sessions.prepare()
+    const session = owner.ctx.sessions.prepare(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     const detach = owner.ctx.sessions.enter(session)
     owner.ctx.sessions.announce(session)
     detach()
@@ -82,14 +83,14 @@ describe('session dispatch carriers', () => {
 describe('sessions.flush()', () => {
   it('allows an ordinary flush with no listeners', async () => {
     const ctx = await mount()
-    const session = ctx.sessions.create()
+    const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
 
     await expect(ctx.sessions.flush(session)).resolves.toBe(false)
   })
 
   it('reports a participating listener after it succeeds', async () => {
     const ctx = await mount()
-    const session = ctx.sessions.create()
+    const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     const flushed: Session[] = []
     ctx.on('session/flush', current => void flushed.push(current))
 
@@ -108,8 +109,8 @@ describe('sessions.flush()', () => {
     })
     scope.ctx.on('session/flush', (session: Session) => void flushed.push(`owner:${session.id}`))
 
-    const owned = scope.ctx.sessions.create()
-    const bare = ctx.sessions.create()
+    const owned = scope.ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
+    const bare = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     await ctx.sessions.flush(owned)
     await ctx.sessions.flush(bare)
 
@@ -122,7 +123,7 @@ describe('sessions.flush()', () => {
   it('propagates a rejecting flush listener (the caller owns the failure policy)', async () => {
     const ctx = await mount()
     ctx.on('session/flush', () => Promise.reject(new Error('disk full')))
-    const session = ctx.sessions.create()
+    const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     await expect(ctx.sessions.flush(session)).rejects.toThrow('disk full')
   })
 
@@ -131,7 +132,7 @@ describe('sessions.flush()', () => {
     const flushed: Session[] = []
     ctx.on('session/flush', () => { throw new Error('disk full') })
     ctx.on('session/flush', (session) => { flushed.push(session) })
-    const session = ctx.sessions.create()
+    const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
 
     await expect(ctx.sessions.flush(session)).rejects.toThrow('disk full')
     expect(flushed).toEqual([session])
@@ -147,7 +148,7 @@ describe('sessions.flush()', () => {
       slowStarted = true
       return gate.promise
     })
-    const session = ctx.sessions.create()
+    const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
 
     const flushing = ctx.sessions.flush(session)
     void flushing.finally(() => { settled = true }).catch(() => undefined)
@@ -167,7 +168,7 @@ describe('sessions.flush()', () => {
     ctx.on('session/flush', (session: Session) => void flushed.push(`global:${session.id}`))
     scope.ctx.on('session/flush', (session: Session) => void flushed.push(`owner:${session.id}`))
 
-    const prepared = ctx.sessions.prepare()
+    const prepared = ctx.sessions.prepare(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     await expect(ctx.sessions.flush(prepared)).rejects.toThrow(/not live/)
     expect(flushed).toEqual([])
   })
@@ -179,7 +180,7 @@ describe('sessions.flush()', () => {
     ctx.on('session/flush', (session: Session) => void flushed.push(`global:${session.id}`))
     scope.ctx.on('session/flush', (session: Session) => void flushed.push(`owner:${session.id}`))
 
-    const session = scope.ctx.sessions.prepare()
+    const session = scope.ctx.sessions.prepare(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     const detach = scope.ctx.sessions.enter(session)
     await ctx.sessions.flush(session)
     expect(flushed.sort()).toEqual([`global:${session.id}`, `owner:${session.id}`])

@@ -7,7 +7,7 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, SessionId } from '@deepseek-ai/dsh-session'
 import {
   SessionTelemetryCoordinator,
   type SessionTelemetrySink,
@@ -39,7 +39,7 @@ async function setup() {
 describe('session-telemetry/record waterfall', () => {
   it('passes records through unchanged when no listener is mounted', async () => {
     const { ctx, backend } = await setup()
-    const session = ctx.sessions.create(SessionId('w'))
+    const session = ctx.sessions.create(SessionId('w'), { meta: { driverId: AgentDriverId('dsh') } })
     session.append('user/message', createUserMessage({
       content: [{ type: 'text', text: `key ${FIXTURE_SECRET}` }], source: { kind: 'user' },
     }), { surfaceOp: 'append' })
@@ -53,7 +53,7 @@ describe('session-telemetry/record waterfall', () => {
       const record = next()
       return { ...record, body: { scrubbed: true } }
     })
-    const session = ctx.sessions.create(SessionId('rule'))
+    const session = ctx.sessions.create(SessionId('rule'), { meta: { driverId: AgentDriverId('dsh') } })
     session.append('user/message', createUserMessage({
       content: [{ type: 'text', text: FIXTURE_SECRET }], source: { kind: 'user' },
     }), { surfaceOp: 'append' })
@@ -68,7 +68,7 @@ describe('session-telemetry/record waterfall', () => {
   it('keeps the canonical log untouched by a mounted rule', async () => {
     const { ctx } = await setup()
     ctx.on('session-telemetry/record', (_record, next) => ({ ...next(), body: null }))
-    const session = ctx.sessions.create(SessionId('log'))
+    const session = ctx.sessions.create(SessionId('log'), { meta: { driverId: AgentDriverId('dsh') } })
     session.append('user/message', createUserMessage({
       content: [{ type: 'text', text: FIXTURE_SECRET }], source: { kind: 'user' },
     }), { surfaceOp: 'append' })
@@ -90,7 +90,7 @@ describe('session-telemetry/record waterfall', () => {
       const record = next()
       return { ...record, attributes: { ...record.attributes, inner: 1 } }
     })
-    const session = ctx.sessions.create(SessionId('stack'))
+    const session = ctx.sessions.create(SessionId('stack'), { meta: { driverId: AgentDriverId('dsh') } })
     session.append('user/message', createUserMessage({
       content: [{ type: 'text', text: 'hi' }], source: { kind: 'user' },
     }), { surfaceOp: 'append' })
@@ -106,7 +106,7 @@ describe('session-telemetry/record waterfall', () => {
       inner.called = true
       return next()
     })
-    const session = ctx.sessions.create(SessionId('veto'))
+    const session = ctx.sessions.create(SessionId('veto'), { meta: { driverId: AgentDriverId('dsh') } })
     session.append('user/message', createUserMessage({
       content: [{ type: 'text', text: 'hi' }], source: { kind: 'user' },
     }), { surfaceOp: 'append' })
@@ -119,7 +119,7 @@ describe('session-telemetry/record waterfall', () => {
     ctx.on('session-telemetry/record', () => {
       throw new Error('rule exploded')
     })
-    const session = ctx.sessions.create(SessionId('closed'))
+    const session = ctx.sessions.create(SessionId('closed'), { meta: { driverId: AgentDriverId('dsh') } })
     session.append('user/message', createUserMessage({
       content: [{ type: 'text', text: 'hi' }], source: { kind: 'user' },
     }), { surfaceOp: 'append' })

@@ -19,6 +19,7 @@ import {
   sessionCancelRequestSchema,
   sessionAttachmentRequestSchema,
   sessionCreateRequestSchema,
+  sessionDriversRequestSchema,
   sessionForkRequestSchema,
   sessionHistoryRequestSchema,
   sessionListRequestSchema,
@@ -88,6 +89,7 @@ type UnaryRoutes = {
 }
 
 const UNARY_ROUTES: UnaryRoutes = {
+  'session.drivers': { schema: sessionDriversRequestSchema, invoke: (api, r) => api.sessions.drivers(r) },
   'session.list': { schema: sessionListRequestSchema, invoke: (api, r) => api.sessions.list(r) },
   'session.search': { schema: sessionSearchRequestSchema, invoke: (api, r, signal) => api.sessions.search(r, signal) },
   'session.create': { schema: sessionCreateRequestSchema, invoke: (api, r) => api.sessions.create(r) },

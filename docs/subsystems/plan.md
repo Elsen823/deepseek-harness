@@ -34,9 +34,13 @@ A missing, blank, or non-string `section` and any unknown key fail at plugin loa
 
 When [`ctx.commands`](commands.md) is composed, the plugin registers `/plan [off|message]`: bare `/plan` selects plan mode, any other non-empty message selects it and then submits the text through `agent.steer()` so it becomes the next step's ordinary logged user message under plan guidance, and the exact argument `off` selects inactive, which also cancels a pending entry before it is appended and becomes visible to a request.
 
+## Proposed Plan documents
+
+[`@deepseek-ai/dsh-plan-proposal`](../../packages/plan/plan-proposal/README.md) registers the separate `proposedPlan` SessionProjection over statically known `agent-driver/proposed-plan` whole-document events. A document has a branded id, owner, title, markdown content, lifecycle (`proposed`, `accepted`, `rejected`, or `superseded`), and optional relation/routing JSON; `null` clears the current document. It is not Plan Mode collaboration state or Checklist progress, and the package provides no controller or model tool.
+
 ## The service
 
-`ctx.planMode` owns the logged plan state, applies and narrates selected state at step start, and owns the `plan:policy` section, the `/plan` command, and the stable exit tool; `get`/`set` signatures are in the generated [service catalog](#ctxplanmode--planmodecontroller).
+`ctx.planMode` owns the built-in `dsh` Driver's logged plan state, applies and narrates selected state at step start, and owns the `plan:policy` section, the `/plan` command, and the stable exit tool. Alternate Drivers keep native planning state separate; `get()` reports inactive and `set()` fails. Signatures are in the generated [service catalog](#ctxplanmode--planmodecontroller).
 
 <!-- BEGIN GENERATED cordis-surface (gen-cordis-catalog.ts) — do not edit between markers -->
 
@@ -58,7 +62,7 @@ Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnp
  * accepted in-turn pre-step.
  *
  * @param agent The agent to read.
- * @returns Current logged state plus a pending selection, when present.
+ * @returns Current logged state plus a pending selection, when present; alternate Drivers report inactive.
  */
 get(agent: Agent): { active: boolean; pending?: boolean }
 
@@ -77,6 +81,7 @@ get(agent: Agent): { active: boolean; pending?: boolean }
  * next accepted in-turn pre-step), `cancelled` (an opposite pending selection
  * was cleared; the logged state already matches), or `noop` (already in that
  * state).
+ * @throws when the Session is bound to an alternate Agent Driver.
  */
 set(agent: Agent, active: boolean): 'committed' | 'queued' | 'cancelled' | 'noop'
 ```

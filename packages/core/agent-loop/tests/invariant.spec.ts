@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, SessionId } from '@deepseek-ai/dsh-session'
 import InvariantRegistry from '@deepseek-ai/dsh-invariants'
 import * as AgentLoopInvariant from '@deepseek-ai/dsh-agent-loop/invariant'
 import { createUserMessage, markAgentLoopRequest, type GenerateOptions  } from '@deepseek-ai/dsh-llm'
@@ -24,7 +24,7 @@ function loopRequest<T extends object>(options: T): Readonly<T> {
 
 async function requestSetup() {
   const ctx = await setup()
-  const session = ctx.sessions.create(SessionId('req-check'))
+  const session = ctx.sessions.create(SessionId('req-check'), { meta: { driverId: AgentDriverId('dsh') } })
   session.append('turn/start', { turn: 1 })
   session.append('user/message', createUserMessage({
     content: [{ type: 'text', text: 'hi' }], source: { kind: 'user' },
@@ -77,7 +77,7 @@ describe('request-reconstruction invariant', () => {
 
   it('rejects loop requests with no boundary or header', async () => {
     const ctx = await setup()
-    const session = ctx.sessions.create(SessionId('req-bare'))
+    const session = ctx.sessions.create(SessionId('req-bare'), { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', { turn: 1 })
     const bare = loopRequest({ model: 'm', messages: Object.freeze([]), sessionId: session.id })
     expect(() => { dispatch(ctx, bare) }).toThrow(/no step\/start/)
@@ -94,7 +94,7 @@ describe('request-reconstruction invariant', () => {
     expect(() => { dispatch(ctx, Object.freeze({ model: 'm', messages: Object.freeze([]), sessionId: SessionId('ghost') })) })
       .not.toThrow()
 
-    const directSession = ctx.sessions.create(SessionId('direct-one-shot'))
+    const directSession = ctx.sessions.create(SessionId('direct-one-shot'), { meta: { driverId: AgentDriverId('dsh') } })
     expect(() => {
       dispatch(ctx, Object.freeze({ model: 'one-shot', messages: Object.freeze([]), sessionId: directSession.id }))
     }).not.toThrow()
@@ -125,7 +125,7 @@ describe('request-reconstruction invariant', () => {
     ctx.on('llm/stream', () => (async function* () {})() as never)
     await ctx.plugin(InvariantRegistry)
     await ctx.plugin(AgentLoopInvariant)
-    const session = ctx.sessions.create(SessionId('prepend-check'))
+    const session = ctx.sessions.create(SessionId('prepend-check'), { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', { turn: 1 })
     session.append('user/message', createUserMessage({
       content: [{ type: 'text', text: 'hi' }], source: { kind: 'user' },

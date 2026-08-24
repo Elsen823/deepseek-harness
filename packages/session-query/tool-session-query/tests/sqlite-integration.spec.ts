@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { createUserMessage, CallId  } from '@deepseek-ai/dsh-llm'
 import SessionStore, {
+  AgentDriverId,
   SESSION_FORMAT_VERSION,
   SessionId,
   type Session,
@@ -46,6 +47,7 @@ describe('tool-session-query with the real SQLite provider', () => {
     const persisted = SessionId('persisted')
     await ctx.sessionPersistence.create({
       version: SESSION_FORMAT_VERSION,
+      driverId: AgentDriverId('dsh'),
       id: persisted,
       createdAt: 1,
       cwd: '/work',
@@ -62,7 +64,7 @@ describe('tool-session-query with the real SQLite provider', () => {
     }])
 
     const caller = ctx.sessions.create(SessionId('caller'), {
-      meta: { createdAt: 10, cwd: '/work' },
+      meta: { driverId: AgentDriverId('dsh'), createdAt: 10, cwd: '/work' },
     })
     caller.append('turn/start', { turn: 1 })
     caller.append(
@@ -116,6 +118,7 @@ describe('tool-session-query with the real SQLite provider', () => {
     const persisted = SessionId('fractional-persisted')
     await ctx.sessionPersistence.create({
       version: SESSION_FORMAT_VERSION,
+      driverId: AgentDriverId('dsh'),
       id: persisted,
       createdAt: base,
       cwd: '/work',
@@ -164,7 +167,7 @@ describe('tool-session-query with the real SQLite provider', () => {
     ])
 
     const caller = ctx.sessions.create(SessionId('fractional-caller'), {
-      meta: { createdAt: base + 1_000, cwd: '/work' },
+      meta: { driverId: AgentDriverId('dsh'), createdAt: base + 1_000, cwd: '/work' },
     })
     let call = 0
     const execute = (args: unknown) => ctx.tools.execute({

@@ -10,7 +10,7 @@ import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import SessionStore from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId } from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import UserQuestionService from '@deepseek-ai/dsh-user-questions'
 import ApprovalService from '@deepseek-ai/dsh-user-approval'
@@ -33,7 +33,7 @@ async function harness(): Promise<{ ctx: Context; api: ApiProxy }> {
 
 /** A minimal agent stand-in inside an open turn (the service only reaches `.session`). */
 function agentOf(ctx: Context): Agent {
-  const session = ctx.sessions.create()
+  const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
   session.append('turn/start', { turn: 1 })
   return { session } as unknown as Agent
 }
@@ -184,7 +184,7 @@ describe('approval pending registry', () => {
     const { ctx, api } = await harness()
     const abort = new AbortController()
     const mux = openMux(api, abort)
-    const session = ctx.sessions.create()
+    const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', { turn: 1 })
     session.append('approval/asked', { id: 'pre-aborted' as ApprovalRequestId, toolName: 'bash' })
     const agent = { session } as unknown as Agent
@@ -307,7 +307,7 @@ describe('approval pending registry', () => {
     void api // the answerer is registered; the fake below bypasses the service
     // Bypass ApprovalService: a log whose sole asked event already has its
     // decided partner must not be re-claimed — the answerer delegates.
-    const session = ctx.sessions.create()
+    const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', { turn: 1 })
     session.append('approval/asked', { id: 'stale-ask' as ApprovalRequestId, toolName: 'bash' })
     session.append('approval/decided', { id: 'stale-ask' as ApprovalRequestId, outcome: 'rejected' })
@@ -321,7 +321,7 @@ describe('approval pending registry', () => {
     void api // the answerer is registered; the fake below bypasses the audit path
     // Bypass ApprovalService: dispatch the waterfall directly with a session
     // that has no approval/asked event — the proxy answerer must call next().
-    const session = ctx.sessions.create()
+    const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', { turn: 1 })
     const agent = { session } as unknown as Agent
     const outcome = await ctx.waterfall('approval/request', { agent, toolName: 'x' }, () => Promise.resolve('unavailable' as const))

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { createUserMessage, CallId , createMessage, createToolResultMessage } from '@deepseek-ai/dsh-llm'
 import SessionStore, {
+  AgentDriverId,
   SESSION_FORMAT_VERSION,
   SessionId,
 } from '@deepseek-ai/dsh-session'
@@ -22,7 +23,13 @@ import { TestSessionQueryEngine } from './test-service.ts'
 const id = SessionId('session')
 
 function header(value: string, extra: Partial<SessionHeader> = {}): SessionHeader {
-  return { version: SESSION_FORMAT_VERSION, id: SessionId(value), createdAt: 10, ...extra }
+  return {
+    version: SESSION_FORMAT_VERSION,
+    driverId: AgentDriverId('dsh'),
+    id: SessionId(value),
+    createdAt: 10,
+    ...extra,
+  }
 }
 
 function expectCode(code: SessionQueryErrorCode): Error {
@@ -275,7 +282,7 @@ describe('session-query document and filter helpers', () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
     await ctx.plugin(TestSessionQueryEngine)
-    const session = ctx.sessions.create(id)
+    const session = ctx.sessions.create(id, { meta: { driverId: AgentDriverId('dsh') } })
     session.append('user/message', createUserMessage({
       content: [{ type: 'text', text: 'Alpha\n beta' }], source: { kind: 'user' },
     }), { surfaceOp: 'append' })
@@ -291,7 +298,7 @@ it('registers exact and abstract search behavior under one ctx key', async () =>
   const ctx = new Context()
   await ctx.plugin(SessionStore)
   const fiber = await ctx.plugin(TestSessionQueryEngine)
-  const session = ctx.sessions.create(id)
+  const session = ctx.sessions.create(id, { meta: { driverId: AgentDriverId('dsh') } })
   await expect(ctx.sessionQuery.searchSessions({ query: 'AI' })).resolves.toEqual({ items: [] })
   await expect(ctx.sessionQuery.searchEvents({ sessionId: id, query: 'AI' }))
     .resolves.toEqual({ session: session.header, items: [] })

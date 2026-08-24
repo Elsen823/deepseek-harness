@@ -53,6 +53,7 @@ import type {
 import type { ReplayHandle } from '@deepseek-ai/dsh-llm-replay'
 import { installLlmReplay, parseSessionLog } from '@deepseek-ai/dsh-llm-replay'
 import SessionStore, {
+  AgentDriverId,
   packChunkRuns,
   SESSION_FORMAT_VERSION,
   SessionId,
@@ -824,6 +825,7 @@ export async function seedSession(
   if (last.type !== 'turn/end') throw new Error(`seed fixture must end in turn/end, got ${last.type}`)
   const meta: SessionHeader = {
     version: SESSION_FORMAT_VERSION,
+    driverId: AgentDriverId('dsh'),
     id: SessionId(id),
     createdAt: Date.now() - 60_000,
     cwd: scaffold.workspaceCwd,
@@ -848,6 +850,7 @@ export async function seedBlankSession(
 ): Promise<SessionId> {
   const meta: SessionHeader = {
     version: SESSION_FORMAT_VERSION,
+    driverId: AgentDriverId('dsh'),
     id: SessionId(id),
     createdAt: Date.now() - 60_000,
     cwd,

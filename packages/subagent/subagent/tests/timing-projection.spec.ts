@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import SessionStore from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId } from '@deepseek-ai/dsh-session'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import SubagentRuntime from '../src/index.ts'
@@ -23,13 +23,13 @@ describe('subagent timing projection', () => {
     await ctx.plugin(SessionProjectionRegistry)
     const serviceFiber = await ctx.plugin(SubagentRuntime)
 
-    const before = ctx.sessionProjections.snapshot(ctx.sessions.create()).values
+    const before = ctx.sessionProjections.snapshot(ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })).values
     expect(before.subagentTiming).toEqual({ settledMs: 0 })
     // The identity unit registers alongside timing; an empty log serves its
     // serializable null sentinel.
     expect(before.subagent).toBeNull()
     await serviceFiber.dispose()
-    const after = ctx.sessionProjections.snapshot(ctx.sessions.create()).values
+    const after = ctx.sessionProjections.snapshot(ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })).values
     expect(after.subagentTiming).toBeUndefined()
     expect(after.subagent).toBeUndefined()
   })

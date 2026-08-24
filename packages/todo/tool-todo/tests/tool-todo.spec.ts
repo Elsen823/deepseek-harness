@@ -4,7 +4,7 @@ import Loader from '@deepseek-ai/cordis-plugin-loader'
 import { CallId } from '@deepseek-ai/dsh-llm'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
-import { Session, SessionId } from '@deepseek-ai/dsh-session'
+import { AgentDriverId, SESSION_FORMAT_VERSION, Session, SessionId } from '@deepseek-ai/dsh-session'
 import type { TodoItem } from '@deepseek-ai/dsh-session'
 import { type Agent } from '@deepseek-ai/dsh-agent'
 
@@ -21,8 +21,16 @@ const testToolSignal = new AbortController().signal
  */
 
 /** A parent Agent backed by a real Session — the tool reads `agent.session`. */
-function agentWithSession(id = 'parent-1'): Agent & { session: Session } {
-  const session = Session.create(SessionId(id))
+function agentWithSession(id = 'parent-1', driverId = 'dsh'): Agent & { session: Session } {
+  const sessionId = SessionId(id)
+  const session = driverId === 'dsh'
+    ? Session.create(sessionId)
+    : Session.create(sessionId, undefined, {
+      version: SESSION_FORMAT_VERSION,
+      driverId: AgentDriverId(driverId),
+      id: sessionId,
+      createdAt: 1,
+    })
   return { id: SessionId(id), session } as unknown as Agent & { session: Session }
 }
 
@@ -82,6 +90,16 @@ describe('dsh-tool-todo', () => {
 
     const event = agent.session.events.findLast(e => e.type === 'todo/write')!
     expect(event.data.todos).toEqual(todos)
+  })
+
+  it('rejects alternate Agent Drivers without appending Checklist state', async () => {
+    const ctx = await setup(true)
+    const agent = agentWithSession('codex-writer', 'codex')
+    const result = await callTodo(ctx, { todos: [{ content: 'native task', status: 'pending' }] }, { agent })
+
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('todo_write is unavailable for Agent Driver "codex"')
+    expect(agent.session.events).toHaveLength(0)
   })
 
   it('stores the trimmed content (the dedupe/length key), not the raw input', async () => {

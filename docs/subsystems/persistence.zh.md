@@ -40,7 +40,7 @@ interface SessionLocation {
 
 ## `SessionHeader`：日志旁的元数据
 
-每个会话的元数据与事件日志**分开**存储：格式版本、cwd、血统与 seed 边界是存储层关注点而非对话事件，因此不进入 `SessionEventMap`，也不会到达 `deriveMessages()`。header 通过 `session.header` 附加到 `Session` 上。
+每个会话的元数据与事件日志**分开**存储：格式版本、agent driver 绑定、cwd、血统与 seed 边界是存储层关注点而非对话事件，因此不进入 `SessionEventMap`，也不会到达 `deriveMessages()`。header 通过 `session.header` 附加到 `Session` 上。持久化和恢复的 header 必须携带 `driverId`；只有未提供 header 的 detached 内存 `Session` 才会获得内置的 `dsh` 绑定。
 
 源码：[`packages/core/session/src/types.ts`](../../packages/core/session/src/types.ts)
 
@@ -55,6 +55,8 @@ interface SessionHeader {
    * (no migration — see the constant).
    */
   readonly version: number
+  /** Agent driver that owns creation, resume, and continuation of this session. */
+  readonly driverId: AgentDriverId
   /** The session's id (mirrors the {@link Session}'s id). */
   readonly id: SessionId
   /** Non-negative safe-integer Unix epoch milliseconds when the session was created. */
@@ -95,7 +97,7 @@ interface SessionHeader {
 
 ## `CreateSessionOptions`：seed 与元数据
 
-通过 store 创建 `Session` 时会接收 `seed`（初始回放或 fork 历史）与 `meta`（store 整合进 `SessionHeader` 的存储层字段）。store 填充 `version`/`id` 并为 `createdAt` 提供默认值；调用方可以提供已校验的绝对 `cwd`、`parentSession` 谱系、`seedLength` 种子边界、可选的粗粒度 `origin`、`delegationDepth`、用于组装该 agent（智能体）的 `agentPreset` 以及已有的 `createdAt`。`origin: 'subagent'` 让产品导航能够隐藏重复的 child 行；它不证明描述符有效，也不证明 child 可以恢复。
+通过 store 创建 `Session` 时会接收 `seed`（初始回放或 fork 历史）与必需的 `meta`（store 整合进 `SessionHeader` 的存储层字段）。调用方必须提供 `driverId`；store 填充 `version`/`id` 并为 `createdAt` 提供默认值。调用方还可以提供已校验的绝对 `cwd`、`parentSession` 谱系、`seedLength` 种子边界、可选的粗粒度 `origin`、`delegationDepth`、用于组装该 agent（智能体）的 `agentPreset` 以及已有的 `createdAt`。fork 会继承源 header 的 `driverId`。`origin: 'subagent'` 让产品导航能够隐藏重复的 child 行；它不证明描述符有效，也不证明 child 可以恢复。
 
 ```ts type-equiv
 /**
@@ -110,7 +112,9 @@ interface CreateSessionOptions {
    * Storage metadata read once before publication. `seedLength` is explicit
    * because a resumed seed contains the full stored log, not only its inherited prefix.
    */
-  readonly meta?: {
+  readonly meta: {
+    /** Agent driver that owns the new session lifecycle. */
+    readonly driverId: AgentDriverId
     readonly cwd?: string
     readonly parentSession?: SessionId
     readonly createdAt?: number

@@ -8,7 +8,7 @@ import { createToolResultMessage, createUserMessage } from '@deepseek-ai/dsh-llm
 
 import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import SessionStore, { SessionId, type Session, type SessionEvent } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, SessionId, type Session, type SessionEvent } from '@deepseek-ai/dsh-session'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import {
   SessionTelemetryCoordinator,
@@ -77,7 +77,7 @@ async function setup(
 }
 
 function liveSession(ctx: Context, id = `s-${Math.random().toString(36).slice(2)}`): Session {
-  return ctx.sessions.create(SessionId(id), { meta: {} })
+  return ctx.sessions.create(SessionId(id), { meta: { driverId: AgentDriverId('dsh') } })
 }
 
 function appendTurn(session: Session): void {
@@ -108,7 +108,7 @@ describe('SessionTelemetryCoordinator capture', () => {
   it('stamps header facts on every record when present', async () => {
     const { ctx, backend } = await setup()
     const parent = SessionId('parent')
-    const session = ctx.sessions.create(SessionId('child'), { meta: { cwd: '/tmp/proj', parentSession: parent } })
+    const session = ctx.sessions.create(SessionId('child'), { meta: { driverId: AgentDriverId('dsh'), cwd: '/tmp/proj', parentSession: parent } })
     appendTurn(session)
     for (const record of backend.ledger()) {
       expect(record.attributes['session.cwd']).toBe('/tmp/proj')
@@ -288,7 +288,10 @@ describe('SessionTelemetryCoordinator adoption', () => {
       inject: ['sessions'],
       apply: (inner: Context) => void new SessionTelemetryCoordinator(inner, backend),
     })
-    const child = ctx.sessions.prepare(SessionId('seeded'), { seed: [...parent.events], meta: {} })
+    const child = ctx.sessions.prepare(SessionId('seeded'), {
+      seed: [...parent.events],
+      meta: { driverId: AgentDriverId('dsh') },
+    })
     child.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
     ctx.sessions.enter(child)
     ctx.sessions.announce(child)
@@ -304,10 +307,13 @@ describe('SessionTelemetryCoordinator adoption', () => {
     const backend = new FakeBackend()
     const ctx = new Context()
     await ctx.plugin(SessionStore)
-    const donor = ctx.sessions.create(SessionId('donor'), { meta: {} })
+    const donor = ctx.sessions.create(SessionId('donor'), { meta: { driverId: AgentDriverId('dsh') } })
     donor.append('turn/start', { turn: 1 })
     donor.append('assistant/chunk', { turn: 1, step: 1, chunk: { type: 'text-delta', index: 0, text: 'first' } })
-    const resumed = ctx.sessions.create(SessionId('resumed'), { seed: [...donor.events], meta: {} })
+    const resumed = ctx.sessions.create(SessionId('resumed'), {
+      seed: [...donor.events],
+      meta: { driverId: AgentDriverId('dsh') },
+    })
     await ctx.plugin({
       name: 'fake-telemetry',
       inject: ['sessions'],
@@ -336,7 +342,7 @@ describe('SessionTelemetryCoordinator adoption', () => {
     appendTurn(parent)
     const child = ctx.sessions.create(SessionId('stitch-child'), {
       seed: [...parent.events],
-      meta: { parentSession: SessionId('stitch-parent'), seedLength: 2 },
+      meta: { driverId: AgentDriverId('dsh'), parentSession: SessionId('stitch-parent'), seedLength: 2 },
     })
     await ctx.plugin({
       name: 'fake-telemetry',
@@ -357,7 +363,7 @@ describe('SessionTelemetryCoordinator adoption', () => {
     // (visible to the constructor sweep) before `session/created` fires, so a
     // coordinator loaded inside that window sees the session twice — sweep
     // first, created second. The second adoption must be a no-op.
-    const session = ctx.sessions.prepare(SessionId('overlap'))
+    const session = ctx.sessions.prepare(SessionId('overlap'), { meta: { driverId: AgentDriverId('dsh') } })
     appendTurn(session)
     ctx.sessions.enter(session)
     await ctx.plugin({
@@ -447,7 +453,7 @@ describe('SessionTelemetryCoordinator lifecycle and containment', () => {
 
   it('ignores flush hints for sessions it never adopted', async () => {
     const { ctx, backend } = await setup()
-    const stranger = ctx.sessions.prepare(SessionId('stranger'), { meta: {} })
+    const stranger = ctx.sessions.prepare(SessionId('stranger'), { meta: { driverId: AgentDriverId('dsh') } })
     await ctx.parallel('session/flush', stranger)
     expect(backend.flush).not.toHaveBeenCalled()
   })
@@ -468,7 +474,7 @@ describe('SessionTelemetryCoordinator lifecycle and containment', () => {
       inject: ['sessions'],
       apply: (inner: Context) => void new SessionTelemetryCoordinator(inner, backend),
     })
-    expect(() => ctx.sessions.create(SessionId('vetoed'), { meta: {} })).toThrow('vetoed')
+    expect(() => ctx.sessions.create(SessionId('vetoed'), { meta: { driverId: AgentDriverId('dsh') } })).toThrow('vetoed')
     expect(backend.records.filter(r => r.channel === 'ops')).toHaveLength(0)
   })
 
@@ -495,7 +501,7 @@ describe('SessionTelemetryCoordinator lifecycle and containment', () => {
     // long-running host must not look like a crash), and the session retires
     // from the adopted set so unload neither retains it nor re-marks it.
     const owner = await ctx.plugin(Object.assign((inner: Context) => {
-      inner.sessions.create(SessionId('ephemeral'), { meta: {} })
+      inner.sessions.create(SessionId('ephemeral'), { meta: { driverId: AgentDriverId('dsh') } })
     }, { inject: ['sessions'] }))
     await owner.dispose()
     const atEdge = backend.records.filter(r => r.channel === 'ops')

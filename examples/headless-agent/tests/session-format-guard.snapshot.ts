@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import { LOADER_SMOKE_TEST_TIMEOUT_MS, runLoaderSmoke } from '@deepseek-ai/dsh-loader-smoke'
 import SessionStore, {
+  AgentDriverId,
   SESSION_FORMAT_VERSION,
   SessionId,
   type SessionEvent,
@@ -32,7 +33,7 @@ async function seedSession(root: string, cwd: string, version: number, events: S
   const ctx = new Context()
   await ctx.plugin(SessionStore)
   await ctx.plugin(JsonlSessionPersistence, { root, compression: 'none' })
-  const meta: SessionHeader = { version, id: sessionId, createdAt: 1, cwd }
+  const meta: SessionHeader = { version, driverId: AgentDriverId('dsh'), id: sessionId, createdAt: 1, cwd }
   try {
     await ctx.sessionPersistence.create(meta)
     await ctx.sessionPersistence.append(sessionId, events)

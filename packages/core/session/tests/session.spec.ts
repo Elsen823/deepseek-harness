@@ -2,6 +2,7 @@ import { describe, expect, expectTypeOf, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { createUserMessage, CallId, createMessage, createToolResultMessage, MessageId, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import SessionStore, {
+  AgentDriverId,
   adoptSessionEvent,
   SESSION_FORMAT_VERSION,
   Session,
@@ -939,6 +940,7 @@ describe('Session', () => {
 
     expect(() => Session.fromRestore(SessionId('deep-restore'), [event], {
       version: SESSION_FORMAT_VERSION,
+      driverId: AgentDriverId('codex'),
       id: SessionId('deep-restore'),
       createdAt: 1,
     })).not.toThrow()
@@ -977,6 +979,7 @@ describe('Session', () => {
   it('detaches and freezes an explicitly supplied session header', () => {
     const input = {
       version: SESSION_FORMAT_VERSION,
+      driverId: AgentDriverId('codex'),
       id: SessionId('header-owned'),
       createdAt: 123,
       cwd: '/accepted',
@@ -989,6 +992,7 @@ describe('Session', () => {
 
     expect(session.header).toEqual({
       version: SESSION_FORMAT_VERSION,
+      driverId: 'codex',
       id: 'header-owned',
       createdAt: 123,
       cwd: '/accepted',
@@ -1005,6 +1009,7 @@ describe('Session', () => {
   it('rejects an exotic, non-JSON, or mismatched supplied header', () => {
     class ExoticHeader implements SessionHeader {
       readonly version = SESSION_FORMAT_VERSION
+      readonly driverId = AgentDriverId('codex')
       readonly id = SessionId('header-invalid')
       readonly createdAt = 123
     }
@@ -1020,14 +1025,21 @@ describe('Session', () => {
         header as unknown as SessionHeader,
       )).toThrow(/not a plain JSON record/)
     }
+    expect(() => Session.fromRestore(SessionId('header-invalid'), [], {
+      version: SESSION_FORMAT_VERSION,
+      id: SessionId('header-invalid'),
+      createdAt: 123,
+    } as SessionHeader)).toThrow(/driverId must be a non-empty string/)
     expect(() => Session.create(SessionId('header-invalid'), undefined, {
       version: SESSION_FORMAT_VERSION,
+      driverId: AgentDriverId('codex'),
       id: SessionId('header-invalid'),
       createdAt: 123,
       parentSession: 1n,
     } as unknown as SessionHeader)).toThrow(/not losslessly JSON-serializable/)
     expect(() => Session.create(SessionId('header-invalid'), undefined, {
       version: SESSION_FORMAT_VERSION,
+      driverId: AgentDriverId('codex'),
       id: SessionId('other'),
       createdAt: 123,
     })).toThrow(/does not match session id/)
@@ -1036,6 +1048,7 @@ describe('Session', () => {
   it('rejects invalid scalar fields in an explicitly supplied header', () => {
     const base = {
       version: SESSION_FORMAT_VERSION,
+      driverId: AgentDriverId('codex'),
       id: SessionId('header-shape'),
       createdAt: 123,
     }
@@ -1043,6 +1056,11 @@ describe('Session', () => {
       { header: 1, error: /not a plain JSON record/ },
       { header: null, error: /not a plain JSON record/ },
       { header: { ...base, version: 1 }, error: /header version/ },
+      {
+        header: { version: SESSION_FORMAT_VERSION, id: SessionId('header-shape'), createdAt: 123 },
+        error: /driverId must be a non-empty string/,
+      },
+      { header: { ...base, driverId: '' }, error: /driverId must be a non-empty string/ },
       { header: { ...base, createdAt: '123' }, error: /createdAt must be a non-negative safe integer/ },
       { header: { ...base, cwd: 1 }, error: /header cwd must be a string/ },
       { header: { ...base, cwd: 'relative' }, error: /header cwd must be an absolute path/ },
@@ -1101,7 +1119,7 @@ describe('SessionStore', () => {
     ctx.on('session/created', session => void created.push(session))
     ctx.on('session/event', (session, event) => void events.push([session, event]))
 
-    const session = ctx.sessions.create()
+    const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     expect(created).toEqual([session])
 
     // The store-owned append publication hooks are module-private. A JavaScript caller
@@ -1123,14 +1141,14 @@ describe('SessionStore', () => {
   it('rejects duplicate ids and supports seeding', async () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
-    const a = ctx.sessions.create(SessionId('fixed'))
-    expect(() => ctx.sessions.create(SessionId('fixed'))).toThrow('already exists')
+    const a = ctx.sessions.create(SessionId('fixed'), { meta: { driverId: AgentDriverId('dsh') } })
+    expect(() => ctx.sessions.create(SessionId('fixed'), { meta: { driverId: AgentDriverId('dsh') } })).toThrow('already exists')
 
     a.append('turn/start', { turn: 1 })
     a.append('user/message', createUserMessage({
       content: [{ type: 'text', text: 'q' }], source: { kind: 'user' },
     }), { surfaceOp: 'append' })
-    const forked = ctx.sessions.create(SessionId('fork'), { seed: [...a.events] })
+    const forked = ctx.sessions.create(SessionId('fork'), { meta: { driverId: AgentDriverId('dsh') }, seed: [...a.events] })
     expect(forked.deriveMessages()).toEqual(a.deriveMessages())
   })
 
@@ -1139,8 +1157,8 @@ describe('SessionStore', () => {
     // detach would otherwise remove the wrong session.
     const ctx = new Context()
     await ctx.plugin(SessionStore)
-    const stale = ctx.sessions.prepare(SessionId('racy'))
-    const live = ctx.sessions.create(SessionId('racy'))
+    const stale = ctx.sessions.prepare(SessionId('racy'), { meta: { driverId: AgentDriverId('dsh') } })
+    const live = ctx.sessions.create(SessionId('racy'), { meta: { driverId: AgentDriverId('dsh') } })
     expect(() => ctx.sessions.enter(stale)).toThrow(/already exists/)
     // The live session is intact and still the store entry.
     expect(ctx.sessions.get(SessionId('racy'))).toBe(live)
@@ -1152,7 +1170,7 @@ describe('SessionStore', () => {
     const created: Session[] = []
     ctx.on('session/created', session => void created.push(session))
 
-    const session = ctx.sessions.prepare(SessionId('lifecycle'))
+    const session = ctx.sessions.prepare(SessionId('lifecycle'), { meta: { driverId: AgentDriverId('dsh') } })
     // prepare alone does NOT enter the store.
     expect(ctx.sessions.get(SessionId('lifecycle'))).toBeUndefined()
     const detach = ctx.sessions.enter(session)
@@ -1202,7 +1220,7 @@ describe('SessionStore', () => {
     })
     ctx.on('session/disposed', () => { disposed += 1 })
 
-    const session = ctx.sessions.prepare(SessionId('once'))
+    const session = ctx.sessions.prepare(SessionId('once'), { meta: { driverId: AgentDriverId('dsh') } })
     const detach = ctx.sessions.enter(session)
     ctx.sessions.announce(session)
     expect(reentrantError).toMatch(/already announced/)
@@ -1215,7 +1233,7 @@ describe('SessionStore', () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
     const order: string[] = []
-    const session = ctx.sessions.prepare(SessionId('reentrant-detach'))
+    const session = ctx.sessions.prepare(SessionId('reentrant-detach'), { meta: { driverId: AgentDriverId('dsh') } })
     const detach = ctx.sessions.enter(session)
 
     ctx.on('session/created', (created) => {
@@ -1249,29 +1267,29 @@ describe('SessionStore', () => {
       if (session.id === id) void owner.dispose()
     })
 
-    ownerCtx.sessions.create(id)
+    ownerCtx.sessions.create(id, { meta: { driverId: AgentDriverId('dsh') } })
     await owner.dispose()
     expect(ctx.sessions.get(id)).toBeUndefined()
   })
 
-  it('synthesizes a minimal current-version header for a bare-created session', async () => {
+  it('requires driver binding metadata for a store-created session', async () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
-    const session = ctx.sessions.create(SessionId('plain'))
-    expect(session.header).toMatchObject({ version: SESSION_FORMAT_VERSION, id: 'plain' })
-    expect(Number.isSafeInteger(session.header.createdAt)).toBe(true)
-    expect(session.header.cwd).toBeUndefined()
-    expect(session.header.parentSession).toBeUndefined()
+
+    expect(() => ctx.sessions.create(SessionId('plain')))
+      .toThrow(/creation metadata with driverId is required/)
+    expect(ctx.sessions.get(SessionId('plain'))).toBeUndefined()
   })
 
   it('attaches cwd and parentSession from meta to the header', async () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
     const session = ctx.sessions.create(SessionId('child'), {
-      meta: { cwd: '/work/project', parentSession: SessionId('parent') },
+      meta: { driverId: AgentDriverId('codex'), cwd: '/work/project', parentSession: SessionId('parent') },
     })
     expect(session.header).toMatchObject({
       version: SESSION_FORMAT_VERSION,
+      driverId: 'codex',
       id: 'child',
       cwd: '/work/project',
       parentSession: 'parent',
@@ -1282,7 +1300,7 @@ describe('SessionStore', () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
     const session = ctx.sessions.create(SessionId('delegated-child'), {
-      meta: { parentSession: SessionId('parent'), origin: 'subagent', delegationDepth: 2 },
+      meta: { driverId: AgentDriverId('codex'), parentSession: SessionId('parent'), origin: 'subagent', delegationDepth: 2 },
     })
     expect(session.header).toMatchObject({
       id: 'delegated-child',
@@ -1315,7 +1333,10 @@ describe('SessionStore', () => {
 
     for (const [index, { meta, error }] of cases.entries()) {
       expect(() => ctx.sessions.prepare(SessionId(`bad-meta-${index}`), {
-        meta: meta as NonNullable<CreateSessionOptions['meta']>,
+        meta: {
+          driverId: AgentDriverId('codex'),
+          ...(meta as object),
+        } as CreateSessionOptions['meta'],
       })).toThrow(error)
     }
   })
@@ -1323,7 +1344,9 @@ describe('SessionStore', () => {
   it('rejects a non-absolute meta.cwd', async () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
-    expect(() => ctx.sessions.create(SessionId('rel'), { meta: { cwd: 'relative/path' } }))
+    expect(() => ctx.sessions.create(SessionId('rel'), {
+      meta: { driverId: AgentDriverId('codex'), cwd: 'relative/path' },
+    }))
       .toThrow(/cwd must be an absolute path/)
     // the rejected session was not registered
     expect(ctx.sessions.get(SessionId('rel'))).toBeUndefined()
@@ -1331,7 +1354,7 @@ describe('SessionStore', () => {
 
   it('a bare Session() constructed without the store still exposes a current-version header', () => {
     const session = Session.create(SessionId('bare'))
-    expect(session.header).toMatchObject({ version: SESSION_FORMAT_VERSION, id: 'bare' })
+    expect(session.header).toMatchObject({ version: SESSION_FORMAT_VERSION, driverId: 'dsh', id: 'bare' })
     expect(typeof session.header.createdAt).toBe('number')
   })
 
@@ -1341,7 +1364,7 @@ describe('SessionStore', () => {
 
     let session!: Session
     const fiber = await ctx.plugin(Object.assign((inner: Context) => {
-      session = inner.sessions.create(SessionId('scoped'))
+      session = inner.sessions.create(SessionId('scoped'), { meta: { driverId: AgentDriverId('dsh') } })
     }, { inject: ['sessions'] }))
     expect(ctx.sessions.get(SessionId('scoped'))).toBe(session)
 
@@ -1368,7 +1391,7 @@ describe('SessionStore', () => {
     })
 
     // The throwing emit must roll the store entry back, not leak it.
-    expect(() => ctx.sessions.create(SessionId('fixed'))).toThrow('boom created listener')
+    expect(() => ctx.sessions.create(SessionId('fixed'), { meta: { driverId: AgentDriverId('dsh') } })).toThrow('boom created listener')
     expect(ctx.sessions.get(SessionId('fixed'))).toBeUndefined() // rolled back, not leaked
     expect(disposed.map(session => session.id)).toEqual(['fixed'])
 
@@ -1376,7 +1399,7 @@ describe('SessionStore', () => {
     // not wedged) and its store-owned publication hooks are correctly wired.
     const events: SessionEvent[] = []
     ctx.on('session/event', (_session, event) => void events.push(event))
-    const session = ctx.sessions.create(SessionId('fixed'))
+    const session = ctx.sessions.create(SessionId('fixed'), { meta: { driverId: AgentDriverId('dsh') } })
     expect(ctx.sessions.get(SessionId('fixed'))).toBe(session)
     session.append('turn/start', { turn: 1 })
     session.append('user/message', createUserMessage({
@@ -1390,7 +1413,7 @@ describe('SessionStore', () => {
     await ctx.plugin(SessionStore)
     const warnings: string[] = []
     ctx.logger.warn = ((message: unknown) => { warnings.push(String(message)) }) as typeof ctx.logger.warn
-    const session = ctx.sessions.create(SessionId('contained-event'))
+    const session = ctx.sessions.create(SessionId('contained-event'), { meta: { driverId: AgentDriverId('dsh') } })
     const heard: SessionEvent[] = []
     let committedBeforeNotify = false
     ctx.on('session/event', (observedSession, event) => {
@@ -1421,7 +1444,7 @@ describe('SessionStore', () => {
   it('runs internal dispatch validation on one frozen candidate before commit and resets after a veto', async () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
-    const session = ctx.sessions.create(SessionId('dispatch-veto'))
+    const session = ctx.sessions.create(SessionId('dispatch-veto'), { meta: { driverId: AgentDriverId('dsh') } })
     const validations: Array<{ event: SessionEvent; logLength: number; frozen: boolean }> = []
     const observed: SessionEvent[] = []
     let reject = true
@@ -1462,7 +1485,7 @@ describe('SessionStore', () => {
   it('does not publish a surface transition rejected by internal dispatch', async () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
-    const session = ctx.sessions.create(SessionId('surface-dispatch-veto'))
+    const session = ctx.sessions.create(SessionId('surface-dispatch-veto'), { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', { turn: 1 })
     session.append('step/start', { turn: 1, step: 1 })
     session.append('user/message', createUserMessage({
@@ -1509,7 +1532,7 @@ describe('SessionStore', () => {
   it('resolves session/event dispatch before commit so instrumentation failure cannot hide a logged event', async () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
-    const session = ctx.sessions.create(SessionId('dispatch-check'))
+    const session = ctx.sessions.create(SessionId('dispatch-check'), { meta: { driverId: AgentDriverId('dsh') } })
     const observed: SessionEvent[] = []
     ctx.on('internal/dispatch', (_mode, name) => {
       if (name === 'session/event') throw new Error('dispatch instrumentation rejected the carrier')
@@ -1528,7 +1551,7 @@ describe('SessionStore', () => {
     await ctx.plugin(SessionStore)
     const warnings: string[] = []
     ctx.logger.warn = ((message: unknown) => { warnings.push(String(message)) }) as typeof ctx.logger.warn
-    const session = ctx.sessions.create(SessionId('reentrant-observer'))
+    const session = ctx.sessions.create(SessionId('reentrant-observer'), { meta: { driverId: AgentDriverId('dsh') } })
     const heard: SessionEvent[] = []
     ctx.on('session/event', (observedSession) => {
       observedSession.append('todo/write', { todos: [] })
@@ -1549,7 +1572,7 @@ describe('SessionStore', () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
     const order: string[] = []
-    const session = ctx.sessions.prepare(SessionId('detach-during-append'))
+    const session = ctx.sessions.prepare(SessionId('detach-during-append'), { meta: { driverId: AgentDriverId('dsh') } })
     const detach = ctx.sessions.enter(session)
     ctx.on('internal/dispatch', (_mode, name, args) => {
       if (name !== 'session/event') return
@@ -1583,7 +1606,7 @@ describe('SessionStore', () => {
     ctx.on('session/created', () => Promise.reject(new Error('late creation failure')) as never)
     ctx.on('session/created', (session) => { heard.push(session.id) })
 
-    const session = ctx.sessions.create(SessionId('async-created'))
+    const session = ctx.sessions.create(SessionId('async-created'), { meta: { driverId: AgentDriverId('dsh') } })
     await Promise.resolve()
     await Promise.resolve()
 
@@ -1604,12 +1627,12 @@ describe('SessionStore', () => {
     ctx.on('session/disposed', () => Promise.reject(new Error('async disposed')) as never)
     ctx.on('session/disposed', (session) => { heard.push(session.id) })
 
-    const unannounced = ctx.sessions.prepare(SessionId('never-announced'))
+    const unannounced = ctx.sessions.prepare(SessionId('never-announced'), { meta: { driverId: AgentDriverId('dsh') } })
     const detachUnannounced = ctx.sessions.enter(unannounced)
     detachUnannounced()
     expect(heard).toEqual([])
 
-    const announced = ctx.sessions.prepare(SessionId('contained-disposal'))
+    const announced = ctx.sessions.prepare(SessionId('contained-disposal'), { meta: { driverId: AgentDriverId('dsh') } })
     const detach = ctx.sessions.enter(announced)
     ctx.sessions.announce(announced)
     expect(() => { detach() }).not.toThrow()
@@ -1633,7 +1656,7 @@ describe('SessionStore', () => {
       if (name === 'session/disposed') throw new Error('disposed dispatch instrumentation')
     })
     ctx.on('session/disposed', (session) => { heard.push(session) })
-    const session = ctx.sessions.prepare(SessionId('disposed-dispatch'))
+    const session = ctx.sessions.prepare(SessionId('disposed-dispatch'), { meta: { driverId: AgentDriverId('dsh') } })
     const detach = ctx.sessions.enter(session)
     ctx.sessions.announce(session)
 
@@ -1654,7 +1677,7 @@ describe('SessionStore', () => {
       if (name === 'session/disposed') args[0] = replacement
     })
     ctx.on('session/disposed', (session) => { heard.push(session) })
-    const session = ctx.sessions.prepare(SessionId('fixed-disposed-tuple'))
+    const session = ctx.sessions.prepare(SessionId('fixed-disposed-tuple'), { meta: { driverId: AgentDriverId('dsh') } })
     const detach = ctx.sessions.enter(session)
     ctx.sessions.announce(session)
 

@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { boot, healProfilesModuleFallback, loadOverlayPatches, loadProfile } from '@deepseek-ai/dsh-app-boot'
 import { provideCmdline } from '@deepseek-ai/dsh-cmdline'
-import { SessionId } from '@deepseek-ai/dsh-session'
+import { AgentDriverId, SessionId } from '@deepseek-ai/dsh-session'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { PatchOptions } from '@deepseek-ai/cordis-plugin-include'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
@@ -187,6 +187,20 @@ describe('the shipped Web composition', () => {
     // present three. A regression here means an agent-plane row came back to
     // the host composition.
     expect(toolNames(ctx)).toEqual([])
+  })
+
+  it('mounts exactly one portable Checklist producer on the host plane', async () => {
+    const projections = ctx.get('sessionProjections')
+    if (projections === undefined) throw new Error('the Web composition must compose a projection registry')
+    const handle = await ctx.agents.create({
+      sessionId: SessionId('preset-minimal-todo-projection'),
+      setup: agentCtx => ctx.agentPresets.mount(agentCtx, 'minimal').then(() => undefined),
+    })
+    try {
+      expect(projections.snapshot(handle.agent.session).values.todos).toBeNull()
+    } finally {
+      await handle.dispose()
+    }
   })
 
   it('keeps the token meter and its context-meter projections on the host plane', async () => {
@@ -613,7 +627,7 @@ describe('a switch survives the session', () => {
     // The exact shape a resume reads back from disk: the header says standard,
     // the log records the switch the user made while the session was blank.
     const rebuilt = resolveSessionPreset({
-      header: { version: 0, id: SessionId('x'), createdAt: 0, agentPreset: 'standard' },
+      header: { version: 0, driverId: AgentDriverId('dsh'), id: SessionId('x'), createdAt: 0, agentPreset: 'standard' },
       events: [
         { type: 'agent-preset/selected', seq: 1, time: 0, data: { agentPreset: 'minimal' } },
         { type: 'turn/start', seq: 2, time: 0, data: { turn: 0, trigger: { kind: 'message', source: { kind: 'user' } } } },

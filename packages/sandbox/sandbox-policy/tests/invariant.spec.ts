@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import SessionStore, { type Session, type SessionEvent } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, type Session, type SessionEvent } from '@deepseek-ai/dsh-session'
 import InvariantRegistry, { InvariantError } from '@deepseek-ai/dsh-invariants'
 import * as SandboxPolicyInvariant from '@deepseek-ai/dsh-sandbox-policy/invariant'
 
@@ -42,7 +42,7 @@ describe('sandbox-policy invariants', () => {
   it('rejects an unknown mode already present on late registration', async () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
-    ctx.sessions.create().append('sandbox/mode', { mode: 'host-root' as never })
+    ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } }).append('sandbox/mode', { mode: 'host-root' as never })
     await ctx.plugin(InvariantRegistry, { enabled: true })
 
     await expect(ctx.plugin(SandboxPolicyInvariant).then(() => undefined)).rejects.toMatchObject({

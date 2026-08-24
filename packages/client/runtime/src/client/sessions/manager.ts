@@ -3,7 +3,7 @@
 // List data never enters zustand; React connects via subscribe/getListSnapshot.
 
 import type {
-  IApiClient, HostFrame, MuxFrame, RpcError, RpcRequest, RpcResult, SessionId,
+  AgentDriverId, IApiClient, HostFrame, MuxFrame, RpcError, RpcRequest, RpcResult, SessionId,
   SessionSummary, SubagentAddress, SubagentCatalog, JobView, WorkspaceId,
 } from '@deepseek-ai/dsh-api-remotes/client'
 // Value import from the inline-safe wire layer (not the connection plugin):
@@ -72,6 +72,8 @@ type SessionListMutation =
   | { kind: 'upsert'; summary: SessionSummary }
   | { kind: 'remove'; sessionId: SessionId }
   | { kind: 'status'; sessionId: SessionId; running: boolean }
+  | { kind: 'runtime'; sessionId: SessionId; runtime?: NonNullable<SessionSummary['runtime']> }
+  | { kind: 'preset'; sessionId: SessionId; agentPreset: string }
   | { kind: 'activity'; sessionId: SessionId; updatedAt: number }
   /** Local first-send flip: the sender clears blank without waiting for a host frame. */
   | { kind: 'engaged'; sessionId: SessionId }
@@ -290,6 +292,7 @@ export class SessionManager {
       if (summary !== undefined) {
         session.handleBlank(summary.blank)
         session.handleRunning(summary.running)
+        if (summary.runtime !== undefined) session.handleRuntime(summary.runtime)
       } else {
         const address = this.addresses.get(sessionId)
         const child = address === undefined ? undefined : this.catalogs.get(address.parentSessionId)?.entries
@@ -534,28 +537,37 @@ export class SessionManager {
    * @returns the create result.
    */
   async create(
-    opts: { workspaceId?: WorkspaceId; cwd?: string; sessionId?: SessionId } = {},
-  ): Promise<RpcResult<{ sessionId: SessionId }>> {
+    opts: { workspaceId?: WorkspaceId; cwd?: string; sessionId?: SessionId; driverId?: AgentDriverId } = {},
+  ): Promise<RpcResult<{ sessionId: SessionId; driverId: AgentDriverId; agentPreset?: string }>> {
     try {
-      const shared = opts.sessionId === undefined ? {} : { sessionId: opts.sessionId }
+      const shared = {
+        ...opts.sessionId === undefined ? {} : { sessionId: opts.sessionId },
+        ...opts.driverId === undefined ? {} : { driverId: opts.driverId },
+      }
       const payload = opts.workspaceId !== undefined
         ? { workspaceId: opts.workspaceId, ...shared }
         : { ...(opts.cwd === undefined ? {} : { cwd: opts.cwd }), ...shared }
       const { result } = await this.api.sessions.create(payload)
       if (result.ok) {
         this.recordMutation({ kind: 'upsert', summary: {
-          sessionId: result.value.sessionId, updatedAt: Date.now(), running: false, blank: true,
+          sessionId: result.value.sessionId,
+          driverId: result.value.driverId,
+          updatedAt: Date.now(), running: false, blank: true,
           ...(opts.cwd !== undefined ? { cwd: opts.cwd } : {}),
           ...(result.value.agentPreset !== undefined ? { agentPreset: result.value.agentPreset } : {}),
         } })
       } else {
         const publishedSessionId = workspaceAttachSessionId(result.error)
+        const publishedDriverId = result.error.code === 'workspace-attach-failed'
+          ? result.error.details.driverId
+          : undefined
         // Publication precedes attachment. The error's id is a real Session,
         // so expose it immediately as Ungrouped while the caller keeps the
         // prompt buffer and decides whether to retry attachment.
-        if (publishedSessionId !== undefined) {
+        if (publishedSessionId !== undefined && publishedDriverId !== undefined) {
           this.recordMutation({ kind: 'upsert', summary: {
             sessionId: publishedSessionId,
+            driverId: publishedDriverId,
             updatedAt: Date.now(),
             running: false,
             blank: true,
@@ -578,20 +590,28 @@ export class SessionManager {
    * @returns the fork result (the child session id).
    */
   async fork(
-    opts: { sessionId: SessionId; atSeq?: number },
-  ): Promise<RpcResult<{ sessionId: SessionId }>> {
+    opts: { sessionId: SessionId; atSeq?: number; driverId?: AgentDriverId },
+  ): Promise<RpcResult<{ sessionId: SessionId; driverId: AgentDriverId }>> {
     try {
       const source = this.summaries.find(s => s.sessionId === opts.sessionId)
       const { result } = await this.api.sessions.fork({
         sessionId: opts.sessionId,
         ...opts.atSeq === undefined ? {} : { atSeq: opts.atSeq },
+        ...opts.driverId === undefined ? {} : { driverId: opts.driverId },
       })
       const childId = result.ok
         ? result.value.sessionId
         : workspaceAttachSessionId(result.error)
-      if (childId !== undefined) {
+      const childDriverId = result.ok
+        ? result.value.driverId
+        : result.error.code === 'workspace-attach-failed'
+          ? result.error.details.driverId
+          : undefined
+      if (childId !== undefined && childDriverId !== undefined) {
         this.recordMutation({ kind: 'upsert', summary: {
-          sessionId: childId, updatedAt: Date.now(), running: false, blank: false,
+          sessionId: childId,
+          driverId: childDriverId,
+          updatedAt: Date.now(), running: false, blank: false,
           parentSessionId: opts.sessionId,
           ...(source?.cwd !== undefined ? { cwd: source.cwd } : {}),
         } })
@@ -618,9 +638,7 @@ export class SessionManager {
    * @param agentPreset - the preset id the host confirmed.
    */
   noteAgentPreset(sessionId: SessionId, agentPreset: string): void {
-    this.recordMutation({ kind: 'upsert', summary: {
-      sessionId, updatedAt: Date.now(), running: false, blank: true, agentPreset,
-    } })
+    this.recordMutation({ kind: 'preset', sessionId, agentPreset })
   }
 
   /** Apply immediately and retain for replay when a list response is in flight. */
@@ -797,7 +815,9 @@ export class SessionManager {
     switch (frame.type) {
       case 'host/session-added': {
         this.mergeSummary({
-          sessionId: frame.sessionId, updatedAt: Date.now(), running: false, blank: frame.blank,
+          sessionId: frame.sessionId,
+          driverId: frame.driverId,
+          updatedAt: Date.now(), running: false, blank: frame.blank,
           ...(frame.parentSessionId !== undefined ? { parentSessionId: frame.parentSessionId } : {}),
           ...(frame.origin !== undefined ? { origin: frame.origin } : {}),
           ...(frame.cwd !== undefined ? { cwd: frame.cwd } : {}),
@@ -866,6 +886,11 @@ export class SessionManager {
         this.updateCatalogActivity(frame.sessionId, frame.running)
         return
       }
+      case 'host/session-runtime': {
+        this.recordMutation({ kind: 'runtime', sessionId: frame.status.sessionId, runtime: frame.status })
+        this.sessions.get(frame.status.sessionId)?.handleRuntime(frame.status)
+        return
+      }
       case 'host/agent-error': {
         this.sessions.get(frame.sessionId)?.handleAgentError(frame.message)
         return // not reflected in the list
@@ -896,6 +921,12 @@ export class SessionManager {
       if (kept.length === 0) this.pendingBuffers.delete(sessionId)
       else this.pendingBuffers.set(sessionId, kept)
     }
+    for (const summary of [...this.summaries]) {
+      if (summary.runtime !== undefined) {
+        this.recordMutation({ kind: 'runtime', sessionId: summary.sessionId })
+      }
+    }
+    for (const session of this.sessions.values()) session.handleRuntime(undefined)
   }
 
   /** After each connection generation: refresh the session baseline and rebuild opened windows. */
@@ -1084,6 +1115,8 @@ function applyMutation(summaries: readonly SessionSummary[], mutation: SessionLi
       if (existing === undefined) return [mutation.summary, ...summaries]
       const filled: SessionSummary = {
         ...existing,
+        driverId: mutation.summary.driverId,
+        ...mutation.summary.runtime === undefined ? {} : { runtime: mutation.summary.runtime },
         // Blank only lowers: a stale true (session-added racing the local
         // first send) never re-hides an already-surfaced session.
         blank: existing.blank && mutation.summary.blank,
@@ -1100,7 +1133,8 @@ function applyMutation(summaries: readonly SessionSummary[], mutation: SessionLi
       }
       if (filled.cwd === existing.cwd && filled.parentSessionId === existing.parentSessionId
         && filled.origin === existing.origin && filled.blank === existing.blank
-        && filled.agentPreset === existing.agentPreset) return [...summaries]
+        && filled.agentPreset === existing.agentPreset && filled.driverId === existing.driverId
+        && filled.runtime === existing.runtime) return [...summaries]
       return summaries.map(summary => summary.sessionId === mutation.summary.sessionId ? filled : summary)
     }
     case 'remove':
@@ -1111,6 +1145,23 @@ function applyMutation(summaries: readonly SessionSummary[], mutation: SessionLi
       return summaries.map(summary => summary.sessionId === mutation.sessionId
         && (summary.running !== mutation.running || (mutation.running && summary.blank))
         ? { ...summary, running: mutation.running, blank: summary.blank && !mutation.running }
+        : summary)
+    case 'runtime':
+      return summaries.map((summary) => {
+        if (summary.sessionId !== mutation.sessionId) return summary
+        if (mutation.runtime === undefined) {
+          if (summary.runtime === undefined) return summary
+          const { runtime: _runtime, ...withoutRuntime } = summary
+          return withoutRuntime
+        }
+        return (summary.runtime?.revision ?? -1) < mutation.runtime.revision
+          ? { ...summary, runtime: mutation.runtime }
+          : summary
+      })
+    case 'preset':
+      return summaries.map(summary => summary.sessionId === mutation.sessionId
+        && summary.agentPreset !== mutation.agentPreset
+        ? { ...summary, agentPreset: mutation.agentPreset }
         : summary)
     case 'activity':
       return summaries.map(summary => summary.sessionId === mutation.sessionId

@@ -1,7 +1,7 @@
 import { Context } from '@deepseek-ai/cordis'
 import { describe, expect, it, vi } from 'vitest'
 import LlmRuntime, { createUserMessage, deepFreeze, markAgentLoopRequest  } from '@deepseek-ai/dsh-llm'
-import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, SessionId } from '@deepseek-ai/dsh-session'
 import SessionTitleService, {
   SessionTitleProviderId,
   type SessionTitleProvider,
@@ -52,7 +52,7 @@ describe('SessionTitleService Provider lifecycle', () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
     await ctx.plugin(SessionTitleService, CONFIG)
-    const parent = ctx.sessions.create(SessionId('title-parent'))
+    const parent = ctx.sessions.create(SessionId('title-parent'), { meta: { driverId: AgentDriverId('dsh') } })
     parent.append('turn/start', {
       turn: 1,
     })
@@ -130,7 +130,7 @@ describe('SessionTitleService Provider lifecycle', () => {
       },
     }
     ctx.sessionTitle.register(provider)
-    const session = ctx.sessions.create(SessionId('first-provider'))
+    const session = ctx.sessions.create(SessionId('first-provider'), { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', {
       turn: 1,
     })
@@ -188,7 +188,7 @@ describe('SessionTitleService Provider lifecycle', () => {
       generate: async () => ({ title: 'duplicate', messageSeqs: [0] }),
     })).toThrow(/already registered/)
 
-    const session = ctx.sessions.create(SessionId('dispose-provider'))
+    const session = ctx.sessions.create(SessionId('dispose-provider'), { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', {
       turn: 1,
     })
@@ -237,7 +237,7 @@ describe('SessionTitleService Provider lifecycle', () => {
       },
     }
     ctx.sessionTitle.register(provider)
-    const session = ctx.sessions.create(SessionId('supersede'))
+    const session = ctx.sessions.create(SessionId('supersede'), { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', {
       turn: 1,
     })
@@ -277,7 +277,7 @@ describe('SessionTitleService Provider lifecycle', () => {
         }
       },
     })
-    const session = ctx.sessions.create(SessionId('unchanged-route'))
+    const session = ctx.sessions.create(SessionId('unchanged-route'), { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', {
       turn: 1,
     })
@@ -332,9 +332,9 @@ describe('SessionTitleService Provider lifecycle', () => {
 
     void ctx.llm.stream(deepFreeze(options))
     void ctx.llm.stream(markAgentLoopRequest(deepFreeze({ ...options, sessionId: SessionId('missing') })))
-    const quiet = ctx.sessions.create(SessionId('quiet'))
+    const quiet = ctx.sessions.create(SessionId('quiet'), { meta: { driverId: AgentDriverId('dsh') } })
     void ctx.llm.stream(markAgentLoopRequest(deepFreeze({ ...options, sessionId: quiet.id })))
-    const pending = ctx.sessions.create(SessionId('unmatched-boundary'))
+    const pending = ctx.sessions.create(SessionId('unmatched-boundary'), { meta: { driverId: AgentDriverId('dsh') } })
     pending.append('turn/start', {
       turn: 1,
     })
@@ -357,7 +357,7 @@ describe('SessionTitleService Provider lifecycle', () => {
       generate: async () => { throw new Error('title backend failed') },
     }
     ctx.sessionTitle.register(provider)
-    const session = ctx.sessions.create(SessionId('failure'))
+    const session = ctx.sessions.create(SessionId('failure'), { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', {
       turn: 1,
     })

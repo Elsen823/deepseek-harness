@@ -3,7 +3,13 @@ import { Context } from '@deepseek-ai/cordis'
 import { createUserMessage, CallId } from '@deepseek-ai/dsh-llm'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime, { RUN_CODE_NAME, defineContentToolFixture } from '@deepseek-ai/dsh-tools'
-import { Session, SessionId, type UserMessage } from '@deepseek-ai/dsh-session'
+import {
+  AgentDriverId,
+  SESSION_FORMAT_VERSION,
+  Session,
+  SessionId,
+  type UserMessage,
+} from '@deepseek-ai/dsh-session'
 import AgentRegistry, { agentEvents, type Agent } from '@deepseek-ai/dsh-agent'
 import { createScope } from '@deepseek-ai/dsh-scope'
 import UserQuestionService, {
@@ -28,11 +34,19 @@ const PLAN_CONFIG = { section: TEST_PLAN_SECTION } satisfies PlanModeConfig
 async function agentWithSession(
   ctx: Context,
   id = 'agent-1',
-  { active, owner }: { active?: boolean; owner?: Agent } = {},
+  { active, owner, driverId }: { active?: boolean; owner?: Agent; driverId?: string } = {},
 ): Promise<Agent & { session: Session }> {
   // A live store session when a store is mounted (the command executor logs
   // lifecycle events through it); bare otherwise (fold/tool-only benches).
-  const session = Session.create(SessionId(id))
+  const sessionId = SessionId(id)
+  const session = driverId === undefined
+    ? Session.create(sessionId)
+    : Session.create(sessionId, undefined, {
+      version: SESSION_FORMAT_VERSION,
+      driverId: AgentDriverId(driverId),
+      id: sessionId,
+      createdAt: Date.now(),
+    })
   const agent = {
     id: SessionId(id),
     session,
@@ -201,6 +215,18 @@ describe('ctx.planMode: get/set', () => {
     expect(ctx.planMode.get(agent)).toEqual({ active: false })
     agent.session.append('plan/mode', { active: true })
     expect(ctx.planMode.get(agent)).toEqual({ active: true })
+  })
+
+  it('keeps DSH Plan Mode unavailable for alternate Agent Drivers', async () => {
+    const ctx = await setup()
+    const agent = await agentWithSession(ctx, 'codex-agent', { active: true, driverId: 'codex' })
+
+    expect(ctx.planMode.get(agent)).toEqual({ active: false })
+    expect(() => ctx.planMode.set(agent, false)).toThrow(
+      'DSH Plan Mode is unavailable for Agent Driver "codex"',
+    )
+    const assembly = await assembleFor(ctx, agent)
+    expect(assembly.sections.find(section => section.name === 'plan:policy')?.text).toBe('')
   })
 
   it('selects inactive as the plan exit target during an open turn', async () => {

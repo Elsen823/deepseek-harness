@@ -4,7 +4,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { appendFile, mkdtemp, mkdir, rm, readFile, writeFile, readdir, stat, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
-import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, SessionId } from '@deepseek-ai/dsh-session'
 import type { Session, SessionEvent, SessionHeader } from '@deepseek-ai/dsh-session'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import {
@@ -302,9 +302,30 @@ describe('JsonlSessionPersistence: durability and crash semantics', () => {
     expect(scanned.events.map(event => event.type)).toEqual(oneTurnLog().map(event => event.type))
   })
 
+  it('rejects a persisted header with an empty driverId', async () => {
+    const m = meta('empty-driver', '/work')
+    await ctx.sessionPersistence.create(m)
+    await ctx.sessionPersistence.append(m.id, oneTurnLog())
+    const line = { ...toHeaderLine(m), driverId: '' }
+    await writeFile(rawLogPath(root, '/work', m.id), `${JSON.stringify(line)}\n`)
+
+    await expect(ctx.sessionPersistence.load(m.id)).rejects.toThrow(/corrupt session log/)
+  })
+
   it('readRaw is undefined for an absent session', async () => {
     const m = meta('raw-missing', '/work')
     expect(await ctx.sessionPersistence.readRaw(m.id)).toBeUndefined()
+  })
+
+  it('rejects a persisted header missing driverId', async () => {
+    const m = meta('missing-driver', '/work')
+    await ctx.sessionPersistence.create(m)
+    await ctx.sessionPersistence.append(m.id, oneTurnLog())
+    const line: Partial<ReturnType<typeof toHeaderLine>> = toHeaderLine(m)
+    delete line.driverId
+    await writeFile(rawLogPath(root, '/work', m.id), `${JSON.stringify(line)}\n`)
+
+    await expect(ctx.sessionPersistence.load(m.id)).rejects.toThrow(/corrupt session log/)
   })
 
   it('readRaw rejects a corrupt header line instead of exporting it', async () => {
@@ -564,7 +585,7 @@ describe('JsonlSessionPersistence: durability and crash semantics', () => {
   })
 
   it('persists a forked child seed through the existing session write path', async () => {
-    const source = ctx.sessions.create(SessionId('persist-parent'), { meta: { cwd: '/workspace' } })
+    const source = ctx.sessions.create(SessionId('persist-parent'), { meta: { driverId: AgentDriverId('dsh'), cwd: '/workspace' } })
     appendClosedTurn(source)
 
     const child = ctx.sessions.fork(source, undefined, SessionId('persist-child'))
@@ -762,7 +783,7 @@ describe('JsonlSessionPersistence: durability and crash semantics', () => {
 
   it('path-traversal session ids are neutralized (no escape from root)', async () => {
     const evil = SessionId('../../etc/pwn')
-    const m = { version: 0, id: evil, createdAt: 1 }
+    const m = { version: 0, driverId: AgentDriverId('dsh'), id: evil, createdAt: 1 }
     await ctx.sessionPersistence.create(m)
     await ctx.sessionPersistence.append(evil, oneTurnLog())
     // The file lives UNDER root, not at ../../etc.
@@ -787,8 +808,8 @@ describe('JsonlSessionPersistence: write path (session/event → flush)', () => 
     await ctx.plugin(SessionStore)
     await ctx.plugin(JsonlSessionPersistence, { root, compression: 'none' })
 
-    const a = ctx.sessions.create(SessionId('sa'))
-    const b = ctx.sessions.create(SessionId('sb'))
+    const a = ctx.sessions.create(SessionId('sa'), { meta: { driverId: AgentDriverId('dsh') } })
+    const b = ctx.sessions.create(SessionId('sb'), { meta: { driverId: AgentDriverId('dsh') } })
     a.append('turn/start', { turn: 1 })
     b.append('turn/start', { turn: 1 })
     a.append('user/message', createUserMessage({
@@ -894,6 +915,7 @@ describe('JsonlSessionPersistence: scanLog unit', () => {
     const log = JSON.stringify({
       type: 'session',
       version: 0,
+      driverId: 'dsh',
       id: 'invalid-created-at',
       createdAt,
       delegationDepth: 0,
@@ -902,7 +924,7 @@ describe('JsonlSessionPersistence: scanLog unit', () => {
   })
 
   it('rejects a session header with negative-zero createdAt', () => {
-    const log = '{"type":"session","version":0,"id":"invalid-created-at","createdAt":-0,"delegationDepth":0}\n'
+    const log = '{"type":"session","version":0,"driverId":"dsh","id":"invalid-created-at","createdAt":-0,"delegationDepth":0}\n'
     expect(() => scanLog(Buffer.from(log))).toThrow(/session header/)
   })
 
@@ -915,6 +937,7 @@ describe('JsonlSessionPersistence: scanLog unit', () => {
     const log = JSON.stringify({
       type: 'session',
       version: 0,
+      driverId: 'dsh',
       id: 'invalid-depth',
       createdAt: 1,
       ...delegationDepth === undefined ? {} : { delegationDepth },
@@ -923,13 +946,14 @@ describe('JsonlSessionPersistence: scanLog unit', () => {
   })
 
   it('rejects a session header with negative-zero delegationDepth', () => {
-    const log = '{"type":"session","version":0,"id":"invalid-depth","createdAt":1,"delegationDepth":-0}\n'
+    const log = '{"type":"session","version":0,"driverId":"dsh","id":"invalid-depth","createdAt":1,"delegationDepth":-0}\n'
     expect(() => scanLog(Buffer.from(log))).toThrow(/session header/)
   })
 
   it('round-trips the agent preset a session was composed from', () => {
     const line = toHeaderLine({
       version: 0,
+      driverId: AgentDriverId('dsh'),
       id: SessionId('composed'),
       createdAt: 1,
       delegationDepth: 0,
@@ -943,14 +967,14 @@ describe('JsonlSessionPersistence: scanLog unit', () => {
   })
 
   it('rejects a session header whose agentPreset is not a string', () => {
-    const log = '{"type":"session","version":0,"id":"bad-preset","createdAt":1,"delegationDepth":0,"agentPreset":7}\n'
+    const log = '{"type":"session","version":0,"driverId":"dsh","id":"bad-preset","createdAt":1,"delegationDepth":0,"agentPreset":7}\n'
 
     expect(() => scanLog(Buffer.from(log))).toThrow(/session header/)
   })
 
   it('a seq gap after the last turn/end bounds the preserved tail (torn fragment tolerated)', () => {
     const log = [
-      JSON.stringify({ type: 'session', version: 0, id: 'g', createdAt: 1, delegationDepth: 0 }),
+      JSON.stringify({ type: 'session', version: 0, driverId: 'dsh', id: 'g', createdAt: 1, delegationDepth: 0 }),
       JSON.stringify({ type: 'turn/start', seq: 0, time: 1, data: { turn: 1 } }),
       JSON.stringify({ type: 'step/start', seq: 2, time: 2, data: { turn: 1, step: 1 } }), // gap: missing seq 1
     ].join('\n') + '\n'
@@ -962,7 +986,7 @@ describe('JsonlSessionPersistence: scanLog unit', () => {
 
   it('rejects a seq gap BEFORE a later committed turn/end (committed data damaged)', () => {
     const log = [
-      JSON.stringify({ type: 'session', version: 0, id: 'g2', createdAt: 1, delegationDepth: 0 }),
+      JSON.stringify({ type: 'session', version: 0, driverId: 'dsh', id: 'g2', createdAt: 1, delegationDepth: 0 }),
       JSON.stringify({ type: 'turn/start', seq: 0, time: 1, data: { turn: 1 } }),
       JSON.stringify({ type: 'step/start', seq: 2, time: 2, data: { turn: 1, step: 1 } }), // gap: missing seq 1
       JSON.stringify({ type: 'turn/end', seq: 3, time: 3, data: { turn: 1, reason: { kind: 'completed' } } }),
@@ -974,7 +998,7 @@ describe('JsonlSessionPersistence: scanLog unit', () => {
 
   it('rejects a corrupt line BEFORE a later committed turn/end (committed data damaged)', () => {
     const log = [
-      JSON.stringify({ type: 'session', version: 0, id: 'c', createdAt: 1, delegationDepth: 0 }),
+      JSON.stringify({ type: 'session', version: 0, driverId: 'dsh', id: 'c', createdAt: 1, delegationDepth: 0 }),
       '{not json', // corrupt, sits in the committed region (a turn/end follows)
       JSON.stringify({ type: 'turn/end', seq: 1, time: 2, data: { turn: 1, reason: { kind: 'completed' } } }),
     ].join('\n') + '\n'
@@ -982,7 +1006,7 @@ describe('JsonlSessionPersistence: scanLog unit', () => {
   })
 
   it('a header-only log (no event lines at all) preserves nothing — committedBytes is the header', () => {
-    const log = JSON.stringify({ type: 'session', version: 0, id: 'h0', createdAt: 1, delegationDepth: 0 }) + '\n'
+    const log = JSON.stringify({ type: 'session', version: 0, driverId: 'dsh', id: 'h0', createdAt: 1, delegationDepth: 0 }) + '\n'
     const scanned = scanLog(Buffer.from(log))
     expect(scanned.events).toEqual([])
     // committedBytes falls back to the header line's end (no preserved events).
@@ -991,7 +1015,7 @@ describe('JsonlSessionPersistence: scanLog unit', () => {
 
   it('a corrupt line after the last turn/end bounds the preserved tail', () => {
     const log = [
-      JSON.stringify({ type: 'session', version: 0, id: 'c2', createdAt: 1, delegationDepth: 0 }),
+      JSON.stringify({ type: 'session', version: 0, driverId: 'dsh', id: 'c2', createdAt: 1, delegationDepth: 0 }),
       JSON.stringify({ type: 'turn/start', seq: 0, time: 1, data: { turn: 1 } }),
       '{not json', // corrupt crash fragment, no turn/end committed
     ].join('\n') + '\n'
@@ -1002,7 +1026,7 @@ describe('JsonlSessionPersistence: scanLog unit', () => {
 
   it('tolerates a seq gap AFTER a turn/end (uncommitted tail)', () => {
     const log = [
-      JSON.stringify({ type: 'session', version: 0, id: 't', createdAt: 1, delegationDepth: 0 }),
+      JSON.stringify({ type: 'session', version: 0, driverId: 'dsh', id: 't', createdAt: 1, delegationDepth: 0 }),
       JSON.stringify({ type: 'turn/start', seq: 0, time: 1, data: { turn: 1 } }),
       JSON.stringify({ type: 'turn/end', seq: 1, time: 2, data: { turn: 1, reason: { kind: 'completed' } } }),
       JSON.stringify({ type: 'step/start', seq: 9, time: 3, data: { turn: 2, step: 1 } }), // gap in uncommitted tail
@@ -1099,7 +1123,7 @@ describe('JsonlSessionPersistence: default packed chunk rows', () => {
     // file, hand-planted so this packed-config backend adopts it on load).
     await mkdir(sessionDir(root, '/work', m.id), { recursive: true })
     await writeFile(rawLogPath(root, '/work', m.id), [
-      JSON.stringify({ type: 'session', version: 0, id: 'mixed', createdAt: 1000, cwd: '/work', delegationDepth: 0 }),
+      JSON.stringify({ type: 'session', version: 0, driverId: 'dsh', id: 'mixed', createdAt: 1000, cwd: '/work', delegationDepth: 0 }),
       ...log.map(e => JSON.stringify(e)),
     ].join('\n') + '\n')
     // Adopt the stored log (cursor = stored length), then append a second turn
@@ -1123,7 +1147,7 @@ describe('JsonlSessionPersistence: default packed chunk rows', () => {
 
   it('scanLog: a packed row advances the seq cursor by its whole run', () => {
     const logText = [
-      JSON.stringify({ type: 'session', version: 0, id: 'rows', createdAt: 1, delegationDepth: 0 }),
+      JSON.stringify({ type: 'session', version: 0, driverId: 'dsh', id: 'rows', createdAt: 1, delegationDepth: 0 }),
       JSON.stringify({ type: 'turn/start', seq: 0, time: 1, data: { turn: 1 } }),
       JSON.stringify({ type: 'text-chunks', seq0: 1, time0: 2, data: { turn: 1, step: 1, index: 0, dt: [1, 1], texts: ['a', 'b', 'c'] } }),
       JSON.stringify({ type: 'turn/end', seq: 4, time: 5, data: { turn: 1, reason: { kind: 'completed' } } }),
@@ -1135,7 +1159,7 @@ describe('JsonlSessionPersistence: default packed chunk rows', () => {
 
   it('scanLog: a malformed packed row in the committed region rejects like corrupt JSON', () => {
     const logText = [
-      JSON.stringify({ type: 'session', version: 0, id: 'bad-row', createdAt: 1, delegationDepth: 0 }),
+      JSON.stringify({ type: 'session', version: 0, driverId: 'dsh', id: 'bad-row', createdAt: 1, delegationDepth: 0 }),
       // dt arity mismatch — row validation throws, so the line is a committed hole.
       JSON.stringify({ type: 'text-chunks', seq0: 0, time0: 1, data: { turn: 1, step: 1, index: 0, dt: [], texts: ['a', 'b'] } }),
       JSON.stringify({ type: 'turn/end', seq: 2, time: 3, data: { turn: 1, reason: { kind: 'completed' } } }),
@@ -1145,7 +1169,7 @@ describe('JsonlSessionPersistence: default packed chunk rows', () => {
 
   it('scanLog: a packed row with a mid-run seq gap after the last turn/end drops the whole row', () => {
     const logText = [
-      JSON.stringify({ type: 'session', version: 0, id: 'row-gap', createdAt: 1, delegationDepth: 0 }),
+      JSON.stringify({ type: 'session', version: 0, driverId: 'dsh', id: 'row-gap', createdAt: 1, delegationDepth: 0 }),
       JSON.stringify({ type: 'turn/start', seq: 0, time: 1, data: { turn: 1 } }),
       // seq0 skips 1 — the run's first member is already a gap; no turn/end follows.
       JSON.stringify({ type: 'text-chunks', seq0: 2, time0: 2, data: { turn: 1, step: 1, index: 0, dt: [1, 1], texts: ['a', 'b', 'c'] } }),
@@ -1290,7 +1314,7 @@ describe('JsonlSessionPersistence: edge cases', () => {
     // `readFirstLine` accumulates chunks before `list()` parses it.
     const id = SessionId('big')
     await mkdir(sessionDir(root, undefined, id), { recursive: true })
-    const bigHeader = JSON.stringify({ type: 'session', version: 0, id: 'big', createdAt: 1, delegationDepth: 0, pad: 'x'.repeat(9000) })
+    const bigHeader = JSON.stringify({ type: 'session', version: 0, driverId: 'dsh', id: 'big', createdAt: 1, delegationDepth: 0, pad: 'x'.repeat(9000) })
     await writeFile(rawLogPath(root, undefined, id), bigHeader + '\n')
     const ids = (await ctx.sessionPersistence.list()).map(x => x.id)
     expect(ids).toContain('big')
@@ -1332,7 +1356,7 @@ describe('JsonlSessionPersistence: edge cases', () => {
     const dir = join(projectDir(root, undefined), 'invalid-id')
     await mkdir(dir, { recursive: true })
     await writeFile(join(dir, 'session.jsonl'), JSON.stringify({
-      type: 'session', version: 0, id: '', createdAt: 1, delegationDepth: 0,
+      type: 'session', version: 0, driverId: 'dsh', id: '', createdAt: 1, delegationDepth: 0,
     }) + '\n')
 
     await expect(ctx.sessionPersistence.list()).rejects.toThrow(/header id cannot name a storage path/)
@@ -1354,7 +1378,7 @@ describe('JsonlSessionPersistence: edge cases', () => {
   it('a DIFFERENT live session object reusing a disposed id gets its own init (no stale cache)', async () => {
     // Session A materializes a log under id "reuse".
     const sessFiberA = await ctx.plugin(Object.assign((inner: Context) => {
-      const a = inner.sessions.create(SessionId('reuse'), { meta: { cwd: '/a' } })
+      const a = inner.sessions.create(SessionId('reuse'), { meta: { driverId: AgentDriverId('dsh'), cwd: '/a' } })
       appendLog(a, oneTurnLog())
     }, { inject: ['sessions'] }))
     // Drain A, then dispose ITS fiber (the live session A is gone) while the
@@ -1366,7 +1390,7 @@ describe('JsonlSessionPersistence: edge cases', () => {
     // detect the disk collision, and reject instead of appending through session A's stale cursor.
     let b!: Session
     await ctx.plugin(Object.assign((inner: Context) => {
-      b = inner.sessions.create(SessionId('reuse'), { meta: { cwd: '/a' } })
+      b = inner.sessions.create(SessionId('reuse'), { meta: { driverId: AgentDriverId('dsh'), cwd: '/a' } })
     }, { inject: ['sessions'] }))
     await expect(ctx.sessions.flush(b)).rejects.toThrow(/already bound to a different live session|already has a persisted log on disk/)
   })
@@ -1386,7 +1410,7 @@ describe('JsonlSessionPersistence: edge cases', () => {
     await ctx2.plugin(JsonlSessionPersistence, { root, compression: 'none' })
     let b!: Session
     await ctx2.plugin(Object.assign((inner: Context) => {
-      b = inner.sessions.create(SessionId('x')) // no cwd
+      b = inner.sessions.create(SessionId('x'), { meta: { driverId: AgentDriverId('dsh') } }) // no cwd
     }, { inject: ['sessions'] }))
     await expect(ctx2.sessions.flush(b)).rejects.toThrow(/different cwd|id collision/)
 
@@ -1415,7 +1439,7 @@ describe('JsonlSessionPersistence: edge cases', () => {
     }
     let bad!: Session
     await ctx.plugin(Object.assign((inner: Context) => {
-      bad = inner.sessions.create(SessionId('divergent'), { seed: tampered, meta: { cwd: '/a' } })
+      bad = inner.sessions.create(SessionId('divergent'), { seed: tampered, meta: { driverId: AgentDriverId('dsh'), cwd: '/a' } })
     }, { inject: ['sessions'] }))
     await expect(ctx.sessions.flush(bad)).rejects.toThrow(/do not match this live session|already has a persisted log/)
   })
@@ -1423,7 +1447,7 @@ describe('JsonlSessionPersistence: edge cases', () => {
   it('a second live session reusing a bound id is rejected', async () => {
     // A live session materializes and owns the id.
     const firstFiber = await ctx.plugin(Object.assign((inner: Context) => {
-      const a = inner.sessions.create(SessionId('bound'), { meta: { cwd: '/a' } })
+      const a = inner.sessions.create(SessionId('bound'), { meta: { driverId: AgentDriverId('dsh'), cwd: '/a' } })
       a.append('turn/start', { turn: 1 })
       a.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
     }, { inject: ['sessions'] }))
@@ -1432,7 +1456,7 @@ describe('JsonlSessionPersistence: edge cases', () => {
 
     let second!: Session
     await ctx.plugin(Object.assign((inner: Context) => {
-      second = inner.sessions.create(SessionId('bound'), { meta: { cwd: '/a' } })
+      second = inner.sessions.create(SessionId('bound'), { meta: { driverId: AgentDriverId('dsh'), cwd: '/a' } })
     }, { inject: ['sessions'] }))
     await expect(ctx.sessions.flush(second))
       .rejects.toThrow(/already bound to a different live session|already has a persisted log|do not match/)
@@ -1481,7 +1505,7 @@ describe('JsonlSessionPersistence: edge cases', () => {
     await writeFile(projectDir(root, cwd), 'x') // project path is now a file
     let s!: Session
     await ctx2.plugin(Object.assign((inner: Context) => {
-      s = inner.sessions.create(SessionId('exists-fault'), { meta: { cwd } })
+      s = inner.sessions.create(SessionId('exists-fault'), { meta: { driverId: AgentDriverId('dsh'), cwd } })
       appendClosedTurn(s)
     }, { inject: ['sessions'] }))
     await expectFlushCode(ctx2.sessions.flush(s), ['EEXIST', 'ENOTDIR'])
@@ -1547,7 +1571,7 @@ describe('JsonlSessionPersistence: edge cases', () => {
     const ctx2 = new Context()
     await ctx2.plugin(SessionStore)
     await ctx2.plugin(JsonlSessionPersistence, { root, compression: 'none' })
-    const session = ctx2.sessions.create(SessionId('flush-fail'))
+    const session = ctx2.sessions.create(SessionId('flush-fail'), { meta: { driverId: AgentDriverId('dsh') } })
     // A full turn lands in the write-behind buffer.
     session.append('turn/start', { turn: 1 })
     session.append('user/message', createUserMessage({
@@ -1607,7 +1631,7 @@ describe('JsonlSessionPersistence: edge cases', () => {
   })
 
   it('Session.append rejects a non-serializable event at the source (never enters the log)', () => {
-    const session = ctx.sessions.create(SessionId('reject-bad'))
+    const session = ctx.sessions.create(SessionId('reject-bad'), { meta: { driverId: AgentDriverId('dsh') } })
     // Serializability is enforced at the source: Session.append throws on a BigInt-bearing
     // event before it enters session.events, so the durable log can never diverge from the live
     // log. The error therefore surfaces synchronously at append, not later during backend flush.

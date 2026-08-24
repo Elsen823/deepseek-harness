@@ -27,6 +27,9 @@
       "path": "../../core/session"
     },
     {
+      "path": "../../session/session-runtime"
+    },
+    {
       "path": "../protocol"
     },
     {

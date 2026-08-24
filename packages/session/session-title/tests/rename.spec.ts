@@ -4,7 +4,7 @@
 import { Context } from '@deepseek-ai/cordis'
 import { describe, expect, it, vi } from 'vitest'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import SessionStore, { Session, SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, Session, SessionId } from '@deepseek-ai/dsh-session'
 import SessionTitleService, {
   SessionTitleProviderId,
   foldSessionTitle,
@@ -33,7 +33,7 @@ describe('SessionTitleService.rename', () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
     await ctx.plugin(SessionTitleService, CONFIG)
-    const session = ctx.sessions.create(SessionId('rename-accept'))
+    const session = ctx.sessions.create(SessionId('rename-accept'), { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', { turn: 1 })
     appendHumanPrompt(session, 'Original prompt text')
     await settle()
@@ -58,7 +58,7 @@ describe('SessionTitleService.rename', () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
     await ctx.plugin(SessionTitleService, CONFIG)
-    const session = ctx.sessions.create(SessionId('rename-reject'))
+    const session = ctx.sessions.create(SessionId('rename-reject'), { meta: { driverId: AgentDriverId('dsh') } })
     expect(() => ctx.sessionTitle.rename(session, '  [31m  ')).toThrow(/visible characters/)
 
     expect(() => ctx.sessionTitle.rename(Session.create(SessionId('detached')), 'name'))
@@ -78,7 +78,7 @@ describe('SessionTitleService.rename', () => {
       automatic: 'all-prompts',
       generate,
     })
-    const session = ctx.sessions.create(SessionId('rename-pin'))
+    const session = ctx.sessions.create(SessionId('rename-pin'), { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', { turn: 1 })
     appendHumanPrompt(session, 'First prompt')
     await settle()
@@ -106,7 +106,7 @@ describe('SessionTitleService.rename', () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
     await ctx.plugin(SessionTitleService, CONFIG)
-    const session = ctx.sessions.create(SessionId('rename-unpin-fallback'))
+    const session = ctx.sessions.create(SessionId('rename-unpin-fallback'), { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', { turn: 1 })
     appendHumanPrompt(session, 'Derivable prompt words')
     await settle()
@@ -142,7 +142,7 @@ describe('SessionTitleService.rename', () => {
       automatic: 'all-prompts',
       generate,
     })
-    const session = ctx.sessions.create(SessionId('rename-supersede'))
+    const session = ctx.sessions.create(SessionId('rename-supersede'), { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', { turn: 1 })
     appendHumanPrompt(session, 'Prompt that triggers generation')
     session.append('request/header', {
@@ -168,7 +168,7 @@ describe('SessionTitleService.rename', () => {
     // A 3-byte fallback cap cannot hold the 4-byte emoji prompt: the
     // re-derived fallback is empty, so the pinned title survives the refresh.
     await ctx.plugin(SessionTitleService, { ...CONFIG, fallbackMaxBytes: 3 })
-    const session = ctx.sessions.create(SessionId('rename-unpin-empty'))
+    const session = ctx.sessions.create(SessionId('rename-unpin-empty'), { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', { turn: 1 })
     appendHumanPrompt(session, '😀😀')
     await settle()

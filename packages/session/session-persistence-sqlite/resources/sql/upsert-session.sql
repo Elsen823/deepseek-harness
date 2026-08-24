@@ -1,9 +1,10 @@
 INSERT INTO sessions
-  (id, version, created_at, cwd, parent_session, seed_length, origin,
+  (id, version, driver_id, created_at, cwd, parent_session, seed_length, origin,
    delegation_depth, agent_preset, incarnation, revision)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
 ON CONFLICT(id) DO UPDATE SET
   version = excluded.version,
+  driver_id = excluded.driver_id,
   created_at = excluded.created_at,
   cwd = excluded.cwd,
   parent_session = excluded.parent_session,

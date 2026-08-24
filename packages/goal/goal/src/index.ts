@@ -9,7 +9,7 @@ import { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { z as zod } from 'zod'
 import type { ZodType } from 'zod'
-import { agentEvents } from '@deepseek-ai/dsh-agent'
+import { agentEvents, DSH_AGENT_DRIVER_ID } from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 import { TypertRemoteService, Remote } from '@deepseek-ai/dsh-typert-protocol'
@@ -179,7 +179,10 @@ function resolveBlockReason(reason: unknown): GoalBlockReason {
   return { code, message: message.trim() }
 }
 
-/** Goal service (`ctx.goals`) backed exclusively by the owning session log. */
+/**
+ * Built-in `dsh` Goal service (`ctx.goals`) backed exclusively by the owning Session log.
+ * Alternate Drivers return no Goal on reads and reject every mutation with `GOAL_DRIVER_MISMATCH`.
+ */
 export class GoalService extends TypertRemoteService {
   static inject = ['agents']
 
@@ -221,6 +224,7 @@ export class GoalService extends TypertRemoteService {
    */
   get(agent: Agent): GoalView | undefined {
     this.assertLive(agent)
+    if (agent.session.header.driverId !== DSH_AGENT_DRIVER_ID) return undefined
     const cache = this.cache(agent.session)
     this.sync(agent.session, cache)
     return this.view(cache)
@@ -235,6 +239,7 @@ export class GoalService extends TypertRemoteService {
    */
   disarm(agent: Agent): GoalView | undefined {
     this.assertLive(agent)
+    if (agent.session.header.driverId !== DSH_AGENT_DRIVER_ID) return undefined
     const cache = this.cache(agent.session)
     this.sync(agent.session, cache)
     cache.activation = 'disarmed'
@@ -392,6 +397,12 @@ export class GoalService extends TypertRemoteService {
   /** Resolve and validate the cache used by a mutation. */
   private prepareMutation(agent: Agent): GoalCache {
     this.assertLive(agent)
+    if (agent.session.header.driverId !== DSH_AGENT_DRIVER_ID) {
+      throw new GoalError(
+        `DSH Goal is unavailable for Agent Driver "${agent.session.header.driverId}"`,
+        'GOAL_DRIVER_MISMATCH',
+      )
+    }
     const cache = this.cache(agent.session)
     this.sync(agent.session, cache)
     return cache

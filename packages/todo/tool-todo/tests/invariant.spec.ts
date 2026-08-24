@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import SessionStore, { type Session, type SessionEvent } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, type Session, type SessionEvent } from '@deepseek-ai/dsh-session'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import * as ToolTodo from '@deepseek-ai/dsh-tool-todo'
 import * as TodoInvariant from '@deepseek-ai/dsh-tool-todo/invariant'
@@ -30,7 +30,7 @@ describe('todo snapshot invariants', () => {
     await ctx.plugin(SessionStore)
     await ctx.plugin(ToolRuntime)
     await ctx.plugin(ToolTodo, { allowParallelInProgress: false })
-    ctx.sessions.create().append('todo/write', { todos: [...todos] })
+    ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } }).append('todo/write', { todos: [...todos] })
     await ctx.plugin(InvariantRegistry, { enabled: true })
 
     await expect(ctx.plugin(TodoInvariant).then(() => undefined)).resolves.toBeUndefined()
@@ -65,7 +65,7 @@ describe('todo snapshot invariants', () => {
   it('rejects an invalid existing snapshot on late registration', async () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
-    ctx.sessions.create().append('todo/write', {
+    ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } }).append('todo/write', {
       todos: [
         { content: 'duplicate', status: 'pending' },
         { content: 'duplicate', status: 'completed' },

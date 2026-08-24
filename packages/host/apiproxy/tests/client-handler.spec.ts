@@ -6,6 +6,7 @@
  */
 
 import { describe, expect, it, vi } from 'vitest'
+import { AgentDriverId } from '@deepseek-ai/dsh-session'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { ApiProxy, GoalRef, HostFrame, MuxFrame, RpcMessage, RpcRequest, RpcResponse } from '@deepseek-ai/dsh-host-apiproxy'
 import { InProcessApiClient, RpcId, toFetchHandler } from '@deepseek-ai/dsh-host-apiproxy'
@@ -35,9 +36,10 @@ function scriptedApi(overrides: {
     Promise.resolve({ rpcId: r.rpcId, result: { ok: false, error: { code: 'internal' as const, message: 'stub', details: {} } } })
   return {
     sessions: {
+      drivers: r => ok(r, { defaultId: AgentDriverId('dsh'), items: [{ id: AgentDriverId('dsh'), name: 'DeepSeek Harness' }] }),
       list: r => ok(r, { items: [] }),
       search: r => ok(r, { items: [], hasMore: false }),
-      create: r => ok(r, { sessionId: sid('s-new') }),
+      create: r => ok(r, { sessionId: sid('s-new'), driverId: AgentDriverId('dsh') }),
       history: r => ok(r, {
         events: [],
         hasMore: false,
@@ -53,7 +55,7 @@ function scriptedApi(overrides: {
         selected: { provider: r.payload.provider, model: r.payload.model },
       }),
       rename: r => ok(r, { title: 'renamed', seq: 0 }),
-      fork: r => ok(r, { sessionId: sid('s-fork') }),
+      fork: r => ok(r, { sessionId: sid('s-fork'), driverId: AgentDriverId('dsh') }),
       prompt: r => ok(r, { accepted: true as const }),
       attachment: r => ok(r, {
         attachment: { attachmentId: 'a' as never, mediaType: 'image/png', bytes: 1, width: 1, height: 1 },
@@ -154,7 +156,7 @@ describe('unary round trip', () => {
       sessions: {
         list: (r) => {
           seen = r
-          return ok(r, { items: [{ sessionId: sid('s1'), updatedAt: 7, running: false, blank: false }] })
+          return ok(r, { items: [{ sessionId: sid('s1'), driverId: AgentDriverId('dsh'), updatedAt: 7, running: false, blank: false }] })
         },
       },
     })
@@ -163,7 +165,7 @@ describe('unary round trip', () => {
     expect(seen?.payload).toEqual({ cursor: 'c1' })
     expect(seen?.rpcId).toBeTruthy()
     expect(response.rpcId).toBe(seen?.rpcId)
-    expect(response.result).toEqual({ ok: true, value: { items: [{ sessionId: 's1', updatedAt: 7, running: false, blank: false }] } })
+    expect(response.result).toEqual({ ok: true, value: { items: [{ sessionId: 's1', driverId: 'dsh', updatedAt: 7, running: false, blank: false }] } })
   })
 
   it('round-trips a trimmed session search query and its bounded result metadata', async () => {
@@ -210,13 +212,13 @@ describe('unary round trip', () => {
       sessions: {
         fork: (request) => {
           seen = request
-          return ok(request, { sessionId: sid('s-child') })
+          return ok(request, { sessionId: sid('s-child'), driverId: AgentDriverId('dsh') })
         },
       },
     })
     const response = await client(api).sessions.fork({ sessionId: sid('s-parent'), atSeq: 7 })
     expect(seen?.payload).toEqual({ sessionId: 's-parent', atSeq: 7 })
-    expect(response.result).toEqual({ ok: true, value: { sessionId: 's-child' } })
+    expect(response.result).toEqual({ ok: true, value: { sessionId: 's-child', driverId: 'dsh' } })
   })
 
   it('routes workspace rename, delete, and ordering through the wire', async () => {
@@ -493,7 +495,7 @@ describe('SSE stream path', () => {
     const api = scriptedApi({
       events: {
         async *host(request): AsyncGenerator<RpcRequest<HostFrame>> {
-          yield { rpcId: RpcId(`p-${request.rpcId}`), payload: { type: 'host/session-added', sessionId: sid('s1'), blank: true } }
+          yield { rpcId: RpcId(`p-${request.rpcId}`), payload: { type: 'host/session-added', sessionId: sid('s1'), driverId: AgentDriverId('dsh'), blank: true } }
           throw new Error('impl died mid-stream')
         },
       },

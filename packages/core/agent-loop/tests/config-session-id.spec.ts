@@ -8,7 +8,7 @@ import LlmRuntime from '@deepseek-ai/dsh-llm'
 import SessionStore, { SessionId, SessionPreparation } from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
-import AgentRegistry, { type Agent } from '@deepseek-ai/dsh-agent'
+import AgentRegistry, { DSH_AGENT_DRIVER_ID, type Agent } from '@deepseek-ai/dsh-agent'
 
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import AgentLoop, { CONFIGURED_AGENT_IDENTITIES_KEY } from '@deepseek-ai/dsh-agent-loop'
@@ -49,10 +49,10 @@ describe('config-driven session id', () => {
         { id: 'unchanged', sessionId: SessionId('config-unchanged'), model: 'mock' },
       ],
     })
-    expect(ctx.agents.get(SessionId('launcher-fresh'))?.session.id).toBe('launcher-fresh')
+    await expect.poll(() => ctx.agents.get(SessionId('launcher-fresh'))?.session.id).toBe('launcher-fresh')
     expect(ctx.agents.get(SessionId('launcher-resumed'))).toBeUndefined()
     expect(ctx.agents.get(SessionId('config-resumed'))).toBeUndefined()
-    expect(ctx.agents.get(SessionId('config-unchanged'))?.session.id).toBe('config-unchanged')
+    await expect.poll(() => ctx.agents.get(SessionId('config-unchanged'))?.session.id).toBe('config-unchanged')
     await ctx.fiber.dispose()
   })
 
@@ -70,7 +70,7 @@ describe('config-driven session id', () => {
     await exact.plugin(AgentLoop, {
       agents: [{ id: 'main', sessionId: SessionId('config-exact'), model: 'mock' }],
     })
-    expect(exact.agents.get(SessionId('config-exact'))?.session.id).toBe('config-exact')
+    await expect.poll(() => exact.agents.get(SessionId('config-exact'))?.session.id).toBe('config-exact')
     await exact.fiber.dispose()
 
     const conflicting = await makeCoreContext()
@@ -165,14 +165,14 @@ describe('config-driven session id', () => {
     ctx.on('agent-loop/config-start-failed', ({ error }) => { failures.push(error) })
     const secondLoop = await ctx.plugin(AgentLoop, config)
     await new Promise(resolve => setTimeout(resolve, 0))
-    expect(ctx.agents.get(sessionId)).toBe(first)
+    expect(ctx.agents.get(sessionId) === first).toBe(true)
     expect(failures).toEqual([])
 
     cleanupGate.resolve(undefined)
     await firstDisposal
     await expect.poll(() => ctx.agents.get(sessionId)).toBeDefined()
     const second = ctx.agents.get(sessionId) as Agent
-    expect(second).not.toBe(first)
+    expect(second === first).toBe(false)
     expect(JSON.stringify(second.session.deriveMessages())).toContain('persist before replacement')
     expect(failures).toEqual([])
 
@@ -207,7 +207,7 @@ describe('config-driven session id', () => {
     expect(first.status).toBe('idle')
     const secondLoop = await ctx.plugin(AgentLoop, config)
     await secondLoop.dispose()
-    expect(ctx.agents.get(sessionId)).toBe(first)
+    expect(ctx.agents.get(sessionId) === first).toBe(true)
 
     cleanupGate.resolve(undefined)
     await firstDisposal
@@ -307,7 +307,9 @@ describe('config-driven session id', () => {
       await loop.dispose()
       if (outcome === 'resolve') {
         preparing.resolve(SessionPreparation.create(
-          ctx.sessions.prepare(SessionId('config-exact-dispose')),
+          ctx.sessions.prepare(SessionId('config-exact-dispose'), {
+            meta: { driverId: DSH_AGENT_DRIVER_ID },
+          }),
           { release: released },
         ))
       } else {

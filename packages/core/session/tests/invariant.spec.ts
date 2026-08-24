@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { createScope, scopeTarget } from '@deepseek-ai/dsh-scope'
 import { createUserMessage, CallId, createMessage, createToolResultMessage, freezeMessage } from '@deepseek-ai/dsh-llm'
-import SessionStore, { SessionId, TOOL_NOT_STARTED } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, SessionId, TOOL_NOT_STARTED } from '@deepseek-ai/dsh-session'
 import * as SessionInvariant from '@deepseek-ai/dsh-session/invariant'
 import InvariantRegistry, { InvariantError } from '@deepseek-ai/dsh-invariants'
 
@@ -24,7 +24,7 @@ describe('session-log invariants', () => {
       scopedCtx = createScope(inner, {}).ctx
     }, { inject: ['sessions', 'invariants'] }))
     await scopedCtx.plugin(SessionInvariant)
-    const session = ctx.sessions.create(SessionId('global-under-scoped-invariants'))
+    const session = ctx.sessions.create(SessionId('global-under-scoped-invariants'), { meta: { driverId: AgentDriverId('dsh') } })
     expect(() => {
       session.append('turn/start', { turn: 1 })
       session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
@@ -33,7 +33,7 @@ describe('session-log invariants', () => {
 
   it('accepts a well-formed turn, step, and tool sequence', async () => {
     const { ctx } = await setup()
-    const session = ctx.sessions.create()
+    const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     expect(() => {
       session.append('turn/start', { turn: 1 })
       session.append('user/message', createUserMessage({
@@ -69,7 +69,7 @@ describe('session-log invariants', () => {
 
   it('does not advance committed trace state when a later dispatch listener vetoes', async () => {
     const { ctx } = await setup()
-    const session = ctx.sessions.create(SessionId('dispatch-veto-rollback'))
+    const session = ctx.sessions.create(SessionId('dispatch-veto-rollback'), { meta: { driverId: AgentDriverId('dsh') } })
     let veto = true
     ctx.on('internal/dispatch', (_mode, name) => {
       if (name !== 'session/event' || !veto) return
@@ -90,7 +90,7 @@ describe('session-log invariants', () => {
     const { ctx } = await setup()
     const warnings: string[] = []
     ctx.logger.warn = ((message: unknown) => { warnings.push(String(message)) }) as typeof ctx.logger.warn
-    const session = ctx.sessions.create(SessionId('postcommit-peer'))
+    const session = ctx.sessions.create(SessionId('postcommit-peer'), { meta: { driverId: AgentDriverId('dsh') } })
     ctx.on('session/event', () => { throw new Error('hostile observer') }, { prepend: true })
     expect(() => {
       session.append('turn/start', { turn: 1 })
@@ -101,7 +101,7 @@ describe('session-log invariants', () => {
 
   it('rejects non-monotonic event sequence numbers', async () => {
     const { ctx } = await setup()
-    const session = ctx.sessions.create()
+    const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     ctx.emit(scopeTarget(session, undefined), 'session/event', session, {
       type: 'turn/start',
       seq: 0,
@@ -118,27 +118,27 @@ describe('session-log invariants', () => {
 
   it('enforces turn numbering and core execution enclosure', async () => {
     const first = await setup()
-    const open = first.ctx.sessions.create()
+    const open = first.ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     open.append('turn/start', { turn: 1 })
     expect(() => open.append('turn/start', { turn: 2 }))
       .toThrow(/turn 1 is still open/)
     expect(() => open.append('turn/end', { turn: 2, reason: { kind: 'completed' } }))
       .toThrow(/does not match open turn 1/)
 
-    const second = (await setup()).ctx.sessions.create()
+    const second = (await setup()).ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     second.append('turn/start', { turn: 1 })
     second.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
     expect(() => second.append('turn/start', { turn: 3 }))
       .toThrow(/expected turn 2, got 3/)
 
-    const third = (await setup()).ctx.sessions.create()
+    const third = (await setup()).ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     third.append('turn/start', { turn: 1 })
     third.append('step/start', { turn: 1, step: 1 })
     third.append('step/end', { turn: 1, step: 1 })
     expect(() => third.append('turn/end', { turn: 1, reason: { kind: 'completed' } }))
       .not.toThrow()
 
-    const enclosed = (await setup()).ctx.sessions.create()
+    const enclosed = (await setup()).ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     enclosed.append('turn/start', { turn: 1 })
     enclosed.append('step/start', { turn: 1, step: 1 })
     expect(() => enclosed.append('todo/write', { todos: [] })).not.toThrow()
@@ -150,7 +150,7 @@ describe('session-log invariants', () => {
       provider: 'mock', model: 'mock',
     })).not.toThrow()
 
-    const outside = (await setup()).ctx.sessions.create()
+    const outside = (await setup()).ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     expect(() => outside.append('user/message', createUserMessage({
       content: [{ type: 'text', text: 'idle context' }],
       source: { kind: 'plugin', plugin: 'test' },
@@ -170,11 +170,11 @@ describe('session-log invariants', () => {
   })
 
   it('enforces open-step identity and numbering', async () => {
-    const wrongTurn = (await setup()).ctx.sessions.create()
+    const wrongTurn = (await setup()).ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     wrongTurn.append('turn/start', { turn: 1 })
     expect(() => wrongTurn.append('step/start', { turn: 2, step: 1 })).toThrow(/open turn is 1/)
 
-    const nested = (await setup()).ctx.sessions.create()
+    const nested = (await setup()).ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     nested.append('turn/start', { turn: 1 })
     nested.append('step/start', { turn: 1, step: 1 })
     expect(() => nested.append('step/start', { turn: 1, step: 2 })).toThrow(/while step 1 is still open/)
@@ -194,7 +194,7 @@ describe('session-log invariants', () => {
       }),
     }, { surfaceOp: 'append' })).toThrow(/open is turn 1\/step 1/)
 
-    const skipped = (await setup()).ctx.sessions.create()
+    const skipped = (await setup()).ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     skipped.append('turn/start', { turn: 1 })
     skipped.append('step/start', { turn: 1, step: 1 })
     skipped.append('step/end', { turn: 1, step: 1 })
@@ -208,7 +208,7 @@ describe('session-log invariants', () => {
   })
 
   it('requires step-scoped stream and tool events to name the open step', async () => {
-    const chunk = (await setup()).ctx.sessions.create()
+    const chunk = (await setup()).ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     chunk.append('turn/start', { turn: 1 })
     expect(() => chunk.append('assistant/chunk', {
       turn: 1,
@@ -216,7 +216,7 @@ describe('session-log invariants', () => {
       chunk: { type: 'text-delta', index: 0, text: 'x' },
     })).toThrow(/open is turn 1\/step null/)
 
-    const tool = (await setup()).ctx.sessions.create()
+    const tool = (await setup()).ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     tool.append('turn/start', { turn: 1 })
     tool.append('step/start', { turn: 1, step: 1 })
     expect(() => tool.append('tool/result', {
@@ -232,7 +232,7 @@ describe('session-log invariants', () => {
 
   it('keeps fresh tool-result appends open-step checked', async () => {
     const { ctx } = await setup()
-    const session = ctx.sessions.create()
+    const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', { turn: 1 })
     expect(() => session.append('tool/result', {
       turn: 1,
@@ -247,7 +247,7 @@ describe('session-log invariants', () => {
 
   it('treats a validated tool-result replacement as a turn-enclosed rewrite', async () => {
     const { ctx } = await setup()
-    const session = ctx.sessions.create()
+    const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', { turn: 1 })
     session.append('step/start', { turn: 1, step: 1 })
     session.append('tool/call', {
@@ -287,7 +287,7 @@ describe('session-log invariants', () => {
 
   it('rejects a tool-result replacement outside a turn', async () => {
     const { ctx } = await setup()
-    const session = ctx.sessions.create()
+    const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', { turn: 1 })
     session.append('step/start', { turn: 1, step: 1 })
     session.append('tool/call', {
@@ -325,7 +325,7 @@ describe('session-log invariants', () => {
   })
 
   it('allows not-started repair results and unresolved calls at step end', async () => {
-    const repaired = (await setup()).ctx.sessions.create()
+    const repaired = (await setup()).ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     expect(() => {
       repaired.append('turn/start', { turn: 1 })
       repaired.append('step/start', { turn: 1, step: 1 })
@@ -343,7 +343,7 @@ describe('session-log invariants', () => {
       repaired.append('turn/end', { turn: 1, reason: { kind: 'interrupted' } })
     }).not.toThrow()
 
-    const unresolved = (await setup()).ctx.sessions.create()
+    const unresolved = (await setup()).ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     expect(() => {
       unresolved.append('turn/start', { turn: 1 })
       unresolved.append('step/start', { turn: 1, step: 1 })
@@ -355,7 +355,7 @@ describe('session-log invariants', () => {
 
   it('does not let a result in a later step satisfy an earlier call', async () => {
     const { ctx } = await setup()
-    const session = ctx.sessions.create()
+    const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', { turn: 1 })
     session.append('step/start', { turn: 1, step: 1 })
     session.append('tool/call', { turn: 1, step: 1, callId: CallId('c1'), name: 'echo', arguments: '{}' })
@@ -378,10 +378,10 @@ describe('session-log invariants', () => {
       { type: 'turn/start' as const, seq: 0, time: 0, data: { turn: 1 } },
       { type: 'turn/start' as const, seq: 1, time: 0, data: { turn: 2 } },
     ]
-    expect(() => ctx.sessions.create(undefined, { seed: badSeed })).toThrow(InvariantError)
+    expect(() => ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') }, seed: badSeed })).toThrow(InvariantError)
 
-    const a = ctx.sessions.create(SessionId('a'))
-    const b = ctx.sessions.create(SessionId('b'))
+    const a = ctx.sessions.create(SessionId('a'), { meta: { driverId: AgentDriverId('dsh') } })
+    const b = ctx.sessions.create(SessionId('b'), { meta: { driverId: AgentDriverId('dsh') } })
     a.append('turn/start', { turn: 1 })
     expect(() => b.append('turn/start', { turn: 1 }))
       .not.toThrow()
@@ -389,7 +389,7 @@ describe('session-log invariants', () => {
 
   it('rebuilds trace state for sessions that exist when the companion reloads', async () => {
     const { ctx, fiber } = await setup()
-    const session = ctx.sessions.create()
+    const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', { turn: 1 })
     session.append('step/start', { turn: 1, step: 1 })
     await fiber.dispose()
@@ -406,12 +406,12 @@ describe('session-log invariants', () => {
   it('accepts end-seed whether or not a turn is open', async () => {
     const { ctx } = await setup()
     // Balanced seed: between turns.
-    expect(() => ctx.sessions.create(SessionId('inherited-between-turns'), { seed: [
+    expect(() => ctx.sessions.create(SessionId('inherited-between-turns'), { meta: { driverId: AgentDriverId('dsh') }, seed: [
       { type: 'turn/start', seq: 0, time: 1, data: { turn: 1 } },
       { type: 'turn/end', seq: 1, time: 2, data: { turn: 1, reason: { kind: 'completed' } } },
     ] })).not.toThrow()
     // Unbalanced seed: inside the open turn, which the relation permits.
-    const open = ctx.sessions.create(SessionId('inherited-inside-open-turn'), { seed: [
+    const open = ctx.sessions.create(SessionId('inherited-inside-open-turn'), { meta: { driverId: AgentDriverId('dsh') }, seed: [
       { type: 'turn/start', seq: 0, time: 1, data: { turn: 1 } },
     ] })
     expect(open.events.map(event => event.type)).toEqual(['turn/start', 'session/end-seed'])
@@ -423,7 +423,7 @@ describe('session-log invariants', () => {
 
   it('removes all listeners when the companion is disposed', async () => {
     const { ctx, fiber } = await setup()
-    const session = ctx.sessions.create()
+    const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', { turn: 1 })
     await fiber.dispose()
     expect(() => session.append('turn/start', {

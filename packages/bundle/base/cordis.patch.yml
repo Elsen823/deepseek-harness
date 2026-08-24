@@ -58,6 +58,9 @@
     - id: agent
       name: '@deepseek-ai/dsh-agent'
 
+    - id: session-runtime
+      name: '@deepseek-ai/dsh-session-runtime'
+
     # The transport-independent default for Agents created by entry points.
     # Settings may supply a saved selection; consumers read it at creation time.
     - id: agent-default-model
@@ -125,6 +128,18 @@
     # loud without it; web layers reuse this same mount for list rows.
     - id: session-projection
       name: '@deepseek-ai/dsh-session-projection'
+
+    # Portable whole-list Checklist projection, independent of the model tool.
+    - id: todo
+      name: '@deepseek-ai/dsh-todo'
+
+    # Driver-neutral Objective projection over DSH Goal or native Driver facts.
+    - id: objective
+      name: '@deepseek-ai/dsh-objective'
+
+    # Durable Proposed Plan documents, distinct from Plan Mode and Checklist.
+    - id: plan-proposal
+      name: '@deepseek-ai/dsh-plan-proposal'
 
     # Session telemetry is mounted but disabled by default. DSH_TELEMETRY_MODE
     # explicitly opts into FULL or FEEDBACK_ONLY reporting; uploading mirrors

@@ -16,7 +16,7 @@ import type {
   LlmResolvedModelInfo, StreamChunk,
   UserMessage,
 } from '@deepseek-ai/dsh-llm'
-import SessionStore from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId } from '@deepseek-ai/dsh-session'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import UserQuestionService from '@deepseek-ai/dsh-user-questions'
@@ -101,7 +101,7 @@ async function harness(logged?: {
     { provider: 'duplicate', id: 'same', name: 'Same' },
     { provider: 'duplicate', id: 'same', name: 'Same Again' },
   ]))
-  const session = ctx.sessions.create()
+  const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
   if (logged !== undefined) {
     session.append('request/header', { header: { config: logged }, reason: 'initial' })
   }

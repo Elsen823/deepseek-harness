@@ -9,6 +9,7 @@ import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { CallId } from '@deepseek-ai/dsh-llm'
+import { AgentDriverId } from '@deepseek-ai/dsh-session'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { ToolExecution } from '@deepseek-ai/dsh-tools'
 import { ShellEnvRegistry } from '@deepseek-ai/dsh-shell-env'
@@ -28,7 +29,7 @@ function execution(sessionId?: string): ToolExecution {
     arguments: { command: 'true' },
     ...(sessionId === undefined
       ? {}
-      : { agent: { session: { header: { version: 0, id: sessionId, createdAt: 0 } } } as Agent }),
+      : { agent: { session: { header: { version: 0, driverId: AgentDriverId('dsh'), id: sessionId, createdAt: 0 } } } as Agent }),
   }
 }
 

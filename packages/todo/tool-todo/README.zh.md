@@ -2,7 +2,7 @@
 
 [English](README.md) | 中文
 
-面向模型的 `todo_write` 工具：agent（智能体）的完整任务列表，每次调用都会整体替换。
+内置 `dsh` Agent Driver 面向模型的 `todo_write` 工具：agent（智能体）的完整任务列表，每次调用都会整体替换。备用 Driver 保留其原生 Checklist 写入器，并拒绝本工具的写入路径。
 
 ## 功能
 
@@ -26,11 +26,11 @@
 
 ## 渲染
 
-规范结果为 `{ todos, counts: { pending, inProgress, completed } }`；其 Native 渲染器返回精简的更新确认。工具还会写入完整 `todo/write` 会话事件。UI 订阅事件流，并自行渲染该持久化列表：[web 客户端](../../client/ui-conversation)基于当前有效计划（其后没有更晚 `turn/start` 的最近一次 `todo/write`）显示计划条和专属工具行（[展示](../../../.agents/notes/implemented/feature/2026-07-23-web-todo-display.zh.md)、[生命周期](../../../.agents/notes/implemented/feature/2026-07-28-todo-plan-clears-on-next-turn.zh.md)）。
+规范结果为 `{ todos, counts: { pending, inProgress, completed } }`；其 Native 渲染器返回精简的更新确认。工具还会写入完整 `todo/write` Session 事件。UI 通过可移植的 [`@deepseek-ai/dsh-todo`](../todo/README.zh.md) 投影提供方渲染当前 Checklist；本 Consumer 不注册该投影。
 
-## 会话投影
+## 组合
 
-当组合挂载了 `ctx.sessionProjections`（[`@deepseek-ai/dsh-session-projection`](../../session/session-projection/README.zh.md)）时，本包在一个注入的子插件中注册 `todos` 投影单元：`init` = `null`（尚无写入）、`apply` = 从每个 `todo/write` 取整表，并在每个 `turn/start` 清为 `null`（当前有效计划；`turn/end` 保留刚完成的清单；其余事件都返回同一个状态引用）、`view` = 恒等、`stateVersion` = 2。该键在本包中合并进 `SessionProjectionMap`（经 Service Definition 包的 `/types` 出口）；框架驱动该单元，载体通过历史尾页与 `session/projection` 推送帧提供该值。未挂载注册表的组合不受影响。生命周期理由见 [在下一轮次清空 todo 计划](../../../.agents/notes/implemented/feature/2026-07-28-todo-plan-clears-on-next-turn.zh.md)。
+在 SessionProjection 注册表旁挂载一次 `@deepseek-ai/dsh-todo`，再在需要向模型公开 `todo_write` 的位置挂载本 Consumer。提供方可在没有 `ctx.tools` 时运行；本包可在没有 `ctx.sessionProjections` 时运行，只负责校验并追加整表事件。
 
 ## 导出形状
 

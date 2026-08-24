@@ -10,7 +10,7 @@ import type { Browser, Page } from 'playwright'
 import { chromium } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
 import { CallId, createAssistantMessage, createToolResultMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
-import { SESSION_FORMAT_VERSION, Session, SessionId } from '@deepseek-ai/dsh-session'
+import { AgentDriverId, SESSION_FORMAT_VERSION, Session, SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-session-title'
 import {
   launchWebScaffold, seedSession, watchConsole, webSnapshotMode, type WebScaffold,
@@ -103,6 +103,7 @@ function mentionFixture(): string {
     JSON.stringify({
       type: 'session',
       version: SESSION_FORMAT_VERSION,
+      driverId: AgentDriverId('dsh'),
       id: '{{sessionId}}',
       createdAt: 0,
       cwd: '{{cwd}}',

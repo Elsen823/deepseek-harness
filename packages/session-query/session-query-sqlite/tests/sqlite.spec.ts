@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { chmod, mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import SessionStore, { SESSION_FORMAT_VERSION, SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, SESSION_FORMAT_VERSION, SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionEvent, SessionHeader, SessionId as SessionIdType } from '@deepseek-ai/dsh-session'
 import SessionPersistence, { SessionPersistenceRevision } from '@deepseek-ai/dsh-session-persistence'
 import type { SessionPersistenceSnapshot } from '@deepseek-ai/dsh-session-persistence'
@@ -37,7 +37,13 @@ async function temporaryPath(name = 'search.db'): Promise<string> {
 }
 
 function header(id: string, createdAt = 1, extra: Partial<SessionHeader> = {}): SessionHeader {
-  return { version: SESSION_FORMAT_VERSION, id: SessionId(id), createdAt, ...extra }
+  return {
+    version: SESSION_FORMAT_VERSION,
+    driverId: AgentDriverId('dsh'),
+    id: SessionId(id),
+    createdAt,
+    ...extra,
+  }
 }
 
 function messageEvents(text: string, time = 1): SessionEvent[] {
@@ -241,8 +247,8 @@ describe('SQLite session search', () => {
 
     const parent = SessionId('never-parent')
     const child = SessionId('never-child')
-    ctx.sessions.create(parent, { seed: messageEvents('never opened needle'), meta: { createdAt: 10 } })
-    ctx.sessions.create(child, { meta: { parentSession: parent, createdAt: 20 } })
+    ctx.sessions.create(parent, { seed: messageEvents('never opened needle'), meta: { driverId: AgentDriverId('dsh'), createdAt: 10 } })
+    ctx.sessions.create(child, { meta: { driverId: AgentDriverId('dsh'), parentSession: parent, createdAt: 20 } })
 
     await expect(service.searchSessions({ query: 'needle' }))
       .rejects.toThrow(expectCode('SESSION_QUERY_SEARCH_DISABLED'))
@@ -315,7 +321,14 @@ describe('SQLite session search', () => {
       // agentPreset rides along: the index rebuilds the header a caller reads,
       // and a session listed under the wrong composition is a lie about what it
       // ran. The full-header comparison below is what pins every column.
-      meta: { cwd: '/work', createdAt: 10, seedLength: 1, delegationDepth: 2, agentPreset: 'minimal' },
+      meta: {
+        driverId: AgentDriverId('codex'),
+        cwd: '/work',
+        createdAt: 10,
+        seedLength: 1,
+        delegationDepth: 2,
+        agentPreset: 'minimal',
+      },
     })
     session.append(
       'user/message',
@@ -336,7 +349,7 @@ describe('SQLite session search', () => {
 
   it('excludes assistant reasoning while indexing visible answer text', async () => {
     const ctx = await liveContext()
-    const session = ctx.sessions.create(SessionId('reasoning'))
+    const session = ctx.sessions.create(SessionId('reasoning'), { meta: { driverId: AgentDriverId('dsh') } })
     session.append(
       'assistant/message',
       {
@@ -377,8 +390,8 @@ describe('SQLite session search', () => {
       }), surfaceOp: { op: 'replace', start: 0, end: 0 }, sourceEventSeqs: [0] },
       { type: 'turn/end', seq: 3, time: 13, data: { turn: 1, reason: { kind: 'error', error: { message: 'needle failure', code: 'UNKNOWN' } } } },
     ]
-    ctx.sessions.create(SessionId('a'), { seed: events, meta: { cwd: '/a', parentSession: parent, createdAt: 20 } })
-    ctx.sessions.create(SessionId('b'), { seed: messageEvents('needle peer', 12), meta: { createdAt: 20 } })
+    ctx.sessions.create(SessionId('a'), { seed: events, meta: { driverId: AgentDriverId('dsh'), cwd: '/a', parentSession: parent, createdAt: 20 } })
+    ctx.sessions.create(SessionId('b'), { seed: messageEvents('needle peer', 12), meta: { driverId: AgentDriverId('dsh'), createdAt: 20 } })
 
     const all = await ctx.sessionQuery.searchEvents({ sessionId: SessionId('a'), query: 'needle' })
     expect(new Set(all.items.map(item => item.surface))).toEqual(new Set(['current', 'shadowed', 'log-only']))
@@ -417,7 +430,7 @@ describe('SQLite session search', () => {
     const ctx = await liveContext()
     const session = ctx.sessions.create(SessionId('predicate-boundary'), {
       seed: messageEvents('needle'),
-      meta: { cwd: '/work' },
+      meta: { driverId: AgentDriverId('dsh'), cwd: '/work' },
     })
     const sessionFilters = Array.from(
       { length: 14 },
@@ -439,7 +452,7 @@ describe('SQLite session search', () => {
 
   it('rejects unsupported FTS5 outer-predicate counts with typed errors', async () => {
     const ctx = await liveContext()
-    const session = ctx.sessions.create(SessionId('predicate-limit'), { seed: messageEvents('needle') })
+    const session = ctx.sessions.create(SessionId('predicate-limit'), { seed: messageEvents('needle'), meta: { driverId: AgentDriverId('dsh') } })
     const sessionFilters = Array.from(
       { length: 1_100 },
       () => ({ kind: 'id' as const, values: [session.id] }),
@@ -470,13 +483,13 @@ describe('SQLite session search', () => {
 
   it('uses literal phrase tokens, stable ties, and bounded Unicode snippets', async () => {
     const ctx = await liveContext({ path: ':memory:', defaultLimit: 10, maxLimit: 10, snippetChars: 5 })
-    ctx.sessions.create(SessionId('a'), { seed: messageEvents('😀😀 alpha beta BRAID 😀😀', 10), meta: { createdAt: 1 } })
-    ctx.sessions.create(SessionId('b'), { seed: messageEvents('alpha beta', 10), meta: { createdAt: 1 } })
-    ctx.sessions.create(SessionId('c'), { seed: messageEvents('alpha middle beta', 10), meta: { createdAt: 1 } })
-    ctx.sessions.create(SessionId('d'), { seed: messageEvents('alpha beta', 10), meta: { createdAt: 1 } })
-    ctx.sessions.create(SessionId('operator'), { seed: messageEvents('needle OR absent', 10), meta: { createdAt: 1 } })
-    ctx.sessions.create(SessionId('only'), { seed: messageEvents('needle only', 10), meta: { createdAt: 1 } })
-    ctx.sessions.create(SessionId('quote'), { seed: messageEvents('say "needle" exactly', 10), meta: { createdAt: 1 } })
+    ctx.sessions.create(SessionId('a'), { seed: messageEvents('😀😀 alpha beta BRAID 😀😀', 10), meta: { driverId: AgentDriverId('dsh'), createdAt: 1 } })
+    ctx.sessions.create(SessionId('b'), { seed: messageEvents('alpha beta', 10), meta: { driverId: AgentDriverId('dsh'), createdAt: 1 } })
+    ctx.sessions.create(SessionId('c'), { seed: messageEvents('alpha middle beta', 10), meta: { driverId: AgentDriverId('dsh'), createdAt: 1 } })
+    ctx.sessions.create(SessionId('d'), { seed: messageEvents('alpha beta', 10), meta: { driverId: AgentDriverId('dsh'), createdAt: 1 } })
+    ctx.sessions.create(SessionId('operator'), { seed: messageEvents('needle OR absent', 10), meta: { driverId: AgentDriverId('dsh'), createdAt: 1 } })
+    ctx.sessions.create(SessionId('only'), { seed: messageEvents('needle only', 10), meta: { driverId: AgentDriverId('dsh'), createdAt: 1 } })
+    ctx.sessions.create(SessionId('quote'), { seed: messageEvents('say "needle" exactly', 10), meta: { driverId: AgentDriverId('dsh'), createdAt: 1 } })
 
     const phrase = await ctx.sessionQuery.searchSessions({ query: 'alpha beta' })
     expect(phrase.items.map(item => item.header.id)).toEqual([SessionId('b'), SessionId('d'), SessionId('a')])
@@ -502,7 +515,7 @@ describe('SQLite session search', () => {
     const persistence = await ctx.plugin(TestPersistence)
     ctx.sessions.create(SessionId('a-live'), {
       seed: messageEvents('needle needle', 10),
-      meta: { createdAt: persisted.createdAt },
+      meta: { driverId: AgentDriverId('dsh'), createdAt: persisted.createdAt },
     })
 
     const result = await ctx.sessionQuery.searchSessions({
@@ -517,6 +530,7 @@ describe('SQLite session search', () => {
     const ctx = await liveContext({ path: ':memory:', snippetChars: 14 })
     const session = ctx.sessions.create(SessionId('snippet'), {
       seed: messageEvents('long long long—café,\nnext value', 10),
+      meta: { driverId: AgentDriverId('dsh') },
     })
 
     const page = await ctx.sessionQuery.searchEvents({ sessionId: session.id, query: 'CAFE' })
@@ -535,8 +549,9 @@ describe('SQLite session search', () => {
         { ...messageEvents('needle two', 11)[0]!, seq: 1 },
         { ...messageEvents('needle three', 12)[0]!, seq: 2 },
       ],
+      meta: { driverId: AgentDriverId('dsh') },
     })
-    ctx.sessions.create(SessionId('other'), { seed: messageEvents('needle other', 10) })
+    ctx.sessions.create(SessionId('other'), { seed: messageEvents('needle other', 10), meta: { driverId: AgentDriverId('dsh') } })
 
     const eventPage = await ctx.sessionQuery.searchEvents({ sessionId: target.id, query: 'needle', limit: 1 })
     const sessionPage = await ctx.sessionQuery.searchSessions({ query: 'needle', limit: 1 })
@@ -577,7 +592,7 @@ describe('SQLite session search', () => {
     expect(sessionIds).toHaveLength(2)
     expect(new Set(sessionIds).size).toBe(sessionIds.length)
 
-    ctx.sessions.create(SessionId('unrelated'), { seed: messageEvents('needle unrelated', 20) })
+    ctx.sessions.create(SessionId('unrelated'), { seed: messageEvents('needle unrelated', 20), meta: { driverId: AgentDriverId('dsh') } })
     await expect(ctx.sessionQuery.searchEvents({
       sessionId: target.id,
       query: 'needle',
@@ -607,8 +622,8 @@ describe('SQLite session search', () => {
   it('invalidates session cursors after transient persistence topology changes', async () => {
     TestPersistence.reset()
     const ctx = await liveContext({ path: ':memory:', defaultLimit: 1, maxLimit: 5 })
-    ctx.sessions.create(SessionId('first'), { seed: messageEvents('needle first') })
-    ctx.sessions.create(SessionId('second'), { seed: messageEvents('needle second') })
+    ctx.sessions.create(SessionId('first'), { seed: messageEvents('needle first'), meta: { driverId: AgentDriverId('dsh') } })
+    ctx.sessions.create(SessionId('second'), { seed: messageEvents('needle second'), meta: { driverId: AgentDriverId('dsh') } })
     const page = await ctx.sessionQuery.searchSessions({ query: 'needle', limit: 1 })
     if (page.nextCursor === undefined) throw new Error('expected cursor')
 
@@ -624,7 +639,7 @@ describe('SQLite session search', () => {
 
   it('rejects invalid requests, filters, cursors, and direct config', async () => {
     const ctx = await liveContext({ path: ':memory:', defaultLimit: 2, maxLimit: 3 })
-    const session = ctx.sessions.create(SessionId('valid'), { seed: messageEvents('needle') })
+    const session = ctx.sessions.create(SessionId('valid'), { seed: messageEvents('needle'), meta: { driverId: AgentDriverId('dsh') } })
     for (const request of [
       { sessionId: session.id, query: '' },
       { sessionId: session.id, query: 'needle', limit: 0 },
@@ -685,7 +700,7 @@ describe('SQLite session search', () => {
 
   it('rejects aggregate filter bindings above SQLite\'s portable variable limit', async () => {
     const ctx = await liveContext()
-    const session = ctx.sessions.create(SessionId('binding-limit'), { seed: messageEvents('needle') })
+    const session = ctx.sessions.create(SessionId('binding-limit'), { seed: messageEvents('needle'), meta: { driverId: AgentDriverId('dsh') } })
     // Each clause is below the ceiling; combined with its sibling and fixed
     // query bindings, the complete statement is not portable.
     const halfPortableLimit = 16_383
@@ -770,7 +785,7 @@ describe('SQLite reconciliation and source lifecycle', () => {
 
     await expect(ctx.sessionQuery.searchSessions({ query: 'durable' }))
       .resolves.toMatchObject({ items: [{ header: durable, live: false, persisted: true }] })
-    const live = ctx.sessions.prepare(shared.id, { meta: { createdAt: 10, cwd: '/work' } })
+    const live = ctx.sessions.prepare(shared.id, { meta: { driverId: AgentDriverId('dsh'), createdAt: 10, cwd: '/work' } })
     live.append('user/message', createUserMessage({
       content: [{ type: 'text', text: 'live needle' }], source: { kind: 'user' },
     }), { surfaceOp: 'append' })
@@ -796,7 +811,7 @@ describe('SQLite reconciliation and source lifecycle', () => {
     const ctx = await liveContext()
     const live = ctx.sessions.prepare(shared.id, {
       seed: messageEvents('live needle'),
-      meta: { createdAt: shared.createdAt },
+      meta: { driverId: AgentDriverId('dsh'), createdAt: shared.createdAt },
     })
     const detach = ctx.sessions.enter(live)
     ctx.sessions.announce(live)
@@ -825,7 +840,7 @@ describe('SQLite reconciliation and source lifecycle', () => {
     await ctx.plugin(TestPersistence)
     TestPersistence.snapshotEffect = () => {
       TestPersistence.snapshotEffect = undefined
-      ctx.sessions.create(SessionId('attached'), { seed: messageEvents('attached needle') })
+      ctx.sessions.create(SessionId('attached'), { seed: messageEvents('attached needle'), meta: { driverId: AgentDriverId('dsh') } })
     }
 
     await expect(ctx.sessionQuery.searchSessions({ query: 'attached' }))
@@ -844,7 +859,7 @@ describe('SQLite reconciliation and source lifecycle', () => {
     TestPersistence.inspectEffect = () => {
       ctx.sessions.create(shared.id, {
         seed: messageEvents('live needle'),
-        meta: { createdAt: shared.createdAt },
+        meta: { driverId: AgentDriverId('dsh'), createdAt: shared.createdAt },
       })
     }
 
@@ -857,14 +872,17 @@ describe('SQLite reconciliation and source lifecycle', () => {
   it('retries when one live owner replaces another during persistence observation', async () => {
     TestPersistence.reset()
     const ctx = await liveContext()
-    const first = ctx.sessions.prepare(SessionId('first'), { seed: messageEvents('first needle') })
+    const first = ctx.sessions.prepare(SessionId('first'), {
+      seed: messageEvents('first needle'),
+      meta: { driverId: AgentDriverId('dsh') },
+    })
     const detachFirst = ctx.sessions.enter(first)
     ctx.sessions.announce(first)
     await ctx.plugin(TestPersistence)
     TestPersistence.snapshotEffect = () => {
       TestPersistence.snapshotEffect = undefined
       detachFirst()
-      ctx.sessions.create(SessionId('second'), { seed: messageEvents('second needle') })
+      ctx.sessions.create(SessionId('second'), { seed: messageEvents('second needle'), meta: { driverId: AgentDriverId('dsh') } })
     }
 
     await expect(ctx.sessionQuery.searchSessions({ query: 'second' }))
@@ -1072,13 +1090,13 @@ describe('SQLite reconciliation and source lifecycle', () => {
   })
 
   it('rejects immutable header conflicts between live and persisted sources', async () => {
-    const shared = header('conflict', 10, { delegationDepth: 1 })
+    const shared = header('conflict', 10, { driverId: AgentDriverId('dsh'), delegationDepth: 1 })
     TestPersistence.reset([{ meta: shared, events: messageEvents('persisted needle') }])
     const ctx = await liveContext()
     await ctx.plugin(TestPersistence)
     ctx.sessions.create(shared.id, {
       seed: messageEvents('live needle'),
-      meta: { createdAt: 10, delegationDepth: 2 },
+      meta: { driverId: AgentDriverId('codex'), createdAt: 10, delegationDepth: 1 },
     })
 
     await expect(ctx.sessionQuery.searchSessions({ query: 'needle' }))
@@ -1147,7 +1165,7 @@ describe('SQLite reconciliation and source lifecycle', () => {
     const first = new Context()
     await first.plugin(SessionStore)
     const persistence = await first.plugin(TestPersistence)
-    const live = first.sessions.create(shared.id, { seed: messageEvents('live needle'), meta: { createdAt: 10 } })
+    const live = first.sessions.create(shared.id, { seed: messageEvents('live needle'), meta: { driverId: AgentDriverId('dsh'), createdAt: 10 } })
     const search = await first.plugin(SqliteSessionQueryEngine, { path })
     await expect(first.sessionQuery.searchEvents({ sessionId: live.id, query: 'live' })).resolves.toMatchObject({ items: [{}] })
     await search.dispose()
@@ -1202,7 +1220,7 @@ describe('SQLite reconciliation and source lifecycle', () => {
     TestPersistence.failure = undefined
     await expect(ctx.sessionQuery.searchSessions({ query: 'needle' })).resolves.toMatchObject({ items: [{}] })
 
-    const live = ctx.sessions.create(SessionId('live'), { seed: messageEvents('base') })
+    const live = ctx.sessions.create(SessionId('live'), { seed: messageEvents('base'), meta: { driverId: AgentDriverId('dsh') } })
     await ctx.sessionQuery.searchEvents({ sessionId: live.id, query: 'base' })
     const db = (ctx.sessionQuery as unknown as { _db: DatabaseSync })._db
     db.exec('PRAGMA query_only = ON')
@@ -1279,7 +1297,7 @@ describe('SQLite schema, cancellation, and real persistence integration', () => 
     stale.exec(`PRAGMA user_version = ${SESSION_QUERY_SQLITE_SCHEMA_VERSION - 1}`)
     stale.close()
     const staleCtx = await liveContext({ path: stalePath })
-    staleCtx.sessions.create(SessionId('live'), { seed: messageEvents('needle') })
+    staleCtx.sessions.create(SessionId('live'), { seed: messageEvents('needle'), meta: { driverId: AgentDriverId('dsh') } })
     await staleCtx.sessionQuery.searchSessions({ query: 'needle' })
     await (staleCtx.sessionQuery as SqliteSessionQueryEngine).close()
     const rebuilt = new DatabaseSync(stalePath)

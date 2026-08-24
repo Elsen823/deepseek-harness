@@ -528,7 +528,7 @@ describe('SessionPersistenceSqlite schema ownership', () => {
 
     const foreignPath = await freshDbPath('dsh-sqlite-foreign-')
     const foreign = new DatabaseSync(foreignPath)
-    foreign.exec(testSql('set-user-version-17'))
+    foreign.exec(testSql('set-user-version-18'))
     foreign.exec(testSql('set-application-id-12345'))
     foreign.close()
     await expect(openDatabase(DatabaseSync, foreignPath, 'wal', DEFAULT_BUSY_TIMEOUT_MS)).rejects.toThrow(/has application id 12345/)
@@ -574,6 +574,7 @@ describe('SessionPersistenceSqlite schema ownership', () => {
     const base: SessionRow = {
       id: 'stored-header',
       version: 0,
+      driver_id: 'codex',
       created_at: 1,
       cwd: '/project',
       parent_session: 'parent',
@@ -585,6 +586,7 @@ describe('SessionPersistenceSqlite schema ownership', () => {
       agent_preset: 'minimal',
     }
     expect(rowToMeta(decodeSessionRow(base))).toMatchObject({
+      driverId: 'codex',
       cwd: '/project',
       parentSession: 'parent',
       seedLength: 4,
@@ -601,6 +603,7 @@ describe('SessionPersistenceSqlite schema ownership', () => {
     const base: SessionRow = {
       id: 'stored-header',
       version: 0,
+      driver_id: 'codex',
       created_at: 1,
       cwd: '/project',
       parent_session: null,
@@ -616,6 +619,8 @@ describe('SessionPersistenceSqlite schema ownership', () => {
       [{ ...base, id: 1 }, /id.*string/],
       [{ ...base, id: '' }, /id.*empty/],
       [{ ...base, version: '0' }, /version.*safe integer/],
+      [{ ...base, driver_id: null }, /driver_id.*string/],
+      [{ ...base, driver_id: '' }, /driver_id.*empty/],
       [{ ...base, cwd: 'relative' }, /cwd.*absolute/],
       [{ ...base, cwd: 1 }, /cwd.*string or null/],
       [{ ...base, incarnation: 'invalid' }, /incarnation.*UUID/],

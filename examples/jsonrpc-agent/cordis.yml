@@ -36,6 +36,9 @@
       enableRunInBackground: false
     toolJobs: false
 
+- id: session-runtime
+  name: '@deepseek-ai/dsh-session-runtime'
+
 - id: sessions
   name: '@deepseek-ai/dsh-session-persistence-jsonl'
   config:

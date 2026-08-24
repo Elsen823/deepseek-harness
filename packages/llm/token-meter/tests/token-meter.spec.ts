@@ -2,7 +2,7 @@ import { describe, expect, expectTypeOf, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { createUserMessage, CallId, createMessage } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock, Message, TokenUsage } from '@deepseek-ai/dsh-llm'
-import SessionStore, { Session, SessionId, canonicalHeader } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, Session, SessionId, canonicalHeader } from '@deepseek-ai/dsh-session'
 import type { EpochHeader, SessionEvent } from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import TokenMeter from '@deepseek-ai/dsh-token-meter'
@@ -679,7 +679,7 @@ describe('malformed replay and listener lifecycle', () => {
       seq: 0,
       time: 1,
       data: { turn: 1 },
-    }] })
+    }], meta: { driverId: AgentDriverId('dsh') } })
     activeMeter.measure(session)
     session.append('user/message', createUserMessage({
       content: [{ type: 'text', text: 'one' }],

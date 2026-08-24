@@ -26,7 +26,7 @@
 import { Context, Service } from '@deepseek-ai/cordis'
 import { z as zod } from 'zod'
 import type { ZodType } from 'zod'
-import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
+import { DSH_AGENT_DRIVER_ID, type Agent, type PreStepDecision } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { Session, SessionEvent, UserMessage } from '@deepseek-ai/dsh-session'
 import { defineTool } from '@deepseek-ai/dsh-tools'
@@ -244,7 +244,7 @@ export class PlanModeController extends Service {
       name: 'plan:policy',
       order: 50,
       text: (context) => {
-        if (context.agent === undefined) return ''
+        if (context.agent === undefined || context.agent.session.header.driverId !== DSH_AGENT_DRIVER_ID) return ''
         const pending = this.pendingIntents.get(context.agent.session)
         return (pending?.active ?? foldPlanMode(context.agent.session.events)) ? this.section : ''
       },
@@ -435,9 +435,10 @@ export class PlanModeController extends Service {
    * accepted in-turn pre-step.
    *
    * @param agent The agent to read.
-   * @returns Current logged state plus a pending selection, when present.
+   * @returns Current logged state plus a pending selection, when present; alternate Drivers report inactive.
    */
   get(agent: Agent): { active: boolean; pending?: boolean } {
+    if (agent.session.header.driverId !== DSH_AGENT_DRIVER_ID) return { active: false }
     const active = foldPlanMode(agent.session.events)
     const pending = this.pendingIntents.get(agent.session)
     return pending === undefined ? { active } : { active, pending: pending.active }
@@ -458,9 +459,13 @@ export class PlanModeController extends Service {
    * next accepted in-turn pre-step), `cancelled` (an opposite pending selection
    * was cleared; the logged state already matches), or `noop` (already in that
    * state).
+   * @throws when the Session is bound to an alternate Agent Driver.
    */
   set(agent: Agent, active: boolean): 'committed' | 'queued' | 'cancelled' | 'noop' {
     const session = agent.session
+    if (session.header.driverId !== DSH_AGENT_DRIVER_ID) {
+      throw new Error(`DSH Plan Mode is unavailable for Agent Driver "${session.header.driverId}"`)
+    }
     const pending = this.pendingIntents.get(session)
     const target = pending?.active ?? foldPlanMode(session.events)
     if (active === target) return 'noop'

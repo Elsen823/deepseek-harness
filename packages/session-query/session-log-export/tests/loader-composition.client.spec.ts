@@ -8,7 +8,7 @@ import Loader from '@deepseek-ai/cordis-plugin-loader'
 import Include from '@deepseek-ai/cordis-plugin-include'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import CommandRuntime from '@deepseek-ai/dsh-commands'
-import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, SessionId } from '@deepseek-ai/dsh-session'
 import * as SessionLogDownload from '@deepseek-ai/dsh-session-log-export'
 
 let root: string | undefined
@@ -55,7 +55,7 @@ describe('session-log-download real Loader composition', () => {
     await context.loader.await()
 
     const session = (context.get('sessions') as unknown as SessionStore)
-      .create(SessionId('loader-session-export'), { meta: { createdAt: 1 } })
+      .create(SessionId('loader-session-export'), { meta: { driverId: AgentDriverId('dsh'), createdAt: 1 } })
     const agent = { session, status: 'idle', options: {} } as unknown as Agent
     expect(context.commands.list(agent)).toContainEqual({
       name: 'export', description: 'Download this Session log as a ZIP archive',

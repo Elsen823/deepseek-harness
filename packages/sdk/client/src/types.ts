@@ -5,8 +5,8 @@
  * @module @deepseek-ai/dsh-sdk-client/types
  */
 
-import type { ContentBlock } from '@deepseek-ai/dsh-llm'
-import type { SessionEvent } from '@deepseek-ai/dsh-session'
+import type { ContentBlock } from '@deepseek-ai/dsh-llm/types'
+import type { SessionEvent } from '@deepseek-ai/dsh-session/types'
 
 /** One server-to-client notification as received off the wire. */
 export interface HarnessNotification {
@@ -56,6 +56,8 @@ export interface DeepSeekHarnessOptions {
   model?: string
   /** Maximum output tokens for each conversation-model request. */
   maxTokens?: number
+  /** Default immutable Agent Driver binding for Sessions created by this harness. */
+  driverId?: string
 }
 
 /** One owned session activity interval, from enqueue receipt through idle. */

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry, { type Agent } from '@deepseek-ai/dsh-agent'
-import SessionStore from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId } from '@deepseek-ai/dsh-session'
 import UserQuestionService from '@deepseek-ai/dsh-user-questions'
 import type { ApiProxy, MuxFrame, RpcRequest } from '@deepseek-ai/dsh-host-apiproxy/api'
 import { RpcId } from '@deepseek-ai/dsh-host-apiproxy/api/rpc'
@@ -19,7 +19,7 @@ async function harness(): Promise<{ ctx: Context; api: ApiProxy }> {
 }
 
 function agent(ctx: Context): Agent {
-  const session = ctx.sessions.create()
+  const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
   const value = { id: session.id, session, status: 'idle', ctx } as Agent
   ctx.agents.register(value)
   return value

@@ -2,7 +2,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { describe, expect, it } from 'vitest'
 import LlmRuntime, { createUserMessage, LlmAdapter  } from '@deepseek-ai/dsh-llm'
 import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
-import SessionStore, { Session, SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, Session, SessionId } from '@deepseek-ai/dsh-session'
 import SessionTitleService from '@deepseek-ai/dsh-session-title'
 import * as providerPlugin from '@deepseek-ai/dsh-session-title-all-prompts-llm'
 
@@ -50,7 +50,7 @@ describe('all-messages LLM title provider', () => {
     await ctx.plugin(providerPlugin, LLM_CONFIG)
     const session = ctx.sessions.create(SessionId('all-plugin'), {
       seed: seeded.events,
-      meta: { parentSession: seeded.id, seedLength: seeded.seq },
+      meta: { driverId: AgentDriverId('dsh'), parentSession: seeded.id, seedLength: seeded.seq },
     })
     session.append('turn/start', { turn: 2 })
     const latest = session.append('user/message', createUserMessage({

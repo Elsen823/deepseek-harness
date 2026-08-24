@@ -7,7 +7,7 @@ import GoalService, { GoalId } from '@deepseek-ai/dsh-goal'
 import type { GoalRef } from '@deepseek-ai/dsh-goal'
 import { createUserMessage, CallId } from '@deepseek-ai/dsh-llm'
 import type { MessageSource } from '@deepseek-ai/dsh-llm'
-import { SESSION_FORMAT_VERSION, Session, SessionId } from '@deepseek-ai/dsh-session'
+import { AgentDriverId, SESSION_FORMAT_VERSION, Session, SessionId } from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import type { ToolExecutionResult } from '@deepseek-ai/dsh-tools'
@@ -260,6 +260,7 @@ describe('goal tool execution authority', () => {
     const forkId = SessionId('goal-tool-resumed-fork')
     const forkSession = Session.create(forkId, root.session.events, {
       version: SESSION_FORMAT_VERSION,
+      driverId: AgentDriverId('dsh'),
       id: forkId,
       createdAt: Date.now(),
       parentSession: root.session.id,

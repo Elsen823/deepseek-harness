@@ -14,7 +14,7 @@ import AgentRegistry, { Inbox } from '@deepseek-ai/dsh-agent'
 import { AttachmentStore } from '@deepseek-ai/dsh-attachment'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, SessionId } from '@deepseek-ai/dsh-session'
 import type { Session } from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import type { ProjectionDefinition } from '@deepseek-ai/dsh-session-projection'
@@ -68,7 +68,7 @@ async function harness(withRegistry: boolean): Promise<{ ctx: Context; session: 
   await ctx.plugin(UserQuestionService)
   await ctx.plugin(AgentRegistry)
   if (withRegistry) await ctx.plugin(SessionProjectionRegistry)
-  const session = ctx.sessions.create()
+  const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
   // The gateway reads both the session and durable inbox baseline.
   ctx.agents.register({ id: session.id, session, inbox: new Inbox(session, { inserted: () => {}, discarded: () => {}, claimed: () => {} }), status: 'idle', ctx } as Agent)
   return { ctx, session }
@@ -266,7 +266,7 @@ describe('session.list projections column', () => {
     const coldId = SessionId('session-cold-listing')
     const load = () => { throw new Error('list must not load event logs') }
     ctx.provide('sessionPersistence', {
-      list: async () => [{ version: 0, id: coldId, createdAt: 5, cwd: '/tmp' }],
+      list: async () => [{ version: 0, driverId: AgentDriverId('dsh'), id: coldId, createdAt: 5, cwd: '/tmp' }],
       locate: () => undefined,
       load,
       inspect: load,
@@ -290,7 +290,7 @@ describe('session.list projections column', () => {
     const { ctx } = await harness(true)
     const coldId = SessionId('session-cold-uncached')
     ctx.provide('sessionPersistence', {
-      list: async () => [{ version: 0, id: coldId, createdAt: 5, cwd: '/tmp' }],
+      list: async () => [{ version: 0, driverId: AgentDriverId('dsh'), id: coldId, createdAt: 5, cwd: '/tmp' }],
       locate: () => undefined,
     } as never)
     const response = await api(ctx).sessions.list(request({}))

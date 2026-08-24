@@ -140,6 +140,10 @@ interface GoalChanged {
 }
 ```
 
+## Portable Objective projection
+
+[`@deepseek-ai/dsh-objective`](../../packages/goal/objective/README.md) registers the Driver-neutral `objective` SessionProjection. Native Drivers append statically known `agent-driver/objective` whole snapshots with `owner`, objective text, normalized phase, optional budget/attention/stop facts, and opaque routing JSON. The projection also adapts authoritative `goal/change` snapshots as owner `dsh`; it never emits a duplicate event or treats Goal id/revision/CAS as common Objective fields. A clear Goal tombstone or native `objective: null` yields `null`.
+
 ## Service behavior
 
 [`GoalService`](../../packages/goal/goal/src/index.ts) resolves creation defaults, folds strict replay from durable `goal/change` events, enforces exact-live-agent identity and compare-and-set mutations, and emits contained `goal/changed` notifications. The package [README](../../packages/goal/goal/README.md) defines the callable API and model-visible contract.
@@ -156,7 +160,7 @@ Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnp
 
 ### `ctx.goals` — `GoalService`
 
-Goal service (`ctx.goals`) backed exclusively by the owning session log.
+Built-in `dsh` Goal service (`ctx.goals`) backed exclusively by the owning Session log. Alternate Drivers return no Goal on reads and reject every mutation with `GOAL_DRIVER_MISMATCH`.
 
 ```ts cordis-catalog
 /**

@@ -19,6 +19,7 @@ import {
 import type { ReplayEntry, ReplayOverrideDoc } from '@deepseek-ai/dsh-llm-replay'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import {
+  AgentDriverId,
   SESSION_FORMAT_VERSION,
   Session,
   SessionId,
@@ -307,6 +308,7 @@ function fixtureLog(session: Session): string {
   const header = {
     type: 'session',
     version: SESSION_FORMAT_VERSION,
+    driverId: AgentDriverId('dsh'),
     id: '{{sessionId}}',
     createdAt: Date.now() - 60_000,
     cwd: '{{cwd}}',

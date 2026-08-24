@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { Context, Service } from '@deepseek-ai/cordis'
-import SessionStore, { type Session, type SessionEvent } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, type Session, type SessionEvent } from '@deepseek-ai/dsh-session'
 import * as PermissionInvariant from '@deepseek-ai/dsh-permission-presets/invariant'
 import InvariantRegistry from '@deepseek-ai/dsh-invariants'
 
@@ -45,7 +45,7 @@ describe('permission invariants', () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
     await ctx.plugin(PermissionProbe)
-    ctx.sessions.create().append('permission/preset', { preset: 'missing' })
+    ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } }).append('permission/preset', { preset: 'missing' })
     await ctx.plugin(InvariantRegistry, { enabled: true })
 
     await expect(ctx.plugin(PermissionInvariant).then(() => undefined)).rejects.toThrow(/unknown preset "missing"/)

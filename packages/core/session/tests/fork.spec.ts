@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { createUserMessage, CallId , createMessage } from '@deepseek-ai/dsh-llm'
-import SessionStore, { Session, SessionForkError, SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, Session, SessionForkError, SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionEvent, TurnEndReason } from '@deepseek-ai/dsh-session'
 
 declare module '@deepseek-ai/dsh-session/types' {
@@ -61,9 +61,20 @@ function inherited(session: Session): readonly SessionEvent[] {
 }
 
 describe('SessionStore.fork', () => {
+  it('inherits the source driver binding', async () => {
+    const { ctx, sessions } = await setup()
+    const source = ctx.sessions.create(SessionId('driver-parent'), {
+      meta: { driverId: AgentDriverId('codex') },
+    })
+
+    const child = sessions.fork(source, undefined, SessionId('driver-child'))
+
+    expect(child.header.driverId).toBe(AgentDriverId('codex'))
+  })
+
   it('forks an empty live session as an empty child with lineage metadata', async () => {
     const { ctx, sessions } = await setup()
-    const source = ctx.sessions.create(SessionId('empty-parent'), { meta: { cwd: '/workspace' } })
+    const source = ctx.sessions.create(SessionId('empty-parent'), { meta: { driverId: AgentDriverId('dsh'), cwd: '/workspace' } })
 
     const child = sessions.fork(source, undefined, SessionId('empty-child'))
 
@@ -78,7 +89,7 @@ describe('SessionStore.fork', () => {
 
   it('forks the latest completed boundary by default into detached frozen seed events', async () => {
     const { ctx, sessions } = await setup()
-    const source = ctx.sessions.create(SessionId('parent'), { meta: { cwd: '/workspace' } })
+    const source = ctx.sessions.create(SessionId('parent'), { meta: { driverId: AgentDriverId('dsh'), cwd: '/workspace' } })
     appendClosedTurn(source, 1, 'hello')
 
     const child = sessions.fork(SessionId('parent'), undefined, SessionId('child'))
@@ -101,7 +112,7 @@ describe('SessionStore.fork', () => {
 
   it('includes stable log-only events appended after a closed turn', async () => {
     const { ctx, sessions } = await setup()
-    const source = ctx.sessions.create(SessionId('log-only-parent'))
+    const source = ctx.sessions.create(SessionId('log-only-parent'), { meta: { driverId: AgentDriverId('dsh') } })
     appendClosedTurn(source, 1, 'hello')
     source.append('test/log-only', { value: 'after execution' })
 
@@ -116,7 +127,7 @@ describe('SessionStore.fork', () => {
 
   it('forks from an earlier turn boundary even when the source currently has an open tail', async () => {
     const { ctx, sessions } = await setup()
-    const source = ctx.sessions.create(SessionId('parent'), { meta: { cwd: '/workspace' } })
+    const source = ctx.sessions.create(SessionId('parent'), { meta: { driverId: AgentDriverId('dsh'), cwd: '/workspace' } })
     appendClosedTurn(source, 1, 'first')
     const firstBoundary = lastSeq(source)
     appendClosedTurn(source, 2, 'second')
@@ -146,7 +157,7 @@ describe('SessionStore.fork', () => {
     ]
 
     for (const [index, reason] of reasons.entries()) {
-      const source = ctx.sessions.create(SessionId(`parent-${index}`))
+      const source = ctx.sessions.create(SessionId(`parent-${index}`), { meta: { driverId: AgentDriverId('dsh') } })
       appendClosedTurn(source, 1, reason.kind, reason)
 
       const child = sessions.fork(source, lastSeq(source), SessionId(`child-${index}`))
@@ -160,7 +171,7 @@ describe('SessionStore.fork', () => {
     // The constructor placement's central claim, unreachable from the
     // persistence load path.
     const { ctx, sessions } = await setup()
-    const parent = ctx.sessions.create(SessionId('bracket-parent'), { meta: { cwd: '/workspace' } })
+    const parent = ctx.sessions.create(SessionId('bracket-parent'), { meta: { driverId: AgentDriverId('dsh'), cwd: '/workspace' } })
     appendClosedTurn(parent, 1, 'work')
     const open = parent.append('test/bracket-open', { id: 'op-1' })
 
@@ -179,12 +190,12 @@ describe('SessionStore.fork', () => {
 
   it('rejects invalid boundaries before creating a child', async () => {
     const { ctx, sessions } = await setup()
-    const empty = ctx.sessions.create(SessionId('empty'))
+    const empty = ctx.sessions.create(SessionId('empty'), { meta: { driverId: AgentDriverId('dsh') } })
     expect(() => sessions.fork(empty, 0, SessionId('empty-child')))
       .toThrow(new SessionForkError('fork boundary 0 does not exist in session "empty" (last seq: none)', 'INVALID_BOUNDARY'))
     expect(ctx.sessions.get(SessionId('empty-child'))).toBeUndefined()
 
-    const source = ctx.sessions.create(SessionId('parent'))
+    const source = ctx.sessions.create(SessionId('parent'), { meta: { driverId: AgentDriverId('dsh') } })
     appendClosedTurn(source, 1)
     expect(() => sessions.fork(source, -1, SessionId('negative')))
       .toThrow(/non-negative safe integer/)
@@ -198,7 +209,7 @@ describe('SessionStore.fork', () => {
 
   it('rejects a corrupted live source whose array index no longer matches event seq', async () => {
     const { ctx, sessions } = await setup()
-    const source = ctx.sessions.create(SessionId('corrupt-parent'))
+    const source = ctx.sessions.create(SessionId('corrupt-parent'), { meta: { driverId: AgentDriverId('dsh') } })
     appendClosedTurn(source, 1)
     const mutableLog = (source as unknown as { log: SessionEvent[] }).log
     mutableLog[2] = { ...mutableLog[2]!, seq: 99 }
@@ -225,7 +236,7 @@ describe('SessionStore.fork', () => {
 
   it('rejects a stale Session object whose id is live on a different instance', async () => {
     const { ctx, sessions } = await setup()
-    ctx.sessions.create(SessionId('same-id'))
+    ctx.sessions.create(SessionId('same-id'), { meta: { driverId: AgentDriverId('dsh') } })
     const stale = Session.create(SessionId('same-id'))
 
     expect(() => sessions.fork(stale))
@@ -289,7 +300,7 @@ describe('SessionStore.fork', () => {
     ]
 
     for (const [lastType, build] of cases) {
-      const source = ctx.sessions.create(SessionId(`open-${lastType}`))
+      const source = ctx.sessions.create(SessionId(`open-${lastType}`), { meta: { driverId: AgentDriverId('dsh') } })
       const boundary = build(source)
 
       expect(() => sessions.fork(source, boundary))
@@ -299,9 +310,9 @@ describe('SessionStore.fork', () => {
 
   it('rejects a child session id that is already live with a typed fork error', async () => {
     const { ctx, sessions } = await setup()
-    const source = ctx.sessions.create(SessionId('parent'))
+    const source = ctx.sessions.create(SessionId('parent'), { meta: { driverId: AgentDriverId('dsh') } })
     appendClosedTurn(source, 1)
-    ctx.sessions.create(SessionId('child'))
+    ctx.sessions.create(SessionId('child'), { meta: { driverId: AgentDriverId('dsh') } })
 
     expect(() => sessions.fork(source, undefined, SessionId('child')))
       .toThrow(new SessionForkError('session "child" already exists', 'SESSION_ALREADY_EXISTS'))
@@ -309,9 +320,9 @@ describe('SessionStore.fork', () => {
 
   it('rejects a duplicate child session id before validating the boundary', async () => {
     const { ctx, sessions } = await setup()
-    const source = ctx.sessions.create(SessionId('open-parent'))
+    const source = ctx.sessions.create(SessionId('open-parent'), { meta: { driverId: AgentDriverId('dsh') } })
     source.append('turn/start', { turn: 1 })
-    ctx.sessions.create(SessionId('child'))
+    ctx.sessions.create(SessionId('child'), { meta: { driverId: AgentDriverId('dsh') } })
 
     expect(() => sessions.fork(source, undefined, SessionId('child')))
       .toThrow(new SessionForkError('session "child" already exists', 'SESSION_ALREADY_EXISTS'))

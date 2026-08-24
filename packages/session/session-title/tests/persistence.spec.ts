@@ -4,7 +4,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, SessionId } from '@deepseek-ai/dsh-session'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import SqliteSessionPersistence from '@deepseek-ai/dsh-session-persistence-sqlite'
 import SessionTitleService, { foldSessionTitle } from '@deepseek-ai/dsh-session-title'
@@ -22,7 +22,7 @@ afterEach(async () => {
 })
 
 async function appendPersistedTitle(ctx: Context, id: ReturnType<typeof SessionId>): Promise<void> {
-  const session = ctx.sessions.create(id)
+  const session = ctx.sessions.create(id, { meta: { driverId: AgentDriverId('dsh') } })
   session.append('turn/start', {
     turn: 1,
   })

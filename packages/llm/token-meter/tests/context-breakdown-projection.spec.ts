@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { createMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock, ToolSchema } from '@deepseek-ai/dsh-llm'
-import SessionStore from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId } from '@deepseek-ai/dsh-session'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import TokenMeter from '@deepseek-ai/dsh-token-meter'
@@ -33,7 +33,7 @@ async function harness(): Promise<{ ctx: Context; session: Session }> {
   await ctx.plugin(SessionStore)
   await ctx.plugin(SessionProjectionRegistry)
   await ctx.plugin(TokenMeter)
-  return { ctx, session: ctx.sessions.create() }
+  return { ctx, session: ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } }) }
 }
 
 const projected = (ctx: Context, session: Session): ContextBreakdownProjection => {
@@ -261,7 +261,7 @@ describe('contextBreakdown session projection', () => {
     await ctx.plugin(SessionStore)
     await ctx.plugin(SessionProjectionRegistry)
     const meterFiber = await ctx.plugin(TokenMeter)
-    const session = ctx.sessions.create()
+    const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     session.append('request/header', {
       header: { config: CONFIG, system: 'You are terse.' },
       reason: 'initial',

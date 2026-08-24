@@ -22,6 +22,7 @@ import type {
 } from '@deepseek-ai/dsh-llm'
 import type { AttachmentIdType, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type {
+  AgentDriverId,
   SessionEvent,
   SessionId,
   TodoItem,
@@ -40,6 +41,8 @@ import type { RequestPayload, ResponseValue, RpcMethodMap } from '@deepseek-ai/d
 import { AbstractApiClient, RpcId, SESSION_SEARCH_RESULT_LIMIT } from './api.ts'
 import { randomUuid } from './random-uuid.ts'
 import type { ClientConnectionRpc } from '../rpc.ts'
+
+const FIXTURE_DRIVER_ID = 'dsh' as AgentDriverId
 
 /** The fake carrier mints like a real one (business code never mints). */
 function rpcRequest<P>(payload: P): RpcRequest<P> {
@@ -1525,9 +1528,9 @@ export function createFixtureFaces(options: FixtureOptions = {}): FixtureWorld {
 function createFixtureWorld(options: FixtureOptions): FixtureWorld {
   // The resident fixture sessions all carry history, so none of them is blank.
   const sessions: SessionSummary[] = options.empty ? [] : [
-    { sessionId: sid('fx-alpha'), updatedAt: Date.now(), running: true, blank: false, cwd: '/tmp/fixture' },
-    { sessionId: sid('fx-beta'), updatedAt: Date.now() - 60_000, running: false, blank: false, parentSessionId: sid('fx-alpha'), cwd: '/tmp/fixture' },
-    { sessionId: sid('fx-gamma'), updatedAt: Date.now() - 120_000, running: false, blank: false, cwd: '/tmp/fixture' },
+    { sessionId: sid('fx-alpha'), driverId: FIXTURE_DRIVER_ID, updatedAt: Date.now(), running: true, blank: false, cwd: '/tmp/fixture' },
+    { sessionId: sid('fx-beta'), driverId: FIXTURE_DRIVER_ID, updatedAt: Date.now() - 60_000, running: false, blank: false, parentSessionId: sid('fx-alpha'), cwd: '/tmp/fixture' },
+    { sessionId: sid('fx-gamma'), driverId: FIXTURE_DRIVER_ID, updatedAt: Date.now() - 120_000, running: false, blank: false, cwd: '/tmp/fixture' },
   ]
   const logs = new Map<SessionId, SessionEvent[]>([[sid('fx-alpha'), buildAlphaLog()]])
   const modelSelections = new Map<SessionId, ModelSelection>(sessions.map(session => [
@@ -2265,6 +2268,10 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
 
   const api: ApiProxy = {
     sessions: {
+      drivers: request => ok(request, {
+        defaultId: FIXTURE_DRIVER_ID,
+        items: [{ id: FIXTURE_DRIVER_ID, name: 'DeepSeek Harness' }],
+      }),
       list: request => ok(request, { items: [...sessions].sort((a, b) => b.updatedAt - a.updatedAt) }),
       search: (request, signal) => {
         if (signal.aborted) {
@@ -2317,6 +2324,14 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
           })
         }
         const cwd = workspace?.path ?? request.payload.cwd ?? '/tmp/fixture'
+        const driverId = request.payload.driverId ?? FIXTURE_DRIVER_ID
+        if (driverId !== FIXTURE_DRIVER_ID) {
+          return err(request, {
+            code: 'agent-driver-not-found',
+            message: `no fixture Agent Driver ${driverId}`,
+            details: { driverId },
+          })
+        }
         const requestedId = request.payload.sessionId
         const attachWorkspace = (sessionId: SessionId): void => {
           /* v8 ignore next -- callers enter only when a target Workspace exists. */
@@ -2328,14 +2343,25 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
         const attachFailure = (
           sessionId: SessionId,
           workspaceId: WorkspaceId,
-        ): Promise<RpcResponse<{ sessionId: SessionId }>> => err(request, {
+        ): Promise<RpcResponse<ResponseValue<'session.create'>>> => err(request, {
           code: 'workspace-attach-failed' as const,
           message: `fixture rejected Workspace attachment for ${sessionId}`,
-          details: { sessionId, workspaceId },
+          details: { sessionId, workspaceId, driverId },
         })
         if (requestedId !== undefined) {
           const existing = summaryOf(requestedId)
           if (existing !== undefined) {
+            if (existing.driverId !== driverId) {
+              return err(request, {
+                code: 'agent-driver-conflict',
+                message: `session ${requestedId} already uses Agent Driver ${existing.driverId}`,
+                details: {
+                  sessionId: requestedId,
+                  requestedDriverId: driverId,
+                  existingDriverId: existing.driverId,
+                },
+              })
+            }
             if (existing.cwd !== cwd) {
               return err(request, {
                 code: 'session-conflict',
@@ -2347,18 +2373,20 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
               if (options.failWorkspaceAttach) return attachFailure(requestedId, workspace.workspaceId)
               attachWorkspace(requestedId)
             }
-            return ok(request, { sessionId: requestedId })
+            return ok(request, { sessionId: requestedId, driverId: existing.driverId })
           }
         }
         const created: SessionSummary = {
-          sessionId: requestedId ?? sid(`fx-${nextSession++}`), updatedAt: Date.now(), running: false, blank: true, cwd,
+          sessionId: requestedId ?? sid(`fx-${nextSession++}`),
+          driverId,
+          updatedAt: Date.now(), running: false, blank: true, cwd,
         }
         sessions.push(created)
         modelSelections.set(created.sessionId, { provider: 'deepseek-official', model: 'deepseek-v4-flash' })
         attachedSessions += 1
         const emitSession = (): void => {
           // Mirrors the host: the frame fires at creation, so blank is constantly true.
-          emitHost({ type: 'host/session-added', sessionId: created.sessionId, blank: true, cwd })
+          emitHost({ type: 'host/session-added', sessionId: created.sessionId, driverId, blank: true, cwd })
         }
         if (workspace !== undefined && options.failWorkspaceAttach) {
           emitSession()
@@ -2372,7 +2400,7 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
           if (workspace !== undefined) attachWorkspace(created.sessionId)
         }
         if (options.dropSessionCreateResponse) throw new Error('fixture: dropped session.create response after publication')
-        return ok(request, { sessionId: created.sessionId })
+        return ok(request, { sessionId: created.sessionId, driverId })
       },
       rename: (request) => {
         const missing = requireSession(request)
@@ -2396,13 +2424,21 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
         return ok(request, { title: normalized, seq: appended.seq })
       },
       fork: (request) => {
-        const { sessionId, atSeq } = request.payload
+        const { sessionId, atSeq, driverId: requestedDriverId } = request.payload
         const source = summaryOf(sessionId)
         if (source === undefined) {
           return err(request, {
             code: 'session-not-found',
             message: `no session ${sessionId}`,
             details: { sessionId },
+          })
+        }
+        const driverId = requestedDriverId ?? source.driverId
+        if (driverId !== FIXTURE_DRIVER_ID) {
+          return err(request, {
+            code: 'agent-driver-not-found',
+            message: `no fixture Agent Driver ${driverId}`,
+            details: { driverId },
           })
         }
         const log = logs.get(sessionId) ?? []
@@ -2426,14 +2462,16 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
         let cut = boundary.seq + 1
         while (cut < log.length && log[cut]?.type !== 'turn/start') cut++
         const child: SessionSummary = {
-          sessionId: sid(`fx-${nextSession++}`), updatedAt: Date.now(), running: false, blank: false,
+          sessionId: sid(`fx-${nextSession++}`),
+          driverId,
+          updatedAt: Date.now(), running: false, blank: false,
           parentSessionId: sessionId,
           ...source.cwd === undefined ? {} : { cwd: source.cwd },
         }
         logs.set(child.sessionId, log.slice(0, cut))
         sessions.push(child)
         emitHost({
-          type: 'host/session-added', sessionId: child.sessionId, blank: false,
+          type: 'host/session-added', sessionId: child.sessionId, driverId, blank: false,
           parentSessionId: sessionId,
           ...source.cwd === undefined ? {} : { cwd: source.cwd },
         })
@@ -2443,7 +2481,7 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
           workspace.updatedAt = new Date().toISOString()
           emitHost({ type: 'host/workspace-changed', workspace: { ...workspace } })
         }
-        return ok(request, { sessionId: child.sessionId })
+        return ok(request, { sessionId: child.sessionId, driverId })
       },
       history: async (request) => {
         const log = logs.get(request.payload.sessionId) ?? []
@@ -3175,6 +3213,7 @@ export class FixtureApiClient extends AbstractApiClient {
     signal: AbortSignal,
   ): Promise<RpcResponse<unknown>> {
     switch (method) {
+      case 'session.drivers': return this.api.sessions.drivers(request)
       case 'session.list': return this.api.sessions.list(request)
       case 'session.search': return this.api.sessions.search(request, signal)
       case 'session.create': return this.api.sessions.create(request)

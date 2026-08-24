@@ -11,7 +11,7 @@ import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry, { Inbox } from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, SessionId } from '@deepseek-ai/dsh-session'
 import type { Session } from '@deepseek-ai/dsh-session'
 import UserQuestionService from '@deepseek-ai/dsh-user-questions'
 import LocalJobRegistry from '@deepseek-ai/dsh-jobs-local'
@@ -53,7 +53,7 @@ async function harness(withRegistry: boolean): Promise<{ ctx: Context; session: 
     await ctx.plugin(LocalJobRegistry)
     ctx.jobs.attachController('api-proxy-test')
   }
-  const session = ctx.sessions.create()
+  const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
   const agent = {
     id: session.id,
     session,
@@ -155,7 +155,7 @@ describe('session/jobs change pushes', () => {
 
   it('fans an unowned change out to every subscribed session', async () => {
     const { ctx } = await harness(true)
-    const second = ctx.sessions.create()
+    const second = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     const proxy = api(ctx)
     const abort = new AbortController()
     const stream = proxy.events.mux({ rpcId: RpcId('t-tasks-unowned'), payload: {} }, abort.signal)
@@ -174,7 +174,7 @@ describe('session/jobs change pushes', () => {
     const coldId = SessionId('session-cold-tasks')
     let loaded = false
     ctx.provide('sessionPersistence', {
-      list: async () => [{ version: 0, id: coldId, createdAt: 5, cwd: '/tmp' }],
+      list: async () => [{ version: 0, driverId: AgentDriverId('dsh'), id: coldId, createdAt: 5, cwd: '/tmp' }],
       locate: () => undefined,
       load: () => { loaded = true; throw new Error('task listing must not load a cold log') },
     } as never)
@@ -254,7 +254,7 @@ describe('session/jobs baseline for a session born after the stream opened', () 
     // One unowned task exists before the new session is created; the subscribe
     // frame clears the client mirror, so the baseline has to follow it.
     ctx.jobs.start(producer('visible to every caller').spec)
-    const created = ctx.sessions.create()
+    const created = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
 
     const frames = await collect(stream, 2, abort)
     const forNew = frames.filter(frame => frame.sessionId === created.id)

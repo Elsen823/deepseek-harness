@@ -2,7 +2,7 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
-import SessionStore, { Session, SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, Session, SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
 import * as TimeInvariant from '@deepseek-ai/dsh-time-context/invariant'
 import InvariantRegistry from '@deepseek-ai/dsh-invariants'
 
@@ -191,7 +191,7 @@ describe('time-context invariants', () => {
   it('validates each existing reading against its preceding durable prefix', async () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
-    const session = ctx.sessions.create(SessionId('time-invariant-late-valid'))
+    const session = ctx.sessions.create(SessionId('time-invariant-late-valid'), { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', { turn: 1 })
     session.append('step/start', { turn: 1, step: 1 })
     session.append('user/message', createUserMessage({
@@ -207,7 +207,7 @@ describe('time-context invariants', () => {
   it('rejects an invalid existing reading on late registration', async () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
-    const session = ctx.sessions.create(SessionId('time-invariant-late-invalid'))
+    const session = ctx.sessions.create(SessionId('time-invariant-late-invalid'), { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', { turn: 1 })
     session.append('step/start', { turn: 1, step: 1 })
     session.append('user/message', createUserMessage({
@@ -320,7 +320,7 @@ describe('time-context invariants', () => {
     const ctx = await setup()
     const text = reading('1', '2', 'step context')
     expect(() => {
-      ctx.sessions.create(SessionId('time-invariant-created-invalid'), {
+      ctx.sessions.create(SessionId('time-invariant-created-invalid'), { meta: { driverId: AgentDriverId('dsh') },
         seed: [
           { type: 'turn/start', seq: 0, time: SECOND, data: { turn: 1 } },
           { type: 'step/start', seq: 1, time: SECOND, data: { turn: 1, step: 1 } },

@@ -8,7 +8,7 @@ import { Context } from '@deepseek-ai/cordis'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
 import { LlmAdapter, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
-import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, SessionId } from '@deepseek-ai/dsh-session'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import * as toolSchedule from '../src/index.ts'
 import {
@@ -87,7 +87,9 @@ describe('Schedule production JSONL restart', () => {
     const sessionId = SessionId('schedule-jsonl-restart')
     const first = await mountPersistence(root)
 
-    const pending = first.sessions.create(sessionId, { meta: { cwd: '/tmp' } })
+    const pending = first.sessions.create(sessionId, {
+      meta: { driverId: AgentDriverId('dsh'), cwd: '/tmp' },
+    })
     const pendingRecord = createAfterScheduleRecord(
       ScheduleId('schedule-1'), 'restart reminder', 1, Date.now() - 60_000,
     )

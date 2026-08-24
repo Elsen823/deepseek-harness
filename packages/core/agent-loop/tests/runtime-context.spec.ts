@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, SessionId } from '@deepseek-ai/dsh-session'
 import { RuntimeContextProjection } from '../src/runtime-context.ts'
 
 const SOURCE = '@deepseek-ai/dsh-system-prompt'
@@ -17,7 +17,7 @@ describe('RuntimeContextProjection', () => {
   it('restores the latest visible owned snapshot and ignores other sessions', async () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
-    const session = ctx.sessions.create(SessionId('runtime-context-replay'))
+    const session = ctx.sessions.create(SessionId('runtime-context-replay'), { meta: { driverId: AgentDriverId('dsh') } })
     const retained = session.append('user/message', contextMessage('retained'), { surfaceOp: 'append' })
     const shadowed = session.append('user/message', contextMessage('shadowed'), { surfaceOp: 'append' })
     session.append('user/message', createUserMessage({
@@ -38,7 +38,7 @@ describe('RuntimeContextProjection', () => {
       sections: [{ name: 'sandbox:policy', text: 'policy' }],
     })
 
-    const other = ctx.sessions.create(SessionId('runtime-context-other'))
+    const other = ctx.sessions.create(SessionId('runtime-context-other'), { meta: { driverId: AgentDriverId('dsh') } })
     other.append('user/message', contextMessage('other'), { surfaceOp: 'append' })
     expect(projection.project('retained', [])).toBeUndefined()
   })

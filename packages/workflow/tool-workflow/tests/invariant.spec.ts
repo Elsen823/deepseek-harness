@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import InvariantRegistry, { InvariantError } from '@deepseek-ai/dsh-invariants'
-import SessionStore, { SessionId, type Session } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, SessionId, type Session } from '@deepseek-ai/dsh-session'
 import { WorkflowRunId, type WorkflowRunId as WorkflowRunIdType } from '@deepseek-ai/dsh-workflow/types'
 import * as ToolWorkflowInvariant from '../src/invariant.ts'
 import type {} from '../src/types.ts'
@@ -17,7 +17,7 @@ async function setup(): Promise<Context> {
 describe('durable workflow-record invariants', () => {
   it('accepts interleaved complete runs and an unfinished continuous prefix', async () => {
     const ctx = await setup()
-    const session = ctx.sessions.create(SessionId('workflow-record-valid'))
+    const session = ctx.sessions.create(SessionId('workflow-record-valid'), { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', { turn: 1 })
     session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
     const first = WorkflowRunId('first')
@@ -45,7 +45,7 @@ describe('durable workflow-record invariants', () => {
 
   it('rejects a malformed candidate before commit and keeps the fold reusable', async () => {
     const ctx = await setup()
-    const session = ctx.sessions.create(SessionId('workflow-record-invalid'))
+    const session = ctx.sessions.create(SessionId('workflow-record-invalid'), { meta: { driverId: AgentDriverId('dsh') } })
     const runId = WorkflowRunId('run')
     session.append('tool-workflow/run-start', { runId, name: 'run' })
     const before = session.seq
@@ -168,7 +168,7 @@ describe('durable workflow-record invariants', () => {
 
   it.each(invalidCases)('rejects %s', async (_name, mutate, pattern) => {
     const ctx = await setup()
-    const session = ctx.sessions.create()
+    const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     const runId = WorkflowRunId('run')
     session.append('tool-workflow/run-start', { runId, name: 'run' })
     expect(() => { mutate(session, runId) }).toThrow(pattern)
@@ -177,7 +177,7 @@ describe('durable workflow-record invariants', () => {
   it('validates existing cold history while allowing an unfinished prefix', async () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
-    const valid = ctx.sessions.create(SessionId('workflow-record-cold-valid'))
+    const valid = ctx.sessions.create(SessionId('workflow-record-cold-valid'), { meta: { driverId: AgentDriverId('dsh') } })
     valid.append('tool-workflow/run-start', { runId: WorkflowRunId('valid'), name: 'valid' })
     valid.append('tool-workflow/agent-start', {
       runId: WorkflowRunId('valid'), seq: 1, label: 'open', childId: SessionId('child'),
@@ -187,7 +187,7 @@ describe('durable workflow-record invariants', () => {
 
     const brokenCtx = new Context()
     await brokenCtx.plugin(SessionStore)
-    const broken = brokenCtx.sessions.create(SessionId('workflow-record-cold-invalid'))
+    const broken = brokenCtx.sessions.create(SessionId('workflow-record-cold-invalid'), { meta: { driverId: AgentDriverId('dsh') } })
     broken.append('tool-workflow/run-start', { runId: WorkflowRunId('broken'), name: 'broken' })
     broken.append('tool-workflow/run-end', { runId: WorkflowRunId('broken'), stopReason: 'completed' })
     broken.append('tool-workflow/agent-start', {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import SessionStore, { Session, SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, Session, SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
 import * as PlanModeInvariant from '@deepseek-ai/dsh-plan-mode/invariant'
 import InvariantRegistry from '@deepseek-ai/dsh-invariants'
 
@@ -45,7 +45,7 @@ describe('plan-mode stream invariants', () => {
 
   it('accepts standalone plan state between turns (the idle immediate commit)', async () => {
     const ctx = await setup()
-    expect(() => ctx.sessions.create().append('plan/mode', { active: true }))
+    expect(() => ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } }).append('plan/mode', { active: true }))
       .not.toThrow()
   })
 
@@ -63,7 +63,7 @@ describe('plan-mode stream invariants', () => {
   it('rejects invalid existing state on late registration', async () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
-    const session = ctx.sessions.create()
+    const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', { turn: 1 })
     session.append('plan/mode', { active: 'plan' as unknown as boolean })
     session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
@@ -75,7 +75,7 @@ describe('plan-mode stream invariants', () => {
   it('replays enclosed existing plan state through its closing boundary', async () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
-    const session = ctx.sessions.create()
+    const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', { turn: 1 })
     session.append('plan/mode', { active: true })
     session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
@@ -87,7 +87,7 @@ describe('plan-mode stream invariants', () => {
   it('accepts standalone existing plan state on late registration', async () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
-    ctx.sessions.create().append('plan/mode', { active: true })
+    ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } }).append('plan/mode', { active: true })
     await ctx.plugin(InvariantRegistry, { enabled: true })
 
     await expect(ctx.plugin(PlanModeInvariant).then(() => undefined)).resolves.toBeUndefined()

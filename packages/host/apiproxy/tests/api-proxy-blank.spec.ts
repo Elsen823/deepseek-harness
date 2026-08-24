@@ -11,7 +11,7 @@ import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import SessionStore from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId } from '@deepseek-ai/dsh-session'
 import type { Session } from '@deepseek-ai/dsh-session'
 import UserQuestionService from '@deepseek-ai/dsh-user-questions'
 import { CommandId } from '@deepseek-ai/dsh-commands/brand'
@@ -67,7 +67,7 @@ async function listBlank(api: ApiProxy, id: string): Promise<boolean | undefined
 describe('summary blank = conversation not started', () => {
   it('standalone events (command lifecycle, plan/mode, title) keep the session blank', async () => {
     const { ctx, api, attach } = await harness()
-    const session = ctx.sessions.create()
+    const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     attach(session)
     expect(await listBlank(api, session.id)).toBe(true)
     appendStandalone(session)
@@ -76,7 +76,7 @@ describe('summary blank = conversation not started', () => {
 
   it('the first turn clears blank', async () => {
     const { ctx, api, attach } = await harness()
-    const session = ctx.sessions.create()
+    const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     attach(session)
     appendStandalone(session)
     session.append('turn/start', { turn: 0 })

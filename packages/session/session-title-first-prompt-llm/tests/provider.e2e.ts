@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import LlmRuntime from '@deepseek-ai/dsh-llm'
 import * as LlmDeepSeek from '@deepseek-ai/dsh-llm-deepseek'
-import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, SessionId } from '@deepseek-ai/dsh-session'
 import SessionTitleService from '@deepseek-ai/dsh-session-title'
 import * as FirstMessageTitleProvider from '@deepseek-ai/dsh-session-title-first-prompt-llm'
 
@@ -34,7 +34,7 @@ describe.skipIf(!process.env.DEEPSEEK_API_KEY)('first-prompt title provider with
       provider: 'deepseek-official',
       model: 'deepseek-v4-flash',
     })
-    const session = ctx.sessions.create(SessionId('real-title-provider'))
+    const session = ctx.sessions.create(SessionId('real-title-provider'), { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', {
       turn: 1,
     })

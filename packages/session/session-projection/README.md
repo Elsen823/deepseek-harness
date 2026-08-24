@@ -31,7 +31,7 @@ Session-projection Service Definition and drive registry. It owns `ctx.sessionPr
 
 ## Role
 
-This package owns the Service Definition and drive roles of the capability seam: domain host plugins (e.g. `dsh-tool-todo`) contribute units, carriers (`dsh-host-apiproxy`) consume the snapshot and change feed, and neither knows the other.
+This package owns the Service Definition and drive roles of the capability seam: domain Service Providers (e.g. `dsh-todo`) contribute units, carriers (`dsh-host-apiproxy`) consume the snapshot and change feed, and neither knows the other.
 
 ## Model Experience
 

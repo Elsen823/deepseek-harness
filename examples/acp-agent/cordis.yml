@@ -86,6 +86,9 @@
 - id: session-projection
   name: '@deepseek-ai/dsh-session-projection'
 
+- id: todo
+  name: '@deepseek-ai/dsh-todo'
+
 # Expose fresh-child `spawn` and completed-prefix `fork` through separate tool
 # names so multi-child scenarios exercise both transports. These leaves follow
 # the app because it provides `ctx.agents` and `ctx.tools`.

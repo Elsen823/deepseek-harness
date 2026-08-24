@@ -15,7 +15,7 @@ import type { Browser, Page } from 'playwright'
 import { chromium } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
 import { join } from 'node:path'
-import { SessionId } from '@deepseek-ai/dsh-session'
+import { AgentDriverId, SessionId } from '@deepseek-ai/dsh-session'
 import {
   acknowledgeReloadConnectionLoss, assertFixtureInventory, captureStableAria, compareOrRefreshGolden,
   launchWebScaffold, watchConsole, webSnapshotMode, type WebScaffold,
@@ -134,7 +134,9 @@ describe('web e2e: settings modal and General preferences', () => {
 
   it('stores Permission as the default for future sessions without changing an existing session', async () => {
     onTestFailed(() => saveFailureShot(page, 'web-e2e-settings-permission'))
-    const existing = scaffold.ctx.sessions.create(SessionId('settings-permission-before'))
+    const existing = scaffold.ctx.sessions.create(SessionId('settings-permission-before'), {
+      meta: { driverId: AgentDriverId('dsh') },
+    })
     expect(existing.events.find(event => event.type === 'permission/preset')?.data)
       .toEqual({ preset: 'workspace-write' })
 
@@ -154,7 +156,9 @@ describe('web e2e: settings modal and General preferences', () => {
     expect(existing.events.find(event => event.type === 'permission/preset')?.data)
       .toEqual({ preset: 'workspace-write' })
 
-    const created = scaffold.ctx.sessions.create(SessionId('settings-permission-after'))
+    const created = scaffold.ctx.sessions.create(SessionId('settings-permission-after'), {
+      meta: { driverId: AgentDriverId('dsh') },
+    })
     expect(created.events.map(event => [event.type, event.data])).toEqual([
       ['permission/preset', { preset: 'read-only' }],
       ['sandbox/mode', { mode: 'read-only' }],
@@ -171,7 +175,9 @@ describe('web e2e: settings modal and General preferences', () => {
     await dialog.getByRole('button', { name: 'Full access' }).waitFor({ timeout: 10_000 })
     const confirmedDocument = await readFile(join(scaffold.harnessHome, 'settings.yaml'), 'utf8')
     expect(confirmedDocument).toContain('defaultPreset: danger-full-access')
-    const confirmed = scaffold.ctx.sessions.create(SessionId('settings-permission-confirmed'))
+    const confirmed = scaffold.ctx.sessions.create(SessionId('settings-permission-confirmed'), {
+      meta: { driverId: AgentDriverId('dsh') },
+    })
     expect(confirmed.events.map(event => [event.type, event.data])).toEqual([
       ['permission/preset', { preset: 'danger-full-access' }],
       ['sandbox/mode', { mode: 'danger-full-access' }],

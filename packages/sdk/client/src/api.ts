@@ -9,7 +9,8 @@
 
 import { randomUUID } from 'node:crypto'
 import { resolve } from 'node:path'
-import type { SessionEvent } from '@deepseek-ai/dsh-session'
+import type { SessionEvent } from '@deepseek-ai/dsh-session/types'
+import type { AgentDriverCatalogResult, SessionRuntimeResult } from '@deepseek-ai/dsh-sdk-protocol'
 import { HarnessClient, isRecord, SdkProtocolError } from './client.ts'
 import type { ContentBlock, DeepSeekHarnessOptions, HarnessClientOptions, HarnessNotification, RunResult } from './types.ts'
 
@@ -26,6 +27,7 @@ export class DeepSeekHarness implements AsyncDisposable {
   private readonly provider: string
   private readonly model: string
   private readonly maxTokens: number | undefined
+  private readonly driverId: string | undefined
   private initialized: Promise<void> | undefined
   private closed = false
 
@@ -40,6 +42,7 @@ export class DeepSeekHarness implements AsyncDisposable {
     this.provider = options.provider ?? 'deepseek-official'
     this.model = options.model ?? 'deepseek-v4-flash'
     this.maxTokens = options.maxTokens
+    this.driverId = options.driverId
   }
 
   /**
@@ -68,6 +71,7 @@ export class DeepSeekHarness implements AsyncDisposable {
           provider: this.provider,
           model: this.model,
           ...this.maxTokens === undefined ? {} : { maxTokens: this.maxTokens },
+          ...this.driverId === undefined ? {} : { driverId: this.driverId },
         })
       } catch (error) {
         this.initialized = undefined
@@ -83,10 +87,11 @@ export class DeepSeekHarness implements AsyncDisposable {
    * Open a session handle (no wire traffic; the runtime creates the session
    * on its first prompt).
    * @param sessionId - explicit id to reuse; omitted mints a fresh one.
+   * @param driverId - immutable Driver for lazy creation; defaults to the harness selection.
    * @returns the session handle.
    */
-  session(sessionId?: string): HarnessSession {
-    return new HarnessSession(this, sessionId ?? `session-${randomUUID().replaceAll('-', '')}`)
+  session(sessionId?: string, driverId = this.driverId): HarnessSession {
+    return new HarnessSession(this, sessionId ?? `session-${randomUUID().replaceAll('-', '')}`, driverId)
   }
 
   /**
@@ -96,7 +101,26 @@ export class DeepSeekHarness implements AsyncDisposable {
    * @returns the owned activity interval.
    */
   run(input: string | ContentBlock[], options?: RunOptions): Promise<RunResult> {
-    return this.session(options?.sessionId).run(input, options)
+    return this.session(options?.sessionId, options?.driverId ?? this.driverId).run(input, options)
+  }
+
+  /**
+   * Read the active Driver catalog from the initialized runtime.
+   * @returns the Host-resolved default and active Driver registrations.
+   */
+  async drivers(): Promise<AgentDriverCatalogResult> {
+    await this.start()
+    return await this.clientInstance.drivers()
+  }
+
+  /**
+   * Read one process-local Session runtime value without activating it.
+   * @param sessionId - durable Session identity.
+   * @returns the current runtime value, or `null` when this process has none.
+   */
+  async runtime(sessionId: string): Promise<SessionRuntimeResult> {
+    await this.start()
+    return await this.clientInstance.runtime(sessionId)
   }
 
   /**
@@ -122,6 +146,8 @@ export class DeepSeekHarness implements AsyncDisposable {
 export interface RunOptions {
   /** Session id to run on; omitted mints a fresh session per call. */
   sessionId?: string
+  /** Immutable Driver for a newly created Session; must match an existing binding. */
+  driverId?: string
   /** Observer invoked with every notification for this session tree, in wire order. */
   onNotification?: (notification: HarnessNotification) => void
 }
@@ -133,8 +159,13 @@ export class HarnessSession {
   /**
    * @param harness - the owning harness (supplies the client and handshake).
    * @param id - the wire session id this handle runs on.
+   * @param driverId - immutable Driver for lazy creation.
    */
-  constructor(readonly harness: DeepSeekHarness, readonly id: string) {}
+  constructor(
+    readonly harness: DeepSeekHarness,
+    readonly id: string,
+    readonly driverId?: string,
+  ) {}
 
   /**
    * Queue one prompt, then observe the whole session through its next idle.
@@ -166,10 +197,17 @@ export class HarnessSession {
       options?.onNotification?.(notification)
     }
     try {
-      const messageId = await client.prompt(this.id, contentBlocks)
+      const messageId = await client.prompt(this.id, contentBlocks, this.driverId)
       let received = false
       while (true) {
         const notification = await subscription.next()
+        const unavailable = unavailableRuntime(notification)
+        if (unavailable?.sessionId === this.id) {
+          collect(notification)
+          throw new SdkProtocolError(
+            `session "${this.id}" is unavailable (${unavailable.code}): ${unavailable.message}`,
+          )
+        }
         if (!received) {
           if (notification.method !== 'session.event'
             || notification.params.sessionId !== this.id
@@ -192,6 +230,34 @@ export class HarnessSession {
       notifications,
     }
   }
+}
+
+interface UnavailableRuntime {
+  readonly sessionId: string
+  readonly code: string
+  readonly message: string
+}
+
+/**
+ * Validate and extract one unavailable Session runtime notification.
+ * @param notification - raw SDK notification.
+ * @returns the diagnosis, or `undefined` for every other notification.
+ */
+function unavailableRuntime(notification: HarnessNotification): UnavailableRuntime | undefined {
+  if (notification.method !== 'session.runtime') return undefined
+  const status = notification.params.status
+  if (!isRecord(status) || typeof status.sessionId !== 'string' || !isRecord(status.availability)) {
+    throw new SdkProtocolError(`session.runtime carried malformed status: ${JSON.stringify(status)}`)
+  }
+  if (status.availability.kind !== 'unavailable') return undefined
+  const reason = status.availability.reason
+  if (!isRecord(reason)
+    || typeof reason.code !== 'string'
+    || typeof reason.message !== 'string'
+    || typeof reason.retryable !== 'boolean') {
+    throw new SdkProtocolError(`session.runtime carried malformed unavailable reason: ${JSON.stringify(reason)}`)
+  }
+  return { sessionId: status.sessionId, code: reason.code, message: reason.message }
 }
 
 /**

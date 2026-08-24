@@ -12,7 +12,7 @@ import { deepFreeze } from '@deepseek-ai/dsh-llm'
 import { scopeOf, scopeTarget } from '@deepseek-ai/dsh-scope'
 import type { Scoped } from '@deepseek-ai/dsh-scope'
 import type { Message } from '@deepseek-ai/dsh-llm'
-import { SESSION_FORMAT_VERSION, SessionId } from './types.ts'
+import { AgentDriverId, SESSION_FORMAT_VERSION, SessionId } from './types.ts'
 import type { TypertLookup } from '@deepseek-ai/dsh-typert-protocol'
 import type { CreateSessionOptions, EpochHeader, PrepareSessionOptions, RequestContext, SessionEvent, SessionEventMap, SessionEventType, SessionHeader, SurfaceIntent, SurfaceEventType } from './types.ts'
 import { snapshotJsonValue } from './json.ts'
@@ -101,6 +101,9 @@ function validateSessionHeader(id: SessionId, input: unknown): SessionHeader {
   if (record.version !== SESSION_FORMAT_VERSION) {
     throw new Error(`session header version must be ${SESSION_FORMAT_VERSION}, got ${String(record.version)}`)
   }
+  if (typeof record.driverId !== 'string' || record.driverId.length === 0) {
+    throw new Error('session header driverId must be a non-empty string')
+  }
   if (record.id !== id) {
     throw new Error(`session header id "${String(record.id)}" does not match session id "${id}"`)
   }
@@ -149,7 +152,7 @@ function validateRestoredSessionHeader(id: SessionId, input: unknown): SessionHe
 /** Detach, validate, and freeze the creation metadata published by a session. */
 function snapshotSessionHeader(id: SessionId, source?: SessionHeader): SessionHeader {
   const input: unknown = source === undefined
-    ? { version: SESSION_FORMAT_VERSION, id, createdAt: Date.now() }
+    ? { version: SESSION_FORMAT_VERSION, driverId: AgentDriverId('dsh'), id, createdAt: Date.now() }
     : source
   const snapshot = snapshotJsonValue(input)
   if (snapshot === undefined) throw new Error('session header is not losslessly JSON-serializable')
@@ -433,10 +436,11 @@ export class Session {
   }
 
   /**
-   * Detached, deep-frozen creation metadata (format version, cwd, lineage,
-   * seed boundary). Supplied by the store via `ctx.sessions.create()`. When a
-   * `Session` is created without a store-owned header, a minimal header is
-   * synthesized (stamped with the current {@link SESSION_FORMAT_VERSION}) so
+   * Detached, deep-frozen creation metadata (format version, driver, cwd,
+   * lineage, seed boundary). Supplied by the store via `ctx.sessions.create()`.
+   * When a detached `Session` is created without a store-owned header, a minimal
+   * header bound to the built-in `dsh` driver is synthesized (stamped with the
+   * current {@link SESSION_FORMAT_VERSION}) so
    * `session.header` is always present. Kept out of the event log — it is a
    * storage concern, not replayable conversation state.
    */
@@ -810,9 +814,10 @@ export class SessionStore extends Service {
    * Create a session owned by the calling fiber: disposing that fiber stops
    * event notification and removes the session from the store. `options.seed`
    * populates the session with a copy of those events (replay/fork);
-   * `options.meta` attaches creation metadata (validated absolute `cwd`, seed
-   * and parent lineage, and delegation depth) as the immutable
-   * {@link SessionHeader} (the store fills `version`/`id`/`createdAt`).
+   * `options.meta` attaches the required driver id and creation metadata
+   * (validated absolute `cwd`, seed and parent lineage, and delegation depth)
+   * as the immutable {@link SessionHeader} (the store fills
+   * `version`/`id`/`createdAt`).
    *
    * For an agent whose session must be torn down IN ORDER with its loop (so the
    * loop's final events are published before the store attachment ends), do NOT use this
@@ -823,9 +828,10 @@ export class SessionStore extends Service {
    * @param id - the session id; omitted, the store mints `session-<n>`.
    * @param options - seed events and/or creation metadata for the header.
    * @returns the live session, already entered and announced.
-   * @throws if a session with `id` already exists, metadata is not a plain
-   *   lossless-JSON record with valid scalar fields, or `meta.cwd` is a
-   *   non-absolute path (storage backends key directories off it).
+   * @throws if a session with `id` already exists, creation metadata or its
+   *   driver id is missing, metadata is not a plain lossless-JSON record with
+   *   valid scalar fields, or `meta.cwd` is a non-absolute path (storage
+   *   backends key directories off it).
    */
   create(id?: SessionId, options?: CreateSessionOptions): Session {
     const session = this.prepare(id, options)
@@ -856,9 +862,9 @@ export class SessionStore extends Service {
    *   frozen in place through {@link Session.fromRestore}, so the caller must
    *   retain no mutable aliases.
    * @returns the constructed session, NOT yet in the store.
-   * @throws if a session with `id` already exists, metadata is not a plain
-   *   lossless-JSON record with valid scalar fields, or `meta.cwd` is a
-   *   non-absolute path.
+   * @throws if a session with `id` already exists, creation metadata or its
+   *   driver id is missing, metadata is not a plain lossless-JSON record with
+   *   valid scalar fields, or `meta.cwd` is a non-absolute path.
    */
   prepare(id?: SessionId, options?: PrepareSessionOptions): Session {
     let sessionId: SessionId
@@ -874,16 +880,18 @@ export class SessionStore extends Service {
     }
     const seed = options?.seed
     const meta = options?.meta
+    if (meta === undefined) throw new Error('session creation metadata with driverId is required')
     const header: SessionHeader = {
       version: SESSION_FORMAT_VERSION,
+      driverId: meta.driverId,
       id: sessionId,
-      createdAt: meta?.createdAt ?? Date.now(),
-      ...meta?.cwd === undefined ? {} : { cwd: meta.cwd },
-      ...meta?.parentSession === undefined ? {} : { parentSession: meta.parentSession },
-      ...meta?.seedLength === undefined ? {} : { seedLength: meta.seedLength },
-      ...meta?.origin === undefined ? {} : { origin: meta.origin },
-      ...meta?.delegationDepth === undefined ? {} : { delegationDepth: meta.delegationDepth },
-      ...meta?.agentPreset === undefined ? {} : { agentPreset: meta.agentPreset },
+      createdAt: meta.createdAt ?? Date.now(),
+      ...meta.cwd === undefined ? {} : { cwd: meta.cwd },
+      ...meta.parentSession === undefined ? {} : { parentSession: meta.parentSession },
+      ...meta.seedLength === undefined ? {} : { seedLength: meta.seedLength },
+      ...meta.origin === undefined ? {} : { origin: meta.origin },
+      ...meta.delegationDepth === undefined ? {} : { delegationDepth: meta.delegationDepth },
+      ...meta.agentPreset === undefined ? {} : { agentPreset: meta.agentPreset },
     }
     return Session.create(sessionId, seed, header)
   }
@@ -1087,6 +1095,7 @@ export class SessionStore extends Service {
     return this.create(childSessionId, {
       seed,
       meta: {
+        driverId: liveSource.header.driverId,
         ...liveSource.header.cwd !== undefined ? { cwd: liveSource.header.cwd } : {},
         parentSession: liveSource.id,
         seedLength: seed.length,

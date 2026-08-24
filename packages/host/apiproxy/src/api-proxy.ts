@@ -17,8 +17,10 @@ import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import { createUserMessage, freezeMessage, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { errorChain } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock, MessageSource } from '@deepseek-ai/dsh-llm'
-import { isAppendSurfaceEvent, isJsonValue } from '@deepseek-ai/dsh-session'
+import { AgentDriverId, isAppendSurfaceEvent, isJsonValue } from '@deepseek-ai/dsh-session'
 import type { JsonValue, Session, SessionEvent, SessionEventMap, SessionHeader, SessionId, UserMessage } from '@deepseek-ai/dsh-session'
+import type { SessionRuntimeStatus } from '@deepseek-ai/dsh-session-runtime/types'
+import type {} from '@deepseek-ai/dsh-session-runtime'
 import type { SessionPersistence } from '@deepseek-ai/dsh-session-persistence'
 import { SessionQueryError, type SessionSearchCursor } from '@deepseek-ai/dsh-session-query'
 import { SubagentError } from '@deepseek-ai/dsh-subagent'
@@ -124,6 +126,18 @@ export const DEFAULT_COLD_BLANK_PROBE_MAX_BYTES = 1024
 
 /** Conversation message event types (the pagination counting unit). */
 const MESSAGE_TYPES = new Set(['user/message', 'assistant/message'])
+
+/** Driver-owned control state omitted when a fork changes execution owner. */
+const CROSS_DRIVER_CONTROL_EVENTS: ReadonlySet<string> = new Set([
+  'goal/change',
+  'plan/mode',
+  'permission/preset',
+  'sandbox/mode',
+  'approval/policy',
+  'todo/write',
+  'agent-driver/objective',
+  'agent-driver/proposed-plan',
+])
 
 /** Validate one prompt as a batch before publishing any durable image object. */
 async function durablePromptContent(ctx: Context, content: readonly PromptContentPart[]): Promise<ContentBlock[]> {
@@ -474,6 +488,7 @@ function sessionListUpdatedAt(header: SessionHeader, metadata: SessionListMetada
 
 /** Shared Session-header projection for list baselines and creation frames. */
 function sessionListFields(header: SessionHeader, events: readonly SessionEvent[] = []): {
+  driverId: ReturnType<typeof AgentDriverId>
   parentSessionId?: SessionId
   origin?: 'subagent'
   cwd?: string
@@ -484,6 +499,7 @@ function sessionListFields(header: SessionHeader, events: readonly SessionEvent[
   // showing the creation-time value would contradict what the model saw.
   const agentPreset = resolveSessionPreset({ header, events })
   return {
+    driverId: header.driverId,
     ...header.parentSession === undefined ? {} : { parentSessionId: header.parentSession },
     ...header.origin === undefined ? {} : { origin: header.origin },
     ...header.cwd === undefined ? {} : { cwd: header.cwd },
@@ -492,13 +508,14 @@ function sessionListFields(header: SessionHeader, events: readonly SessionEvent[
 }
 
 /** SessionSummary projection for attached (in-memory) sessions. */
-function summarize(session: Session, running: boolean): SessionSummary {
+function summarize(session: Session, running: boolean, runtime?: SessionRuntimeStatus): SessionSummary {
   const metadata = sessionListMetadata(session.events)
   return {
     sessionId: session.id,
     updatedAt: sessionListUpdatedAt(session.header, metadata),
     running,
     blank: metadata.blank,
+    ...runtime === undefined ? {} : { runtime },
     ...sessionListFields(session.header, session.events),
   }
 }
@@ -548,6 +565,7 @@ async function summarizeCold(
   meta: SessionHeader,
   metadata: SessionListMetadata | undefined,
   blankProbeMaxBytes: number,
+  runtime?: SessionRuntimeStatus,
   signal?: AbortSignal,
 ): Promise<SessionSummary> {
   const probed = metadata?.blank === false
@@ -558,6 +576,7 @@ async function summarizeCold(
     updatedAt: sessionListUpdatedAt(meta, probed ?? metadata),
     running: false,
     blank: metadata?.blank === false ? false : probed?.blank ?? false,
+    ...runtime === undefined ? {} : { runtime },
     // Header-only: reading the log for a blank-window preset switch would
     // defeat the same index read, and attaching the session replaces this row
     // with `summarize()`, which resolves the switch from the events.
@@ -978,6 +997,27 @@ class AgentPresetConflict extends Error {
         + 'a deployment composing no roster records none on any session — '
         : `session "${sessionId}" already runs agent preset ${JSON.stringify(existingPreset)}; `
       + `requested ${JSON.stringify(requestedPreset)}. A session's preset is fixed at creation.`,
+    )
+  }
+}
+
+/** A caller selected no active Agent Driver registration. */
+class AgentDriverUnavailable extends Error {
+  constructor(readonly driverId: ReturnType<typeof AgentDriverId>) {
+    super(`Agent Driver "${driverId}" is not active`)
+  }
+}
+
+/** Requested identity already belongs to a Session bound to another Driver. */
+class SessionDriverConflict extends Error {
+  constructor(
+    readonly sessionId: SessionId,
+    readonly requestedDriverId: ReturnType<typeof AgentDriverId>,
+    readonly existingDriverId: ReturnType<typeof AgentDriverId>,
+  ) {
+    super(
+      `session "${sessionId}" is bound to Agent Driver "${existingDriverId}"; `
+      + `requested "${requestedDriverId}". Switch by creating a fork.`,
     )
   }
 }
@@ -1449,6 +1489,18 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
     return { id: inspected.meta.id, header: inspected.meta, events: inspected.events }
   }
 
+  /** Remove control state whose execution owner changes across a Driver fork. */
+  function crossDriverSeed(events: readonly SessionEvent[]): SessionEvent[] {
+    const planCommandIds = new Set(events.flatMap(event => event.type === 'command/run' && event.data.name === 'plan'
+      ? [event.data.commandId]
+      : []))
+    return events
+      .filter(event => !CROSS_DRIVER_CONTROL_EVENTS.has(event.type)
+        && !(event.type === 'command/run' && planCommandIds.has(event.data.commandId))
+        && !(event.type === 'command/done' && planCommandIds.has(event.data.commandId)))
+      .map((event, seq) => ({ ...event, seq }))
+  }
+
   /** Resolve the Workspace inherited by a fork without making ordinary loose lineage grouped. */
   async function forkWorkspace(source: Pick<Session, 'id' | 'header'>): Promise<Workspace | undefined> {
     const workspaces = ctx.workspaceRegistry.list()
@@ -1561,7 +1613,11 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
     cwd: string,
     checkPersistedIdentity: boolean,
     presetId?: string,
+    driverId?: ReturnType<typeof AgentDriverId>,
   ): Promise<Agent> {
+    if (driverId !== undefined && ctx.agents.getDriver(driverId) === undefined) {
+      throw new AgentDriverUnavailable(driverId)
+    }
     let creation = sessionCreations.get(sessionId)
     if (creation === undefined) {
       creation = (async () => {
@@ -1570,7 +1626,12 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         if (attached !== undefined && hasSubagentOwner(attached, live)) {
           throw new SubagentSessionOwnership(sessionId)
         }
-        if (live !== undefined) return live
+        if (live !== undefined) {
+          if (driverId !== undefined && live.session.header.driverId !== driverId) {
+            throw new SessionDriverConflict(sessionId, driverId, live.session.header.driverId)
+          }
+          return live
+        }
 
         const persistence = checkPersistedIdentity ? ctx.get('sessionPersistence') : undefined
         const stored = persistence === undefined
@@ -1583,6 +1644,9 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           // cwd (the api/commands.ts contract), not a cwd conflict.
           if (hasSubagentOwner({ header: inspected.meta }, undefined)) {
             throw new SubagentSessionOwnership(sessionId)
+          }
+          if (driverId !== undefined && inspected.meta.driverId !== driverId) {
+            throw new SessionDriverConflict(sessionId, driverId, inspected.meta.driverId)
           }
           if (inspected.meta.cwd !== cwd) {
             throw new SessionCwdConflict(sessionId, cwd, inspected.meta.cwd)
@@ -1610,6 +1674,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         const composition = await composeAgent(presetId)
         return (await ctx.agents.create({
           sessionId,
+          ...driverId === undefined ? {} : { driverId },
           agentOptions: agentOptions(),
           meta: {
             cwd,
@@ -1623,6 +1688,9 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         const live = ctx.agents.get(sessionId)
         if (live !== undefined) {
           if (hasSubagentOwner(live.session, live)) throw new SubagentSessionOwnership(sessionId)
+          if (driverId !== undefined && live.session.header.driverId !== driverId) {
+            throw new SessionDriverConflict(sessionId, driverId, live.session.header.driverId)
+          }
           return live
         }
         const attached = ctx.sessions.get(sessionId)
@@ -1641,6 +1709,9 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
     // covers every path that yields a live agent — freshly created, adopted
     // live, resumed from disk, or recovered by the concurrent-creation catch.
     assertPresetUnchanged(sessionId, presetId, resolveSessionPreset(agent.session))
+    if (driverId !== undefined && agent.session.header.driverId !== driverId) {
+      throw new SessionDriverConflict(sessionId, driverId, agent.session.header.driverId)
+    }
     if (agent.session.header.cwd !== cwd) {
       throw new SessionCwdConflict(sessionId, cwd, agent.session.header.cwd)
     }
@@ -1665,11 +1736,12 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
    */
   async function listVisibleSessionSummaries(signal?: AbortSignal): Promise<SessionSummary[]> {
     signal?.throwIfAborted()
+    const runtimes = ctx.get('sessionRuntimes')
     const summarizeAttached = (session: Session): SessionSummary => {
       const agent = ctx.agents.get(session.id)
       const projections = listProjectionsFor(ctx, session.header, session)
       return {
-        ...summarize(session, agent?.status === 'running'),
+        ...summarize(session, agent?.status === 'running', runtimes?.observe(session.header)),
         ...projections === undefined ? {} : { projections },
       }
     }
@@ -1695,6 +1767,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
               meta,
               projections?.values.sessionListMetadata,
               coldBlankProbeMaxBytes,
+              runtimes?.observe(meta),
               signal,
             )
             const attachedSession = ctx.sessions.get(meta.id)
@@ -1937,6 +2010,13 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
 
   return {
     sessions: {
+      drivers(request) {
+        return Promise.resolve(ok(request, {
+          defaultId: ctx.agents.config.defaultDriverId,
+          items: ctx.agents.listDrivers().map(driver => ({ id: driver.id, name: driver.name })),
+        }))
+      },
+
       // Attached sessions summarize from memory; persisted-but-unattached (cold)
       // sessions merge in from the persistence store so history survives restarts.
       // Logs without a cwd are not served; every session records its project
@@ -2091,9 +2171,34 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         }
         const cwd = workspace?.path ?? request.payload.cwd ?? defaults.cwd
         const requestedPreset = request.payload.agentPreset
+        const requestedDriver = request.payload.driverId
         try {
-          await ensureSession(sessionId, cwd, request.payload.sessionId !== undefined, requestedPreset)
+          await ensureSession(
+            sessionId,
+            cwd,
+            request.payload.sessionId !== undefined,
+            requestedPreset,
+            requestedDriver,
+          )
         } catch (error: unknown) {
+          if (error instanceof AgentDriverUnavailable) {
+            return err(request, {
+              code: 'agent-driver-not-found',
+              message: error.message,
+              details: { driverId: error.driverId },
+            })
+          }
+          if (error instanceof SessionDriverConflict) {
+            return err(request, {
+              code: 'agent-driver-conflict',
+              message: error.message,
+              details: {
+                sessionId: error.sessionId,
+                requestedDriverId: error.requestedDriverId,
+                existingDriverId: error.existingDriverId,
+              },
+            })
+          }
           if (error instanceof AgentPresetConflict) {
             return err(request, {
               code: 'agent-preset-conflict',
@@ -2134,7 +2239,13 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
             return err(request, {
               code: 'workspace-attach-failed',
               message: `session "${sessionId}" was created but could not attach to workspace "${workspace.id}": ${String(error)}`,
-              details: { sessionId, workspaceId: workspace.id },
+              details: {
+                sessionId,
+                workspaceId: workspace.id,
+                driverId: ctx.agents.get(sessionId)?.session.header.driverId
+                  ?? requestedDriver
+                  ?? ctx.agents.config.defaultDriverId,
+              },
             })
           }
         }
@@ -2147,8 +2258,19 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         // echoing the header would contradict both the adoption this call just
         // allowed and the row `session.list` serves for the same session.
         const created = ctx.agents.get(sessionId)
-        const createdPreset = created === undefined ? undefined : resolveSessionPreset(created.session)
-        return ok(request, { sessionId, ...createdPreset === undefined ? {} : { agentPreset: createdPreset } })
+        if (created === undefined) {
+          return err(request, {
+            code: 'internal',
+            message: `session "${sessionId}" was created without a live Agent`,
+            details: {},
+          })
+        }
+        const createdPreset = resolveSessionPreset(created.session)
+        return ok(request, {
+          sessionId,
+          driverId: created.session.header.driverId,
+          ...createdPreset === undefined ? {} : { agentPreset: createdPreset },
+        })
       },
 
       async history(request) {
@@ -2261,7 +2383,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
       },
 
       async fork(request) {
-        const { sessionId, atSeq } = request.payload
+        const { sessionId, atSeq, driverId } = request.payload
         let source: SessionReadState
         try {
           source = await readSessionState(sessionId)
@@ -2273,6 +2395,14 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
             code: 'internal',
             message: `fork source unavailable for session "${sessionId}": ${String(error)}`,
             details: {},
+          })
+        }
+        const forkDriverId = driverId ?? source.header.driverId
+        if (ctx.agents.getDriver(forkDriverId) === undefined) {
+          return err(request, {
+            code: 'agent-driver-not-found',
+            message: `Agent Driver "${forkDriverId}" is not active`,
+            details: { driverId: forkDriverId },
           })
         }
         const events = source.events
@@ -2319,14 +2449,19 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         // it already carries. Now that no model-facing row sits in the host
         // plane, composing nothing would leave the child with no tools at all.
         const forkComposition = await composeAgent(resolveSessionPreset(source))
+        const retainedSeed = events.slice(0, cut)
+        const seed = forkDriverId === source.header.driverId
+          ? retainedSeed
+          : crossDriverSeed(retainedSeed)
         try {
           await ctx.agents.create({
             sessionId: childId,
-            seed: events.slice(0, cut),
+            driverId: forkDriverId,
+            seed,
             meta: {
               ...source.header.cwd === undefined ? {} : { cwd: source.header.cwd },
               parentSession: source.id,
-              seedLength: cut,
+              seedLength: seed.length,
               ...forkComposition.agentPreset === undefined
                 ? {}
                 : { agentPreset: forkComposition.agentPreset },
@@ -2351,11 +2486,11 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
             return err(request, {
               code: 'workspace-attach-failed',
               message: `session "${childId}" was forked but could not attach to workspace "${workspace.id}": ${String(error)}`,
-              details: { sessionId: childId, workspaceId: workspace.id },
+              details: { sessionId: childId, workspaceId: workspace.id, driverId: forkDriverId },
             })
           }
         }
-        return ok(request, { sessionId: childId })
+        return ok(request, { sessionId: childId, driverId: forkDriverId })
       },
 
       async prompt(request) {
@@ -3457,6 +3592,9 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           }),
           ctx.on('agent/status', ({ agent, status }: { agent: Agent; status: AgentStatus }) => {
             queue.push(frame({ type: 'host/session-status', sessionId: agent.id, running: status === 'running' }))
+          }),
+          ctx.on('session-runtime/status', ({ status }) => {
+            queue.push(frame({ type: 'host/session-runtime', status }))
           }),
           ctx.on('agent/error', ({ agent, error }: { agent: Agent; error: unknown }) => {
             queue.push(frame({ type: 'host/agent-error', sessionId: agent.id, message: errorChain(error) }))

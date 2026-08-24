@@ -119,6 +119,99 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 
 来源：[`packages/core/agent/src/types.ts:19`](../packages/core/agent/src/types.ts)
 
+### `agent-driver/*`
+
+<a id="agent-driveractivation--log-only"></a>
+
+#### `agent-driver/activation` — log-only
+
+```ts persistence-catalog
+/**
+ * Whole activation snapshot emitted by any Agent Driver. The outer fields
+ * remain readable when its Driver plugin is unloaded; an unknown nested
+ * `driver.kind` falls back to those fields. Log-only.
+ */
+'agent-driver/activation': AgentDriverActivationSnapshot
+```
+
+来源：[`packages/core/session/src/types.ts:582`](../packages/core/session/src/types.ts)
+
+<a id="agent-driveractivity--log-only"></a>
+
+#### `agent-driver/activity` — log-only
+
+```ts persistence-catalog
+/**
+ * Whole semantic activity item or group snapshot. It is not a synthetic DSH
+ * `tool/*` event and contributes no derived model history. Log-only.
+ */
+'agent-driver/activity': AgentDriverActivitySnapshot
+```
+
+来源：[`packages/core/session/src/types.ts:594`](../packages/core/session/src/types.ts)
+
+<a id="agent-drivercheckpoint--log-only"></a>
+
+#### `agent-driver/checkpoint` — log-only
+
+```ts persistence-catalog
+/** Whole checkpoint lifecycle snapshot with provenance and compatibility facts. Log-only. */
+'agent-driver/checkpoint': AgentDriverCheckpointSnapshot
+```
+
+来源：[`packages/core/session/src/types.ts:604`](../packages/core/session/src/types.ts)
+
+<a id="agent-drivermodel-attempt--log-only"></a>
+
+#### `agent-driver/model-attempt` — log-only
+
+```ts persistence-catalog
+/** One execution attempt under a captured model-request policy. Log-only. */
+'agent-driver/model-attempt': AgentDriverModelAttemptSnapshot
+```
+
+来源：[`packages/core/session/src/types.ts:589`](../packages/core/session/src/types.ts)
+
+<a id="agent-drivermodel-request--log-only"></a>
+
+#### `agent-driver/model-request` — log-only
+
+```ts persistence-catalog
+/**
+ * Exact model-visible request plus captured execution policy. It contains no
+ * `AbortSignal`, provider credentials, or other live authority. Log-only.
+ */
+'agent-driver/model-request': AgentDriverModelRequestSnapshot
+```
+
+来源：[`packages/core/session/src/types.ts:587`](../packages/core/session/src/types.ts)
+
+<a id="agent-driverobjective--log-only"></a>
+
+#### `agent-driver/objective` — log-only
+
+```ts persistence-catalog
+/**
+ * Driver-neutral current Objective snapshot, or `null` when the owner reports
+ * no current Objective. DSH `goal/change` remains the authoritative DSH Goal
+ * stream and is adapted by `@deepseek-ai/dsh-objective` without duplication.
+ */
+'agent-driver/objective': { objective: AgentDriverObjectiveSnapshot | null; driver?: AgentDriverDetail }
+```
+
+来源：[`packages/core/session/src/types.ts:600`](../packages/core/session/src/types.ts)
+
+<a id="agent-driverproposed-plan--log-only"></a>
+
+#### `agent-driver/proposed-plan` — log-only
+
+```ts persistence-catalog
+/** Whole durable Proposed Plan document snapshot, or `null` when the owner has no current document. */
+'agent-driver/proposed-plan': { plan: AgentDriverProposedPlanSnapshot | null; driver?: AgentDriverDetail }
+```
+
+来源：[`packages/core/session/src/types.ts:602`](../packages/core/session/src/types.ts)
+
 ### `agent-preset/*`
 
 <a id="agent-presetselected--log-only"></a>

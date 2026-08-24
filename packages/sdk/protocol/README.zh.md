@@ -14,15 +14,19 @@ DeepSeek Harness SDK 运行时的共享协议格式（wire format）：一个按
 
 | 方向 | 方法 | 类型 |
 |---|---|---|
-| client→server | `initialize` | `InitializeParams` → `InitializeResult` |
+| client→server | `initialize` | `InitializeParams` → `InitializeResult`（服务器标识与活跃 Driver 目录） |
+| client→server | `agent/drivers` | 无参数 → `AgentDriverCatalogResult` |
+| client→server | `session/runtime` | `SessionRuntimeParams` → `SessionRuntimeResult` |
 | client→server | `session/prompt` | `SessionPromptParams` → `SessionPromptResult`（持久入队回执） |
 | client→server | `shutdown` | 无参数 → `{}` |
 | server→client | `session.event` | `SessionEventNotification`（运行时内每个会话，不过滤） |
-| server→client | `session.status` | `SessionStatusNotification`（整个 agent（智能体）的 `running`/`idle` 转换） |
+| server→client | `session.created` | `SessionCreatedNotification`（不可变 Driver 绑定与可选父会话） |
+| server→client | `session.runtime` | `SessionRuntimeNotification`（进程本地可用性、活动、操作与待人工处理计数） |
+| server→client | `session.status` | `SessionStatusNotification`（整个 agent（智能体）的二态 `running`/`idle` 转换） |
 | server→client | `subagent.started` | `SubagentStartedNotification` |
 | server→client | `subagent.finished` | `SubagentFinishedNotification`（仅进程内运行） |
 
-`HarnessSdkRequestMap` 与 `HarnessSdkNotificationMap` 按方法名索引这些类型。`SessionPromptResult.messageId` 标识已排队的 `UserMessage`；它不标识后续的助手消息、轮次结束或提示词结果。客户端根据自己对活动区间的所有权，组合持续开放的 `session.event` 流与 agent 级的 `session.status`。`SubagentFinishedNotification.lastAssistantMessage` 包含子 agent 最后一条非空 assistant 消息；若不存在这类消息，则包含其累积的 assistant 文本；子 agent 两种输出均未产生时，该字段缺省。`InitializeParams.maxTokens` 是可选的正的安全整数，用于限制 SDK 创建的 agent 及其进程内后代的每次对话模型输出；省略时会应用所选适配器的确切模型默认值，否则提供方行为保持不变。通知载荷类型依赖 `SessionEvent`（`dsh-session`）、`ContentBlock`（`dsh-llm`）与 `SubagentStopReason`（`dsh-subagent`）——协议以完整会话日志封套进行流式传输，因此会话词汇是协议格式约定的一部分。`serverInfo.name` 的协议值固定为 `deepseek-harness-sdk-runtime`。
+`HarnessSdkRequestMap` 与 `HarnessSdkNotificationMap` 按方法名索引这些类型。`InitializeParams.driverId` 为 SDK 创建的 Session 选择默认不可变 Driver 绑定；省略时使用运行时注册表默认值，`InitializeResult.drivers` 返回活跃目录。`SessionPromptParams.driverId` 只用于惰性创建，并且必须等于已有 Session 的绑定。`SessionPromptResult.messageId` 标识已排队的 `UserMessage`；它不标识后续的助手消息、轮次结束或提示词结果。客户端根据自己对活动区间的所有权，组合持续开放的 `session.event` 流、agent 级二态 `session.status` 与更丰富的进程本地 `session.runtime` 当前值。`SubagentFinishedNotification.lastAssistantMessage` 包含子 agent 最后一条非空 assistant 消息；若不存在这类消息，则包含其累积的 assistant 文本；子 agent 两种输出均未产生时，该字段缺省。`InitializeParams.maxTokens` 是可选的正安全整数，用于限制 SDK 创建的 agent 及其进程内后代的每次对话模型输出；省略时会应用所选适配器的确切模型默认值，否则提供方行为保持不变。通知载荷类型依赖 `SessionEvent`（`dsh-session`）、`SessionRuntimeStatus`（`dsh-session-runtime`）、`ContentBlock`（`dsh-llm`）与 `SubagentStopReason`（`dsh-subagent`）。`serverInfo.name` 的协议值固定为 `deepseek-harness-sdk-runtime`。
 
 ## 模型体验
 

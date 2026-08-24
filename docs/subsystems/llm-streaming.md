@@ -680,6 +680,12 @@ interface PreparedLlmCall {
   /** Config fields materialized by the captured adapter rather than proposed by the caller. */
   readonly adapterDefaults: LlmCallConfigAdapterDefaults
   /**
+   * Create another one-shot attempt bound to the same adapter generation,
+   * resolved config, context, modalities, defaults, and retry policy.
+   * @returns a fresh attempt handle for retry execution.
+   */
+  nextAttempt(): PreparedLlmCall
+  /**
    * Dispatch this call once through the registration captured during
    * preparation. The request's call-config fields must match {@link config};
    * reuse or mismatch fails with `INVALID_PREPARED_CALL`.

@@ -11,7 +11,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { z } from 'zod'
 import Storage from '@deepseek-ai/dsh-storage'
 import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
-import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, SessionId } from '@deepseek-ai/dsh-session'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import type { ProjectionDefinition } from '@deepseek-ai/dsh-session-projection'
@@ -39,6 +39,7 @@ declare module '@deepseek-ai/dsh-session/types' {
 }
 
 type MarksState = { marks: string[] } | null
+const DRIVER_ID = AgentDriverId('dsh')
 const marksUnit = (stateVersion = 1) => ({
   key: 'cache-test/marks',
   stateSchema: z.object({ marks: z.array(z.string()) }).nullable(),
@@ -57,7 +58,7 @@ function fakePersistence(logs: Map<string, SessionEvent[]>) {
     const events = logs.get(String(id))
     if (events === undefined) throw new Error(`session "${id}" not found`)
     return {
-      meta: { version: 0, id, createdAt: 0 },
+      meta: { version: 0, driverId: DRIVER_ID, id, createdAt: 0 },
       events: events.filter(event => event.seq >= fromSeq),
     }
   })
@@ -66,7 +67,7 @@ function fakePersistence(logs: Map<string, SessionEvent[]>) {
 
 /** Header shape for cachedSnapshot calls (fake logs stamp createdAt 0, no cwd). */
 const headerOf = (id: SessionId, createdAt = 0, cwd?: string) =>
-  ({ version: 0, id, createdAt, ...cwd === undefined ? {} : { cwd } })
+  ({ version: 0, driverId: DRIVER_ID, id, createdAt, ...cwd === undefined ? {} : { cwd } })
 
 interface HarnessOptions {
   pool?: MemoryMediaPool
@@ -96,6 +97,9 @@ async function harness(options: HarnessOptions = {}) {
   return { ctx, pool, logs, fiber, persistence, cache: ctx.sessionProjectionCache }
 }
 
+const createSession = (ctx: Context, id: SessionId): Session =>
+  ctx.sessions.create(id, { meta: { driverId: DRIVER_ID } })
+
 const mark = (session: Session, marks: string[]): SessionEvent =>
   session.append('cache-test/mark', { marks })
 
@@ -106,7 +110,7 @@ const endTurn = (session: Session): SessionEvent =>
 function storedRecord(pool: MemoryMediaPool, id: Session['id']) {
   return pool.media.get('session_projcache')?.tables.get('sessions')?.get(String(id)) as
     {
-      identity: { createdAt: number; cwd?: string }
+      identity: { driverId: string; createdAt: number; cwd?: string }
       rows: Record<string, { ver: number; seq: number; val: unknown }>
     } | undefined
 }
@@ -127,7 +131,7 @@ afterEach(async () => {
 describe('SessionProjectionCache write policy', () => {
   it('writes a durable checkpoint at turn/end (mandatory point)', async () => {
     const { ctx, pool } = await harness()
-    const session = ctx.sessions.create(SessionId('turn-end'))
+    const session = createSession(ctx, SessionId('turn-end'))
     mark(session, ['a'])
     expect(storedRows(pool, session.id)).toBeUndefined() // throttled: no write yet
     const end = endTurn(session)
@@ -141,7 +145,7 @@ describe('SessionProjectionCache write policy', () => {
     // Sessions dispose with their owning fiber: create in a child plugin.
     let session: Session | undefined
     const owner = await ctx.plugin(Object.assign((inner: Context) => {
-      session = inner.sessions.create(SessionId('detach'))
+      session = createSession(inner, SessionId('detach'))
     }, { inject: ['sessions'] }))
     if (session === undefined) throw new Error('session was not created')
     mark(session, ['live'])
@@ -152,7 +156,7 @@ describe('SessionProjectionCache write policy', () => {
 
   it('flushes when the in-turn event count reaches the configured threshold', async () => {
     const { ctx, pool } = await harness({ config: { writeEveryEvents: 3, writeIntervalMs: 60_000 } })
-    const session = ctx.sessions.create(SessionId('count'))
+    const session = createSession(ctx, SessionId('count'))
     mark(session, ['1'])
     mark(session, ['2'])
     await settle()
@@ -165,7 +169,7 @@ describe('SessionProjectionCache write policy', () => {
   it('flushes on the configured interval when the count threshold is not reached', async () => {
     vi.useFakeTimers()
     const { ctx, pool } = await harness({ config: { writeEveryEvents: 100, writeIntervalMs: 250 } })
-    const session = ctx.sessions.create(SessionId('interval'))
+    const session = createSession(ctx, SessionId('interval'))
     mark(session, ['slow'])
     await vi.advanceTimersByTimeAsync(249)
     expect(storedRows(pool, session.id)).toBeUndefined()
@@ -177,7 +181,7 @@ describe('SessionProjectionCache write policy', () => {
   it('write() on a never-dirty session checkpoints directly and rejects a non-JSON unit state', async () => {
     const { ctx, pool } = await harness()
     // Never dirtied: no events — write() still lands the init-derived cut.
-    const clean = ctx.sessions.create(SessionId('clean-write'))
+    const clean = createSession(ctx, SessionId('clean-write'))
     await ctx.sessionProjectionCache.write(clean)
     expect(storedRows(pool, clean.id)?.['cache-test/marks']).toEqual({ ver: 1, seq: -1, val: null })
     // A unit whose state violates the plain-JSON contract fails the write loud.
@@ -194,8 +198,8 @@ describe('SessionProjectionCache write policy', () => {
   it('plugin disposal clears armed interval timers and leaves cleaned sessions alone', async () => {
     vi.useFakeTimers()
     const { ctx, pool, fiber } = await harness({ config: { writeEveryEvents: 100, writeIntervalMs: 5000 } })
-    const armed = ctx.sessions.create(SessionId('armed'))
-    const cleaned = ctx.sessions.create(SessionId('cleaned'))
+    const armed = createSession(ctx, SessionId('armed'))
+    const cleaned = createSession(ctx, SessionId('cleaned'))
     mark(armed, ['pending']) // timer armed, no write yet
     mark(cleaned, ['done'])
     endTurn(cleaned) // mandatory write; markClean leaves {pending: 0, timer: undefined} in the map
@@ -209,7 +213,7 @@ describe('SessionProjectionCache write policy', () => {
   it('contains a durable write failure: logs a warning, event path unharmed, next write self-heals', async () => {
     const { ctx, pool } = await harness()
     const warn = vi.spyOn(ctx.logger, 'warn').mockImplementation(() => {})
-    const session = ctx.sessions.create(SessionId('fail-soft'))
+    const session = createSession(ctx, SessionId('fail-soft'))
     mark(session, ['x'])
     pool.failNextWrites = 1
     endTurn(session)
@@ -241,9 +245,9 @@ describe('SessionProjectionCache cold read', () => {
     pool: MemoryMediaPool,
     id: string,
     row: { ver: number; seq: number; val: unknown },
-    identity: { createdAt: number; cwd?: string } = { createdAt: 0 },
+    identity: { driverId: string; createdAt: number; cwd?: string } = { driverId: DRIVER_ID, createdAt: 0 },
   ): void {
-    pool.versions.set('session_projcache', 3)
+    pool.versions.set('session_projcache', 4)
     pool.media.set('session_projcache', {
       tables: new Map([['sessions', new Map([[id, { identity, rows: { 'cache-test/marks': row } }]])]]),
       global: null,
@@ -326,12 +330,12 @@ describe('SessionProjectionCache cold read', () => {
     const logs = new Map([['reborn', storedLog([['real']])]]) // stored header stamps createdAt 0
     // A checkpoint from a PRIOR lifecycle of the same id (different createdAt):
     // its rows pass every watermark check, but the identity does not match.
-    seedRow(pool, 'reborn', { ver: 1, seq: 2, val: { marks: ['phantom'] } }, { createdAt: 999 })
+    seedRow(pool, 'reborn', { ver: 1, seq: 2, val: { marks: ['phantom'] } }, { driverId: DRIVER_ID, createdAt: 999 })
     const { cache, pool: samePool } = await harness({ pool, logs })
     const snapshot = await cache.coldSnapshot(SessionId('reborn'))
     expect(snapshot.values['cache-test/marks']).toEqual({ marks: ['real'] })
     // The write-back rebinds the record to the actual log's identity.
-    expect(storedRecord(samePool, SessionId('reborn'))?.identity).toEqual({ createdAt: 0 })
+    expect(storedRecord(samePool, SessionId('reborn'))?.identity).toEqual({ driverId: DRIVER_ID, createdAt: 0 })
   })
 
   it('cachedSnapshot returns undefined when every stored row is version-mismatched', async () => {
@@ -343,12 +347,25 @@ describe('SessionProjectionCache cold read', () => {
 
   it('binds identity on cwd too: a matching cwd serves, a moved session does not', async () => {
     const pool = new MemoryMediaPool()
-    seedRow(pool, 'homed', { ver: 1, seq: 2, val: { marks: ['w'] } }, { createdAt: 0, cwd: '/work' })
+    seedRow(pool, 'homed', { ver: 1, seq: 2, val: { marks: ['w'] } }, { driverId: DRIVER_ID, createdAt: 0, cwd: '/work' })
     const { cache } = await harness({ pool })
     const id = SessionId('homed')
     expect(cache.cachedSnapshot(headerOf(id, 0, '/work'))?.values['cache-test/marks']).toEqual({ marks: ['w'] })
     expect(cache.cachedSnapshot(headerOf(id, 0, '/elsewhere'))).toBeUndefined()
     expect(cache.cachedSnapshot(headerOf(id, 0))).toBeUndefined()
+  })
+
+  it('rejects a cached summary bound to another driver', async () => {
+    const pool = new MemoryMediaPool()
+    seedRow(
+      pool,
+      'other-driver',
+      { ver: 1, seq: 2, val: { marks: ['stale'] } },
+      { driverId: AgentDriverId('codex'), createdAt: 0 },
+    )
+    const { cache } = await harness({ pool })
+
+    expect(cache.cachedSnapshot(headerOf(SessionId('other-driver')))).toBeUndefined()
   })
 
   it('dates an empty stored log at -1 in the zero-units topology', async () => {

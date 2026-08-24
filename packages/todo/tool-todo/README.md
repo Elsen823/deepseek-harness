@@ -2,7 +2,7 @@
 
 English | [中文](README.zh.md)
 
-The model-facing `todo_write` tool: the agent's whole task list, replaced wholesale on each call.
+The built-in `dsh` Agent Driver's model-facing `todo_write` tool: the agent's whole task list, replaced wholesale on each call. Alternate Drivers keep their native Checklist writers and reject this tool's write path.
 
 ## What it does
 
@@ -26,11 +26,11 @@ Beyond the schema's type/required/enum checks, `execute` rejects an empty or dup
 
 ## Rendering
 
-The canonical result is `{ todos, counts: { pending, inProgress, completed } }`; its Native renderer returns the compact update acknowledgement. The tool also writes the full `todo/write` session event. UIs subscribe to the event stream and render that durable list themselves: the [web client](../../client/ui-conversation) shows a plan strip plus a dedicated tool row off the standing plan — latest `todo/write` with no later `turn/start` ([display](../../../.agents/notes/implemented/feature/2026-07-23-web-todo-display.md), [lifetime](../../../.agents/notes/implemented/feature/2026-07-28-todo-plan-clears-on-next-turn.md)).
+The canonical result is `{ todos, counts: { pending, inProgress, completed } }`; its Native renderer returns the compact update acknowledgement. The tool also writes the full `todo/write` Session event. UIs render the standing Checklist through the portable [`@deepseek-ai/dsh-todo`](../todo/README.md) projection provider; this Consumer does not register that projection.
 
-## Session projection
+## Composition
 
-When the composition mounts `ctx.sessionProjections` ([`@deepseek-ai/dsh-session-projection`](../../session/session-projection/README.md)), this package registers the `todos` projection unit under an injected child: `init` = `null` (no write yet), `apply` = take the whole list from each `todo/write` and clear to `null` on each `turn/start` (standing plan; `turn/end` keeps the finished checklist; every other event returns the same state reference), `view` = identity, `stateVersion` = 2. The key merges into `SessionProjectionMap` here (via the Service Definition package's `/types` outlet); the framework drives the unit and carriers serve the value on the history tail page and the `session/projection` push frame. Compositions without the registry are unaffected. Lifetime rationale: [todo plan clears on next turn](../../../.agents/notes/implemented/feature/2026-07-28-todo-plan-clears-on-next-turn.md).
+Mount `@deepseek-ai/dsh-todo` once beside the SessionProjection registry, then mount this Consumer wherever `todo_write` should be model-visible. The provider runs without `ctx.tools`; this package runs without `ctx.sessionProjections` and only validates and appends the whole-list event.
 
 ## Export shape
 

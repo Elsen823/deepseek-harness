@@ -8,7 +8,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
 import { Context, Service, type Fiber } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import type { Session, SessionEvent, SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
+import { AgentDriverId, type Session, type SessionEvent, type SessionHeader, type SessionId } from '@deepseek-ai/dsh-session'
 import type SessionPersistence from '@deepseek-ai/dsh-session-persistence'
 import type {
   SessionPersistenceRevision,
@@ -163,6 +163,7 @@ interface IndexedLiveRow {
 interface SessionHeaderRow {
   session_id: string
   version: number
+  driver_id: string
   created_at: number
   cwd: string | null
   parent_session: string | null
@@ -574,8 +575,8 @@ export class SqliteSessionQueryEngine extends SessionQueryEngine {
     const db = this._requireDb()
     db.prepare(`
       INSERT INTO persisted_sessions
-        (id, version, created_at, cwd, parent_session, seed_length, delegation_depth, agent_preset, revision, generation)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (id, version, driver_id, created_at, cwd, parent_session, seed_length, delegation_depth, agent_preset, revision, generation)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       ...headerBindings(entry.header),
       revision,
@@ -604,8 +605,8 @@ export class SqliteSessionQueryEngine extends SessionQueryEngine {
     const db = this._requireDb()
     db.prepare(`
       INSERT INTO temp.live_sessions
-        (id, version, created_at, cwd, parent_session, seed_length, delegation_depth, agent_preset, fingerprint, persisted, generation)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (id, version, driver_id, created_at, cwd, parent_session, seed_length, delegation_depth, agent_preset, fingerprint, persisted, generation)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       ...headerBindings(entry.header),
       entry.fingerprint,
@@ -702,7 +703,7 @@ export class SqliteSessionQueryEngine extends SessionQueryEngine {
     const db = this._requireDb()
     const live = db.prepare(
       `SELECT
-        id AS session_id, version, created_at, cwd, parent_session, seed_length, delegation_depth, agent_preset, generation
+        id AS session_id, version, driver_id, created_at, cwd, parent_session, seed_length, delegation_depth, agent_preset, generation
       FROM temp.live_sessions
       WHERE id = ?`,
     ).get(sessionId) as (SessionHeaderRow & { generation: number }) | undefined
@@ -712,7 +713,7 @@ export class SqliteSessionQueryEngine extends SessionQueryEngine {
     if (persistenceBinding.service !== undefined) {
       const persisted = db.prepare(
         `SELECT
-          id AS session_id, version, created_at, cwd, parent_session, seed_length, delegation_depth, agent_preset, generation
+          id AS session_id, version, driver_id, created_at, cwd, parent_session, seed_length, delegation_depth, agent_preset, generation
         FROM persisted_sessions
         WHERE id = ?`,
       ).get(sessionId) as (SessionHeaderRow & { generation: number }) | undefined
@@ -770,6 +771,7 @@ function headerBindings(header: SessionHeader): (string | number | null)[] {
   return [
     header.id,
     header.version,
+    header.driverId,
     header.createdAt,
     header.cwd ?? null,
     header.parentSession ?? null,
@@ -785,6 +787,7 @@ function selectedDocumentsSql(): { sql: string } {
       SELECT
         pd.session_id AS session_id,
         ps.version AS version,
+        ps.driver_id AS driver_id,
         ps.created_at AS created_at,
         ps.cwd AS cwd,
         ps.parent_session AS parent_session,
@@ -808,6 +811,7 @@ function selectedDocumentsSql(): { sql: string } {
       SELECT
         ld.session_id AS session_id,
         ls.version AS version,
+        ls.driver_id AS driver_id,
         ls.created_at AS created_at,
         ls.cwd AS cwd,
         ls.parent_session AS parent_session,
@@ -916,6 +920,7 @@ function sameSessionIds(
 
 function sameHeader(a: SessionHeader, b: SessionHeader): boolean {
   return a.version === b.version
+    && a.driverId === b.driverId
     && a.id === b.id
     && a.createdAt === b.createdAt
     && a.cwd === b.cwd
@@ -928,6 +933,7 @@ function sameHeader(a: SessionHeader, b: SessionHeader): boolean {
 function rowHeader(row: SessionHeaderRow): SessionHeader {
   return {
     version: row.version,
+    driverId: AgentDriverId(row.driver_id),
     id: row.session_id as SessionId,
     createdAt: row.created_at,
     ...row.cwd === null ? {} : { cwd: row.cwd },

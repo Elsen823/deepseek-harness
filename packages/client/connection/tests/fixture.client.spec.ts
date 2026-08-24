@@ -5,11 +5,12 @@
  * the hand-written fixture/host parallel implementations.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { SessionId, WorkspaceId } from '../src/client/api.ts'
+import type { AgentDriverId, SessionId, WorkspaceId } from '../src/client/api.ts'
 import { RpcId } from '../src/client/api.ts'
 import type { HostFrame, MuxFrame, RpcMessage, RpcRequest } from '../src/client/api.ts'
 import { FixtureApiClient, createFixtureApi } from '../src/client/fixture.ts'
 
+const DRIVER_ID = 'dsh' as AgentDriverId
 const sid = (id: string): SessionId => id as SessionId
 const req = <P>(payload: P): RpcRequest<P> => ({ rpcId: RpcId(`t-${Math.abs(Math.sin(reqCount++)).toString(36).slice(2, 10)}`), payload })
 let reqCount = 0
@@ -59,7 +60,18 @@ describe('createFixtureApi', () => {
     expect(response.rpcId).toBe(request.rpcId)
     if (!response.result.ok) throw new Error('list failed')
     expect(response.result.value.items.map(s => s.sessionId)).toEqual(['fx-alpha', 'fx-beta', 'fx-gamma'])
+    expect(response.result.value.items.every(s => s.driverId === DRIVER_ID)).toBe(true)
     expect(response.result.value.items[1]?.parentSessionId).toBe('fx-alpha') // lineage material
+  })
+
+  it('serves the Driver catalog and Host-resolved default', async () => {
+    const api = createFixtureApi()
+    await expect(api.sessions.drivers(req({}))).resolves.toMatchObject({
+      result: {
+        ok: true,
+        value: { defaultId: DRIVER_ID, items: [{ id: DRIVER_ID }] },
+      },
+    })
   })
 
   it('searches current message text with literal unicode61-style token phrases', async () => {
@@ -280,7 +292,7 @@ describe('createFixtureApi', () => {
     const added = seen[0]
     if (added?.type !== 'host/session-added') throw new Error('session-added frame missing')
     expect(added).toEqual({
-      type: 'host/session-added', sessionId: createdId, blank: true, cwd: '/tmp/fixture',
+      type: 'host/session-added', sessionId: createdId, driverId: DRIVER_ID, blank: true, cwd: '/tmp/fixture',
     })
     const list = await api.sessions.list(req({}))
     if (!list.result.ok) throw new Error('list failed')
@@ -733,7 +745,7 @@ describe('createFixtureApi', () => {
     const added = seen[0]
     if (added?.type !== 'host/session-added') throw new Error('session-added frame missing')
     expect(added).toEqual({
-      type: 'host/session-added', sessionId: id, blank: true, cwd: '/tmp/fixture',
+      type: 'host/session-added', sessionId: id, driverId: DRIVER_ID, blank: true, cwd: '/tmp/fixture',
     })
     expect(seen[1]).toMatchObject({
       type: 'host/workspace-changed',
@@ -758,7 +770,7 @@ describe('createFixtureApi', () => {
       workspaceId: made.result.value.workspace.workspaceId,
       sessionId: preallocated,
     }))
-    expect(created.result).toEqual({ ok: true, value: { sessionId: preallocated } })
+    expect(created.result).toEqual({ ok: true, value: { sessionId: preallocated, driverId: DRIVER_ID } })
     const frames = await framesPromise
     expect(frames[0]).toMatchObject({
       type: 'host/workspace-changed', workspace: { sessionIds: [preallocated] },
@@ -766,7 +778,7 @@ describe('createFixtureApi', () => {
     const added = frames[1]
     if (added?.type !== 'host/session-added') throw new Error('session-added frame missing')
     expect(added).toEqual({
-      type: 'host/session-added', sessionId: preallocated, blank: true,
+      type: 'host/session-added', sessionId: preallocated, driverId: DRIVER_ID, blank: true,
       cwd: made.result.value.workspace.path,
     })
 
@@ -774,7 +786,7 @@ describe('createFixtureApi', () => {
       workspaceId: made.result.value.workspace.workspaceId,
       sessionId: preallocated,
     }))
-    expect(retried.result).toEqual({ ok: true, value: { sessionId: preallocated } })
+    expect(retried.result).toEqual({ ok: true, value: { sessionId: preallocated, driverId: DRIVER_ID } })
     const listed = await api.sessions.list(req({}))
     if (!listed.result.ok) throw new Error('session list failed')
     expect(listed.result.value.items.filter(item => item.sessionId === preallocated)).toHaveLength(1)
@@ -831,7 +843,7 @@ describe('createFixtureApi', () => {
     }))
     expect(created.result).toMatchObject({
       ok: false,
-      error: { code: 'workspace-attach-failed', details: { sessionId, workspaceId: 'fx-ws-fixture' } },
+      error: { code: 'workspace-attach-failed', details: { sessionId, workspaceId: 'fx-ws-fixture', driverId: DRIVER_ID } },
     })
     const listed = await api.sessions.list(req({}))
     const workspaces = await api.workspace.list(req({}))
@@ -1119,7 +1131,7 @@ describe('FixtureApiClient (protocol-level fake carrier)', () => {
     })
     expect(partialResult.result).toMatchObject({
       ok: false,
-      error: { code: 'workspace-attach-failed', details: { sessionId: 'fx-query-partial' } },
+      error: { code: 'workspace-attach-failed', details: { sessionId: 'fx-query-partial', driverId: DRIVER_ID } },
     })
 
     vi.stubGlobal('location', { search: '?fixture&fixtureSessionCreate=drop-response' })

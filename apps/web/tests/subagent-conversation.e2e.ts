@@ -6,7 +6,7 @@ import type { Browser, Page } from 'playwright'
 import { chromium } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
 import {
-  SESSION_FORMAT_VERSION, SessionId as sessionId, type SessionEvent, type SessionId,
+  AgentDriverId, SESSION_FORMAT_VERSION, SessionId as sessionId, type SessionEvent, type SessionId,
 } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-agent'
 import { snapshotSubagentDescriptor } from '@deepseek-ai/dsh-subagent'
@@ -118,6 +118,7 @@ describe('web e2e: persisted subagent conversation and human continuation', () =
     const oneShotAt = Date.now() - oneShotDurationMs
     await scaffold.ctx.sessionPersistence.create({
       version: SESSION_FORMAT_VERSION,
+      driverId: AgentDriverId('dsh'),
       id: oneShotId,
       createdAt: oneShotAt,
       cwd: scaffold.workspaceCwd,
@@ -162,6 +163,7 @@ describe('web e2e: persisted subagent conversation and human continuation', () =
     const authoredAt = Date.now()
     await scaffold.ctx.sessionPersistence.create({
       version: SESSION_FORMAT_VERSION,
+      driverId: AgentDriverId('dsh'),
       id: grandchildId,
       createdAt: authoredAt,
       cwd: scaffold.workspaceCwd,
@@ -206,6 +208,7 @@ describe('web e2e: persisted subagent conversation and human continuation', () =
     const oldInactiveAt = Date.now() - 2 * 60 * 60 * 1_000
     await scaffold.ctx.sessionPersistence.create({
       version: SESSION_FORMAT_VERSION,
+      driverId: AgentDriverId('dsh'),
       id: oldInactiveId,
       createdAt: oldInactiveAt,
       cwd: scaffold.workspaceCwd,

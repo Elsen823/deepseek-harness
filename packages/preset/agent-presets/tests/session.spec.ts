@@ -8,7 +8,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { SessionId } from '@deepseek-ai/dsh-session'
+import { AgentDriverId, SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionEvent, SessionHeader } from '@deepseek-ai/dsh-session'
 import { resolveSessionPreset } from '../src/session.ts'
 
@@ -16,6 +16,7 @@ import { resolveSessionPreset } from '../src/session.ts'
 function header(agentPreset?: string): SessionHeader {
   return {
     version: 0,
+    driverId: AgentDriverId('dsh'),
     id: SessionId('s'),
     createdAt: 1,
     delegationDepth: 0,

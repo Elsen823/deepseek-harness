@@ -36,7 +36,10 @@
 | Agent Note | Agent Note | | 智能体注记、智能体笔记 | 仓库定义的文档类型，涵盖提案、已实现决策和被否决提案；中文对侧 H1 保持固定前缀 `# Agent Note: `，标题中不加术语括注 |
 | agent harness | agent harness | agent harness（智能体框架） | | agent 组合词（agent harness/workflow/loop/skill 等）整体保留英文；未括注过 agent 时首现按对应组合词或 agent 行处理 |
 | agent loop | agent loop | agent loop（智能体循环） | | |
+| Agent Driver | Agent Driver | Agent Driver（智能体驱动器） | Agent 后端、Agent 引擎 | DSH Session 绑定的具名执行实现；后续可简称 Driver |
+| Driver | Driver | Driver（驱动实现） | 驱动器 | 已在同一文档中括注 Agent Driver 后可直接使用 Driver |
 | blob hash | blob hash | | | `git hash-object` 的结果 |
+| Checklist | Checklist | Checklist（检查清单） | todo 列表 | 会话中的完整任务列表及其 `todos` 投影，正文保留英文 |
 | coding agent | coding agent | coding agent（编程智能体） | | agent 组合词，正文保留英文 |
 | Cordis | Cordis | | | |
 | dispose | dispose | dispose（资源释放） | | |

@@ -2,7 +2,7 @@
 // data source on a real clock; behavior tests need per-case responses and
 // deferred-controlled timing). Streams are hand pumps: pushMux/pushHost.
 import type {
-  HostFrame, IApiClient, ModelSelection, MuxFrame,
+  AgentDriverCatalog, AgentDriverId, HostFrame, IApiClient, ModelSelection, MuxFrame,
   RpcRequest, RpcResponse, SessionId, SessionModels, SessionSearchItem, SkillEntry, WorkspaceId,
 } from '../src/client/api.ts'
 import { RpcId } from '../src/client/api.ts'
@@ -26,6 +26,8 @@ export function deferred<T>(): Deferred<T> {
 
 let nextRpc = 0
 
+const DRIVER_ID = 'dsh' as AgentDriverId
+
 export function ok<T>(value: T): RpcResponse<T> {
   return { rpcId: RpcId(`fake-${nextRpc++}`), result: { ok: true, value } }
 }
@@ -45,9 +47,15 @@ export class FakeApiClient implements IApiClient {
   onList: (payload: unknown) => Promise<RpcResponse<{ items: never[] }>> = () => Promise.resolve(ok({ items: [] }))
   onSearch: (payload: unknown) => Promise<RpcResponse<{ items: SessionSearchItem[]; hasMore: boolean }>> =
     () => Promise.resolve(ok({ items: [], hasMore: false }))
-  onCreate: (payload: unknown) => Promise<RpcResponse<{ sessionId: SessionId }>> = () => Promise.resolve(ok({ sessionId: 'fk-new' as SessionId }))
+  onDrivers: (payload: unknown) => Promise<RpcResponse<AgentDriverCatalog>> = () => Promise.resolve(ok({
+    defaultId: DRIVER_ID,
+    items: [{ id: DRIVER_ID, name: 'DSH' }],
+  }))
+  onCreate: (payload: unknown) => Promise<RpcResponse<{ sessionId: SessionId; driverId: AgentDriverId; agentPreset?: string }>> =
+    () => Promise.resolve(ok({ sessionId: 'fk-new' as SessionId, driverId: DRIVER_ID }))
   onRename: (payload: unknown) => Promise<RpcResponse<{ title: string; seq: number }>> = () => Promise.resolve(ok({ title: 'fk-renamed', seq: 0 }))
-  onFork: (payload: unknown) => Promise<RpcResponse<{ sessionId: SessionId }>> = () => Promise.resolve(ok({ sessionId: 'fk-fork' as SessionId }))
+  onFork: (payload: unknown) => Promise<RpcResponse<{ sessionId: SessionId; driverId: AgentDriverId }>> =
+    () => Promise.resolve(ok({ sessionId: 'fk-fork' as SessionId, driverId: DRIVER_ID }))
   onHistory: (payload: { sessionId: SessionId; beforeSeq?: number; maxMessages?: number })
   => Promise<RpcResponse<{ events: never[]; hasMore: boolean; modelSelection: ModelSelection }>> =
     () => Promise.resolve(ok({
@@ -105,6 +113,7 @@ export class FakeApiClient implements IApiClient {
   // lint lane runs without built artifacts, where IApiClient's wire types
   // (apiproxy subpath) resolve to any and inferred params trip no-unsafe-argument.
   readonly sessions: IApiClient['sessions'] = {
+    drivers: (payload: unknown) => this.record('session.drivers', payload, this.onDrivers(payload)),
     list: (payload: unknown) => this.record('session.list', payload, this.onList(payload)),
     search: (payload: unknown, signal?: AbortSignal) => {
       this.lastSearchSignal = signal

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { CallId , createMessage, createToolResultMessage } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
-import SessionStore, {
+import SessionStore, { AgentDriverId,
   Session,
   SessionId,
 } from '@deepseek-ai/dsh-session'
@@ -262,7 +262,7 @@ describe('ToolResultPruner session transaction', () => {
     await ctx.plugin(SessionInvariant)
     await ctx.plugin(TokenMeter)
     const prune = new ToolResultPruner(ctx, SMALL)
-    const session = ctx.sessions.create(SessionId('invariants'))
+    const session = ctx.sessions.create(SessionId('invariants'), { meta: { driverId: AgentDriverId('dsh') } })
     appendToolStep(session, 1, 'a', [{ type: 'text', text: 'A'.repeat(100) }])
     expect(() => prune.pruneSession(session)).toThrow(/outside any open turn/)
     session.append('turn/start', {

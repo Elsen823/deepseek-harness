@@ -1,7 +1,7 @@
 import { createUserMessage, createMessage } from '@deepseek-ai/dsh-llm'
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import SessionStore, { SESSION_FORMAT_VERSION, SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, SESSION_FORMAT_VERSION, SessionId } from '@deepseek-ai/dsh-session'
 import type { Session, SessionEvent, SessionHeader, SessionId as SessionIdType } from '@deepseek-ai/dsh-session'
 import SessionPersistence from '@deepseek-ai/dsh-session-persistence'
 import { type SessionQueryErrorCode } from '@deepseek-ai/dsh-session-query'
@@ -15,7 +15,13 @@ function mutableHeader(value: SessionHeader): MutableSessionHeader {
 }
 
 function header(id: string, createdAt = 1, extra: Partial<SessionHeader> = {}): SessionHeader {
-  return { version: SESSION_FORMAT_VERSION, id: SessionId(id), createdAt, ...extra }
+  return {
+    version: SESSION_FORMAT_VERSION,
+    driverId: AgentDriverId('dsh'),
+    id: SessionId(id),
+    createdAt,
+    ...extra,
+  }
 }
 
 function appendEvent(seq: number, sources?: number[]): SessionEvent {
@@ -166,20 +172,20 @@ function appendTraceEvents(session: Session): void {
 describe('session lineage tracing', () => {
   it('returns complete ancestry, deterministic descendant trees, and detached records', async () => {
     const ctx = await queryContext()
-    const root = ctx.sessions.create(SessionId('root'), { meta: { createdAt: 0 } })
+    const root = ctx.sessions.create(SessionId('root'), { meta: { driverId: AgentDriverId('dsh'), createdAt: 0 } })
     const parent = ctx.sessions.create(SessionId('parent'), {
-      meta: { createdAt: 1, parentSession: root.id },
+      meta: { driverId: AgentDriverId('dsh'), createdAt: 1, parentSession: root.id },
     })
     const target = ctx.sessions.create(SessionId('target'), {
-      meta: { createdAt: 2, parentSession: parent.id },
+      meta: { driverId: AgentDriverId('dsh'), createdAt: 2, parentSession: parent.id },
     })
-    ctx.sessions.create(SessionId('b'), { meta: { createdAt: 4, parentSession: target.id } })
+    ctx.sessions.create(SessionId('b'), { meta: { driverId: AgentDriverId('dsh'), createdAt: 4, parentSession: target.id } })
     const childA = ctx.sessions.create(SessionId('a'), {
-      meta: { createdAt: 4, parentSession: target.id },
+      meta: { driverId: AgentDriverId('dsh'), createdAt: 4, parentSession: target.id },
     })
-    ctx.sessions.create(SessionId('older'), { meta: { createdAt: 3, parentSession: target.id } })
+    ctx.sessions.create(SessionId('older'), { meta: { driverId: AgentDriverId('dsh'), createdAt: 3, parentSession: target.id } })
     ctx.sessions.create(SessionId('grandchild'), {
-      meta: { createdAt: 5, parentSession: childA.id },
+      meta: { driverId: AgentDriverId('dsh'), createdAt: 5, parentSession: childA.id },
     })
 
     const trace = await ctx.sessionQuery.traceSession(target.id)
@@ -204,9 +210,9 @@ describe('session lineage tracing', () => {
 
   it('represents root and unresolved-parent traces explicitly', async () => {
     const ctx = await queryContext()
-    const root = ctx.sessions.create(SessionId('root'), { meta: { createdAt: 1 } })
+    const root = ctx.sessions.create(SessionId('root'), { meta: { driverId: AgentDriverId('dsh'), createdAt: 1 } })
     const partial = ctx.sessions.create(SessionId('partial'), {
-      meta: { createdAt: 2, parentSession: SessionId('outside') },
+      meta: { driverId: AgentDriverId('dsh'), createdAt: 2, parentSession: SessionId('outside') },
     })
 
     await expect(ctx.sessionQuery.traceSession(root.id)).resolves.toMatchObject({
@@ -224,10 +230,10 @@ describe('session lineage tracing', () => {
   it('rejects target-connected cycles and missing targets', async () => {
     const ctx = await queryContext()
     ctx.sessions.create(SessionId('a'), {
-      meta: { createdAt: 1, parentSession: SessionId('b') },
+      meta: { driverId: AgentDriverId('dsh'), createdAt: 1, parentSession: SessionId('b') },
     })
     ctx.sessions.create(SessionId('b'), {
-      meta: { createdAt: 2, parentSession: SessionId('a') },
+      meta: { driverId: AgentDriverId('dsh'), createdAt: 2, parentSession: SessionId('a') },
     })
 
     await expect(ctx.sessionQuery.traceSession(SessionId('a')))
@@ -256,11 +262,11 @@ describe('session lineage tracing', () => {
 
   it('constructs deeply nested descendants without consuming the JavaScript call stack', async () => {
     const ctx = await queryContext()
-    const root = ctx.sessions.create(SessionId('deep-0'), { meta: { createdAt: 0 } })
+    const root = ctx.sessions.create(SessionId('deep-0'), { meta: { driverId: AgentDriverId('dsh'), createdAt: 0 } })
     let parent = root
     for (let depth = 1; depth < 3_000; depth += 1) {
       parent = ctx.sessions.create(SessionId(`deep-${depth}`), {
-        meta: { createdAt: depth, parentSession: parent.id },
+        meta: { driverId: AgentDriverId('dsh'), createdAt: depth, parentSession: parent.id },
       })
     }
 
@@ -279,7 +285,7 @@ describe('session lineage tracing', () => {
 describe('session event tracing', () => {
   it('returns direct replacement and cited source-event links in their contract order', async () => {
     const ctx = await queryContext()
-    const session = ctx.sessions.create(SessionId('trace'))
+    const session = ctx.sessions.create(SessionId('trace'), { meta: { driverId: AgentDriverId('dsh') } })
     appendTraceEvents(session)
 
     const original = await ctx.sessionQuery.traceEvent({ sessionId: session.id, seq: 3 })
@@ -322,7 +328,7 @@ describe('session event tracing', () => {
 
   it('returns fresh trace arrays and target records', async () => {
     const ctx = await queryContext()
-    const session = ctx.sessions.create(SessionId('detached'))
+    const session = ctx.sessions.create(SessionId('detached'), { meta: { driverId: AgentDriverId('dsh') } })
     appendTraceEvents(session)
 
     const first = await ctx.sessionQuery.traceEvent({ sessionId: session.id, seq: 4 })
@@ -349,7 +355,7 @@ describe('session event tracing', () => {
       .resolves.toMatchObject({ target: { type: 'user/message', surface: 'current' } })
     expect([TracePersistence.listCalls, TracePersistence.inspectCalls]).toEqual([1, 1])
 
-    const live = ctx.sessions.create(durable.id, { meta: { createdAt: 1, cwd: '/same' } })
+    const live = ctx.sessions.create(durable.id, { meta: { driverId: AgentDriverId('dsh'), createdAt: 1, cwd: '/same' } })
     live.append('turn/start', { turn: 1 })
     live.append(
       'user/message',

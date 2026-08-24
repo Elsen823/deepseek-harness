@@ -1,7 +1,7 @@
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { Context } from '@deepseek-ai/cordis'
 import { describe, expect, it } from 'vitest'
-import SessionStore, { Session, SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, Session, SessionId } from '@deepseek-ai/dsh-session'
 import SessionTitleService, {
   SessionTitleProviderId,
   fallbackSessionTitle,
@@ -40,7 +40,7 @@ describe('SessionTitleService', () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
     await ctx.plugin(SessionTitleService, CONFIG)
-    const session = ctx.sessions.create(SessionId('fresh'))
+    const session = ctx.sessions.create(SessionId('fresh'), { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', {
       turn: 1,
     })
@@ -76,7 +76,7 @@ describe('SessionTitleService', () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
     await ctx.plugin(SessionTitleService, CONFIG)
-    const session = ctx.sessions.create(SessionId('prefixed-title'))
+    const session = ctx.sessions.create(SessionId('prefixed-title'), { meta: { driverId: AgentDriverId('dsh') } })
     session.append('user/message', createUserMessage({
       content: [{ type: 'text', text: 'Referenced session snapshot' }],
       source: {
@@ -103,7 +103,7 @@ describe('SessionTitleService', () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
     await ctx.plugin(SessionTitleService, CONFIG)
-    const session = ctx.sessions.create(SessionId('eligibility'))
+    const session = ctx.sessions.create(SessionId('eligibility'), { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', {
       turn: 1,
     })

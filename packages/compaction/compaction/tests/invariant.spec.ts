@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import SessionStore, { Session, SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, Session, SessionId } from '@deepseek-ai/dsh-session'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { CompactionId, compactCheckpointSource } from '@deepseek-ai/dsh-compaction'
 import * as CompactionInvariant from '@deepseek-ai/dsh-compaction/invariant'
@@ -38,13 +38,13 @@ function startTurn(session: ReturnType<Context['sessions']['create']>, turn = 1)
 describe('compaction invariants', () => {
   it('accepts successful and failed compaction lifecycles', async () => {
     const ctx = await setup()
-    const success = ctx.sessions.create()
+    const success = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     startTurn(success)
     success.append('compaction/start', { compactionId: TEST_COMPACTION_ID, turn: 1 })
     success.append('compaction/summary', summary())
     success.append('compaction/end', { compactionId: TEST_COMPACTION_ID, turn: 1 })
 
-    const failed = ctx.sessions.create()
+    const failed = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     startTurn(failed, 2)
     failed.append('compaction/start', { compactionId: TEST_COMPACTION_ID, turn: 2 })
     failed.append('compaction/end', { compactionId: TEST_COMPACTION_ID, turn: 2, error: 'provider failed' })
@@ -52,12 +52,12 @@ describe('compaction invariants', () => {
 
   it('accepts standalone successful and failed compaction lifecycles between turns', async () => {
     const ctx = await setup()
-    const success = ctx.sessions.create()
+    const success = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     success.append('compaction/start', { compactionId: TEST_COMPACTION_ID, turn: null })
     success.append('compaction/summary', summary())
     success.append('compaction/end', { compactionId: TEST_COMPACTION_ID, turn: null })
 
-    const failed = ctx.sessions.create()
+    const failed = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     failed.append('compaction/start', { compactionId: TEST_COMPACTION_ID, turn: null })
     failed.append('compaction/end', { compactionId: TEST_COMPACTION_ID, turn: null, error: 'provider failed' })
   })
@@ -67,7 +67,7 @@ describe('compaction invariants', () => {
     await ctx.plugin(SessionStore)
     const source = Session.create(SessionId('stale-compaction-source'))
     source.append('compaction/start', { compactionId: TEST_COMPACTION_ID, turn: null })
-    const replayed = ctx.sessions.create(SessionId('stale-compaction-replay'), {
+    const replayed = ctx.sessions.create(SessionId('stale-compaction-replay'), { meta: { driverId: AgentDriverId('dsh') },
       seed: source.events,
     })
     expect(replayed.events.map(event => event.type))
@@ -88,7 +88,7 @@ describe('compaction invariants', () => {
     const source = Session.create(SessionId('stale-numbered-compaction-source'))
     startTurn(source)
     source.append('compaction/start', { compactionId: TEST_COMPACTION_ID, turn: 1 })
-    const replayed = ctx.sessions.create(SessionId('stale-numbered-compaction-replay'), {
+    const replayed = ctx.sessions.create(SessionId('stale-numbered-compaction-replay'), { meta: { driverId: AgentDriverId('dsh') },
       seed: source.events,
     })
     expect(replayed.events.map(event => event.type))
@@ -110,7 +110,7 @@ describe('compaction invariants', () => {
     source.append('compaction/start', { compactionId: TEST_COMPACTION_ID, turn: null })
     startTurn(source)
     source.append('turn/end', { turn: 1, reason: { kind: 'interrupted' } })
-    const replayed = ctx.sessions.create(SessionId('stale-repaired-compaction-replay'), {
+    const replayed = ctx.sessions.create(SessionId('stale-repaired-compaction-replay'), { meta: { driverId: AgentDriverId('dsh') },
       seed: source.events,
     })
     expect(replayed.events.map(event => event.type)).toEqual([
@@ -137,7 +137,7 @@ describe('compaction invariants', () => {
     startTurn(source)
     source.append('turn/end', { turn: 1, reason: { kind: 'interrupted' } })
     source.append('compaction/end', { compactionId: TEST_COMPACTION_ID, turn: null, error: 'failed after crossing turn' })
-    const replayed = ctx.sessions.create(SessionId('closed-nested-compaction-replay'), {
+    const replayed = ctx.sessions.create(SessionId('closed-nested-compaction-replay'), { meta: { driverId: AgentDriverId('dsh') },
       seed: source.events,
     })
     expect(replayed.events.at(-1)?.type).toBe('session/end-seed')
@@ -150,7 +150,7 @@ describe('compaction invariants', () => {
   it('rebuilds an open trace when the companion loads after the session', async () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
-    const session = ctx.sessions.create()
+    const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', { turn: 1 })
     session.append('compaction/start', { compactionId: TEST_COMPACTION_ID, turn: 1 })
     await ctx.plugin(InvariantRegistry)
@@ -183,7 +183,7 @@ describe('compaction invariants', () => {
 
   it('rejects compaction outside or for a different open turn', async () => {
     const ctx = await setup()
-    const session = ctx.sessions.create()
+    const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     expect(() => session.append('compaction/start', { compactionId: TEST_COMPACTION_ID, turn: 1 }))
       .toThrow(/outside any open turn/)
     startTurn(session)
@@ -193,19 +193,19 @@ describe('compaction invariants', () => {
 
   it('rejects a standalone bracket while a turn is open and a numbered bracket between turns', async () => {
     const ctx = await setup()
-    const open = ctx.sessions.create()
+    const open = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     startTurn(open)
     expect(() => open.append('compaction/start', { compactionId: TEST_COMPACTION_ID, turn: null }))
       .toThrow(/standalone but turn 1 is open/)
 
-    const idle = ctx.sessions.create()
+    const idle = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     expect(() => idle.append('compaction/start', { compactionId: TEST_COMPACTION_ID, turn: 1 }))
       .toThrow(/outside any open turn/)
   })
 
   it('attributes a nested standalone start to the standalone owner', async () => {
     const ctx = await setup()
-    const session = ctx.sessions.create()
+    const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     session.append('compaction/start', { compactionId: TEST_COMPACTION_ID, turn: null })
     expect(() => session.append('compaction/start', { compactionId: NEXT_COMPACTION_ID, turn: null }))
       .toThrow(/standalone compaction is still compacting/)
@@ -214,7 +214,7 @@ describe('compaction invariants', () => {
   it('rejects an unenclosed compaction event when replaying an existing session', async () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
-    const session = ctx.sessions.create()
+    const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     startTurn(session)
     session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
     session.append('compaction/start', { compactionId: TEST_COMPACTION_ID, turn: 1 })
@@ -224,7 +224,7 @@ describe('compaction invariants', () => {
 
   it('rejects turn boundaries that cross live standalone or numbered compaction brackets', async () => {
     const ctx = await setup()
-    const standalone = ctx.sessions.create()
+    const standalone = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     standalone.append('compaction/start', { compactionId: TEST_COMPACTION_ID, turn: null })
     expect(() => { startTurn(standalone) })
       .toThrow(/turn\/start cannot cross an open standalone compaction/)
@@ -234,7 +234,7 @@ describe('compaction invariants', () => {
       standalone.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
     }).not.toThrow()
 
-    const numbered = ctx.sessions.create()
+    const numbered = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     startTurn(numbered)
     numbered.append('compaction/start', { compactionId: TEST_COMPACTION_ID, turn: 1 })
     expect(() => numbered.append(
@@ -250,7 +250,7 @@ describe('compaction invariants', () => {
 
   it('rejects a replacement checkpoint for another compaction transaction', async () => {
     const ctx = await setup()
-    const session = ctx.sessions.create()
+    const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     const original = session.append('user/message', createUserMessage({
       content: [{ type: 'text', text: 'original' }],
       source: { kind: 'user' },
@@ -270,7 +270,7 @@ describe('compaction invariants', () => {
 
   it('requires checkpoint provenance to name an open transaction', async () => {
     const ctx = await setup()
-    const withoutStart = ctx.sessions.create()
+    const withoutStart = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     const original = withoutStart.append('user/message', createUserMessage({
       content: [{ type: 'text', text: 'original' }],
       source: { kind: 'user' },
@@ -283,7 +283,7 @@ describe('compaction invariants', () => {
       sourceEventSeqs: [original.seq],
     })).toThrow(/no matching compaction\/start/)
 
-    const emptyCommand = ctx.sessions.create()
+    const emptyCommand = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     const replaced = emptyCommand.append('user/message', createUserMessage({
       content: [{ type: 'text', text: 'original' }],
       source: { kind: 'user' },
@@ -384,7 +384,7 @@ describe('compaction invariants', () => {
     }, /requires one compaction\/summary/],
   ])('rejects %s', async (_name, action, message) => {
     const ctx = await setup()
-    const session = ctx.sessions.create()
+    const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     startTurn(session)
     expect(() => { action(session) }).toThrow(message)
   })

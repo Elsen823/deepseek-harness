@@ -102,8 +102,8 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
   },
   {
     key: 'agentLoop',
-    summary: 'Concrete agent factory and driver service.',
-    description: 'Concrete agent factory and driver service.',
+    summary: 'Declarative launcher and public helper for the built-in DSH Agent Driver.',
+    description: 'Declarative launcher and public helper for the built-in DSH Agent Driver.',
     methods: [
       {
         signature: 'readonly config: ResolvedConfig',
@@ -111,22 +111,10 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         parameters: [],
       },
       {
-        signature: 'create(id: SessionId, options: AgentOptions = {}, meta: Pick<SessionHeader, \'cwd\'> = {}): Agent',
-        description: 'Create an agent and session under one caller-supplied identity, owned by the accessing fiber. Constructor-driven config calls mint a fresh combined id before entering this boundary.',
-        parameters: [{ name: 'id', description: 'shared agent/session identity.' }, { name: 'options', description: 'concrete loop options.' }, { name: 'meta', description: 'optional fresh-session workspace metadata.' }],
-        returns: 'the published running agent.',
-      },
-      {
-        signature: 'async createAgent(ownerCtx: Context, options: CreateAgentOptions): Promise<AgentHandle>',
-        description: 'Create an owned agent on a caller-supplied session id.',
-        parameters: [{ name: 'ownerCtx', description: 'caller context that structurally owns the lifecycle.' }, { name: 'options', description: 'identities, session seed/metadata, loop options, setup, and cancellation.' }],
-        returns: 'the published handle.',
-      },
-      {
-        signature: 'async resume(ownerCtx: Context, options: ResumeAgentOptions): Promise<AgentHandle>',
-        description: 'Resume an owned agent from the configured persistence service.',
-        parameters: [{ name: 'ownerCtx', description: 'caller context that owns load, setup, and the live lifecycle.' }, { name: 'options', description: 'persisted identity, loop options, setup, and cancellation.' }],
-        returns: 'the published handle.',
+        signature: 'async create(id: SessionId, options: AgentOptions = {}, meta: Pick<SessionHeader, \'cwd\'> = {}): Promise<Agent>',
+        description: 'Create one DSH-driven Agent through the generic registry.',
+        parameters: [{ name: 'id', description: 'shared Agent and Session identity.' }, { name: 'options', description: 'initial loop options.' }, { name: 'meta', description: 'optional fresh Session workspace metadata.' }],
+        returns: 'the published Agent.',
       },
     ],
   },
@@ -211,9 +199,14 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
   },
   {
     key: 'agents',
-    summary: 'Agent service (`ctx.agents`): tracks live agents and carries the initiating Agent through one process-local asynchronous driver chain.',
-    description: 'Agent service (`ctx.agents`): tracks live agents and carries the initiating Agent through one process-local asynchronous driver chain. Agent *creation* is provided by whichever plugin implements the AgentFactory (`@deepseek-ai/dsh-agent-loop`), registered via setFactory.\n\nInitiator methods provide same-process causal attribution only. Ambient presence is neither liveness proof nor authorization; subjects and owners remain explicit, as does identity at worker, process, persistence, and wire boundaries. Returned Promise boundaries drain during teardown, except a nested lineage that starts an owning-fiber unload is excluded from its own drain.',
+    summary: 'Agent service (`ctx.agents`): tracks live agents, registered Agent Drivers, and the initiating Agent through one process-local asynchronous driver chain.',
+    description: 'Agent service (`ctx.agents`): tracks live agents, registered Agent Drivers, and the initiating Agent through one process-local asynchronous driver chain.\n\nInitiator methods provide same-process causal attribution only. Ambient presence is neither liveness proof nor authorization; subjects and owners remain explicit, as does identity at worker, process, persistence, and wire boundaries. Returned Promise boundaries drain during teardown, except a nested lineage that starts an owning-fiber unload is excluded from its own drain.',
     methods: [
+      {
+        signature: 'readonly config: ResolvedConfig',
+        description: 'Validated registry configuration.',
+        parameters: [],
+      },
       {
         signature: 'currentInitiator(): Agent | undefined',
         description: 'Read the Agent that initiated the inherited asynchronous driver chain. Use this optional form for logging, tracing, metrics, or host attribution that also supports agentless calls. When a parent creates a child, setup reports the causal parent while `agentCtx.agent` identifies the child.',
@@ -243,22 +236,34 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         throws: ['when the initiator scope is closing/disposed, or when `operation` throws.'],
       },
       {
-        signature: 'setFactory(factory: AgentFactory): () => void',
-        description: 'Register the agent-creation factory (the loop calls this on construction, effect-scoped). A traced Cordis service is canonicalized to its concrete target; each create/resume call is then traced through that caller\'s context so ownership follows the caller without stacking proxy layers. Throws if a factory is already registered. Returns the disposer; on dispose the factory slot is cleared.',
-        parameters: [{ name: 'factory', description: 'the loop-owned factory {@link create}/{@link resume} delegate to.' }],
-        returns: 'the disposer that clears the factory slot. The exact Cordis effect disposer (single-shot): composite (generator) effects may yield it directly — exact identity nests the teardown in order.',
+        signature: 'registerDriver(driver: AgentDriver): () => void',
+        description: 'Register one named Agent Driver as a reversible provider contribution. Discovery metadata is detached, frozen, and returned in Driver-id order. Provider unload aborts unpublished work, drains every live Agent prepared by this generation, and only then removes the registration.',
+        parameters: [{ name: 'driver', description: 'Driver implementation and immutable discovery metadata.' }],
+        returns: 'the exact Cordis effect disposer for the registration.',
+      },
+      {
+        signature: 'getDriver(id: AgentDriverId): AgentDriverInfo | undefined',
+        description: 'Look up immutable discovery information for one registered Driver.',
+        parameters: [{ name: 'id', description: 'stable Driver id.' }],
+        returns: 'a frozen detached record, or `undefined` when inactive.',
+      },
+      {
+        signature: 'listDrivers(): AgentDriverInfo[]',
+        description: 'List registered Drivers deterministically by id.',
+        parameters: [],
+        returns: 'a fresh array of frozen discovery records.',
       },
       {
         signature: 'async create(options: CreateAgentOptions): Promise<AgentHandle>',
-        description: 'Create and publish a new agent through the registered factory. Distinct from register (which records an already-constructed agent): this constructs the agent and its session. Rejects if no factory is registered or creation/setup fails. The resolved AgentHandle lets the owner tear down exactly this agent.',
-        parameters: [{ name: 'options', description: 'shared identity, session seed/metadata, and agent options.' }],
-        returns: 'the handle after setup, rollback-covered publication, and loop start complete.',
+        description: 'Create and publish a fresh Agent through an explicit or default Driver. The selected id is written into the immutable Session header before Driver preparation. The caller and Driver provider co-own the returned lifecycle.',
+        parameters: [{ name: 'options', description: 'shared identity, Driver selection, metadata, setup, and Agent options.' }],
+        returns: 'the handle after setup, ordered publication, notification, and start.',
       },
       {
         signature: 'async resume(options: ResumeAgentOptions): Promise<AgentHandle>',
-        description: 'Load a persisted session and resume an agent on it through the registered factory. Rejects if no factory is registered; the factory rejects if session persistence is not configured or persistence/setup fails.',
-        parameters: [{ name: 'options', description: 'persisted identity, configuration, and optional setup.' }],
-        returns: 'the handle after setup, rollback-covered publication, and loop start complete.',
+        description: 'Prepare persistence exactly once, select the Driver stored in its header, and publish a resumed Agent. A caller cannot override the durable binding.',
+        parameters: [{ name: 'options', description: 'persisted identity, setup, cancellation, and Agent options.' }],
+        returns: 'the handle after load, setup, ordered publication, notification, and start.',
       },
       {
         signature: 'register(agent: Agent): () => void',
@@ -814,8 +819,8 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
   },
   {
     key: 'goals',
-    summary: 'Goal service (`ctx.goals`) backed exclusively by the owning session log.',
-    description: 'Goal service (`ctx.goals`) backed exclusively by the owning session log.',
+    summary: 'Built-in `dsh` Goal service (`ctx.goals`) backed exclusively by the owning Session log.',
+    description: 'Built-in `dsh` Goal service (`ctx.goals`) backed exclusively by the owning Session log. Alternate Drivers return no Goal on reads and reject every mutation with `GOAL_DRIVER_MISMATCH`.',
     methods: [
       {
         signature: 'get(agent: Agent): GoalView | undefined',
@@ -1080,7 +1085,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
   {
     key: 'permissionPresets',
     summary: 'Owns the deployment\'s permission presets and their write path.',
-    description: 'Owns the deployment\'s permission presets and their write path. Requires a confining `ctx.shell` executor and `ctx.approval`; unmatched knob values are reported as CUSTOM_PRESET, not an error.',
+    description: 'Owns the deployment\'s permission presets and their write path. Requires a confining `ctx.shell` executor and `ctx.approval`; unmatched knob values are reported as CUSTOM_PRESET, not an error. It owns only built-in `dsh` Sessions; alternate Drivers retain their native permission controls.',
     methods: [
       {
         signature: 'current(events: readonly SessionEvent[]): string',
@@ -1112,6 +1117,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         signature: 'set(session: Session, name: string): void',
         description: 'Record a changed preset, then update each changed knob through its own setter. Selecting the effective preset again appends nothing.',
         parameters: [{ name: 'session', description: 'the session the switch belongs to.' }, { name: 'name', description: 'the preset to switch to; unknown names throw.' }],
+        throws: ['when the Session is bound to an alternate Agent Driver.'],
       },
     ],
   },
@@ -1124,13 +1130,14 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         signature: 'get(agent: Agent): { active: boolean; pending?: boolean }',
         description: 'Read the logged plan state and any selected state awaiting the next accepted in-turn pre-step.',
         parameters: [{ name: 'agent', description: 'The agent to read.' }],
-        returns: 'Current logged state plus a pending selection, when present.',
+        returns: 'Current logged state plus a pending selection, when present; alternate Drivers report inactive.',
       },
       {
         signature: 'set(agent: Agent, active: boolean): \'committed\' | \'queued\' | \'cancelled\' | \'noop\'',
         description: 'Select whether plan mode should be active. Between turns the method appends the change immediately because no in-turn pre-step will run until another prompt starts a turn. The open-turn fold is the idle signal: agent status stays `running` through post-turn checkpointing, when no further in-turn pre-step runs. During an open turn the selection remains pending until the next accepted in-turn pre-step. Repeated selection of the current or already-pending state is a no-op.',
         parameters: [{ name: 'agent', description: 'The agent to switch.' }, { name: 'active', description: 'Whether plan mode should be active.' }],
         returns: 'what happened: `committed` (logged now), `queued` (awaiting the next accepted in-turn pre-step), `cancelled` (an opposite pending selection was cleared; the logged state already matches), or `noop` (already in that state).',
+        throws: ['when the Session is bound to an alternate Agent Driver.'],
       },
     ],
   },
@@ -1454,23 +1461,75 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     ],
   },
   {
+    key: 'sessionRuntimes',
+    summary: 'Registry of current process-local Session execution state.',
+    description: 'Registry of current process-local Session execution state. Durable history remains in the Session log; this service reports only resources and attention that exist in the current Host process.',
+    methods: [
+      {
+        signature: 'observe(header: SessionHeader): SessionRuntimeStatus',
+        description: 'Observe one durable Session header and materialize its cold current value. Re-observation is idempotent and rejects an immutable Driver conflict.',
+        parameters: [{ name: 'header', description: 'validated durable Session header.' }],
+        returns: 'the immutable current runtime value.',
+      },
+      {
+        signature: 'get(sessionId: SessionId): SessionRuntimeStatus | undefined',
+        description: 'Read one current runtime value.',
+        parameters: [{ name: 'sessionId', description: 'durable Session identity.' }],
+        returns: 'the immutable current value, or `undefined` before observation.',
+      },
+      {
+        signature: 'list(): SessionRuntimeStatus[]',
+        description: 'List current values deterministically by Session id.',
+        parameters: [],
+        returns: 'a fresh array containing immutable values.',
+      },
+      {
+        signature: 'begin(header: SessionHeader, spec: SessionRuntimeActivationSpec): SessionRuntimeActivation',
+        description: 'Begin one exclusive effect-scoped Driver activation contribution. A live Agent, when published, overrides its activating or unavailable availability while retaining this contribution\'s operation and detail.',
+        parameters: [{ name: 'header', description: 'exact durable Session and Driver binding.' }, { name: 'spec', description: 'initial activating phase, operation, and Driver detail.' }],
+        returns: 'the capability that alone can mutate this contribution.',
+      },
+      {
+        signature: 'setUnavailable(header: SessionHeader, reason: SessionRuntimeUnavailableReason): void',
+        description: 'Record a process-local unavailable diagnosis that remains after a failed activation contribution is released and is cleared by the next activation.',
+        parameters: [{ name: 'header', description: 'exact durable Session and Driver binding.' }, { name: 'reason', description: 'stable diagnosis and retryability.' }],
+      },
+      {
+        signature: 'setCold(header: SessionHeader): void',
+        description: 'Clear a stored unavailable diagnosis to the cold baseline.',
+        parameters: [{ name: 'header', description: 'exact durable Session and Driver binding.' }],
+      },
+      {
+        signature: 'attend(header: SessionHeader, kind: SessionRuntimeAttentionKind): () => Promise<void> | void',
+        description: 'Contribute one effect-scoped pending human-attention request. Independent contributors are counted, so approvals and user-input requests can coexist.',
+        parameters: [{ name: 'header', description: 'exact durable Session and Driver binding.' }, { name: 'kind', description: 'attention request category.' }],
+        returns: 'exact effect disposer for this contribution.',
+      },
+      {
+        signature: 'forget(sessionId: SessionId): void',
+        description: 'Remove an unowned cold/unavailable entry when its durable Session is deleted.',
+        parameters: [{ name: 'sessionId', description: 'deleted durable Session identity.' }],
+      },
+    ],
+  },
+  {
     key: 'sessions',
     summary: 'In-memory session store (`ctx.sessions`).',
     description: 'In-memory session store (`ctx.sessions`).\n\nPersistence is intentionally not implemented here — persistence plugins subscribe to `session/event` and flush on `session/flush` / dispose.',
     methods: [
       {
         signature: 'create(id?: SessionId, options?: CreateSessionOptions): Session',
-        description: 'Create a session owned by the calling fiber: disposing that fiber stops event notification and removes the session from the store. `options.seed` populates the session with a copy of those events (replay/fork); `options.meta` attaches creation metadata (validated absolute `cwd`, seed and parent lineage, and delegation depth) as the immutable SessionHeader (the store fills `version`/`id`/`createdAt`).\n\nFor an agent whose session must be torn down IN ORDER with its loop (so the loop\'s final events are published before the store attachment ends), do NOT use this — fold the session lifecycle into the agent\'s own effect via prepare + enter + announce (see `dsh-agent-loop`\'s creation transaction).',
+        description: 'Create a session owned by the calling fiber: disposing that fiber stops event notification and removes the session from the store. `options.seed` populates the session with a copy of those events (replay/fork); `options.meta` attaches the required driver id and creation metadata (validated absolute `cwd`, seed and parent lineage, and delegation depth) as the immutable SessionHeader (the store fills `version`/`id`/`createdAt`).\n\nFor an agent whose session must be torn down IN ORDER with its loop (so the loop\'s final events are published before the store attachment ends), do NOT use this — fold the session lifecycle into the agent\'s own effect via prepare + enter + announce (see `dsh-agent-loop`\'s creation transaction).',
         parameters: [{ name: 'id', description: 'the session id; omitted, the store mints `session-<n>`.' }, { name: 'options', description: 'seed events and/or creation metadata for the header.' }],
         returns: 'the live session, already entered and announced.',
-        throws: ['if a session with `id` already exists, metadata is not a plain lossless-JSON record with valid scalar fields, or `meta.cwd` is a non-absolute path (storage backends key directories off it).'],
+        throws: ['if a session with `id` already exists, creation metadata or its driver id is missing, metadata is not a plain lossless-JSON record with valid scalar fields, or `meta.cwd` is a non-absolute path (storage backends key directories off it).'],
       },
       {
         signature: 'prepare(id?: SessionId, options?: PrepareSessionOptions): Session',
         description: 'Build a session WITHOUT entering it into the store — validate the id/cwd and construct the Session (with its immutable SessionHeader). Pairs with enter + announce: a caller that owns a composite `ctx.effect` (the agent factory) folds the session lifecycle into that ONE effect so a fiber unload tears the session + agent down as a single ORDERED chain rather than as racing sibling effects — which would remove the publication hooks before the driver\'s closing events commit, dropping them.',
         parameters: [{ name: 'id', description: 'the session id; omitted, the store mints `session-<n>`.' }, { name: 'options', description: 'seed events and/or creation metadata for the header. With `seedSource: \'persistence\'`, metadata and events must be fresh detached graphs whose ownership transfers to this call: they are validated and frozen in place through {@link Session.fromRestore}, so the caller must retain no mutable aliases.' }],
         returns: 'the constructed session, NOT yet in the store.',
-        throws: ['if a session with `id` already exists, metadata is not a plain lossless-JSON record with valid scalar fields, or `meta.cwd` is a non-absolute path.'],
+        throws: ['if a session with `id` already exists, creation metadata or its driver id is missing, metadata is not a plain lossless-JSON record with valid scalar fields, or `meta.cwd` is a non-absolute path.'],
       },
       {
         signature: 'enter(session: Session): () => void',
@@ -2370,7 +2429,7 @@ export const EVENT_API: readonly EventApiEntry[] = [
     mode: 'emit',
     signature: '\'agent-loop/config-start-failed\'(payload: { sessionId: SessionId; error: unknown }): void',
     summary: 'A declarative agent entry failed before it could publish a live agent.',
-    description: 'A declarative agent entry failed before it could publish a live agent. Consumers that buffer work for the configured identity use this transient signal to reject that work instead of waiting forever. Normal factory teardown suppresses failures from the cancelled startup attempt.',
+    description: 'A declarative agent entry failed before it could publish a live agent. Consumers that buffer work for the configured identity use this transient signal to reject that work instead of waiting forever. Normal Driver teardown suppresses failures from the cancelled startup attempt.',
     parameters: [{ name: 'payload', description: '.error - persistence, setup, or publication failure.' }],
   },
   {
@@ -2622,6 +2681,14 @@ export const EVENT_API: readonly EventApiEntry[] = [
     parameters: [{ name: 'options', description: 'the full request. A LOOP-built request carries the process-local {@link markAgentLoopRequest} identity and arrives deep-frozen (mutation throws): its content is a pure function of the session log (the reconstructability Agent Note), so listeners read it, never rewrite it. Hand-built calls do not carry that marker; their messages already obey the immutable creation contract.' }],
   },
   {
+    name: 'session-runtime/status',
+    mode: 'emit',
+    signature: '\'session-runtime/status\'(payload: { status: SessionRuntimeStatus previous?: SessionRuntimeStatus }): void',
+    summary: 'Announces one committed process-local Session runtime value.',
+    description: 'Announces one committed process-local Session runtime value. Observer failures are contained after every listener receives the value.',
+    parameters: [{ name: 'payload', description: '.previous - preceding value, absent for first observation.' }],
+  },
+  {
     name: 'session-telemetry/record',
     mode: 'waterfall',
     signature: '\'session-telemetry/record\'(record: SessionTelemetryRecord, next: () => SessionTelemetryRecord): SessionTelemetryRecord',
@@ -2854,8 +2921,120 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type AgentCancelCause = {\n    readonly kind: \'user\';\n} | {\n    readonly kind: \'parent\';\n} | {\n    readonly kind: \'hook\';\n    readonly reason: string;\n} | {\n    readonly kind: \'disposed\';\n};',
   },
   {
-    name: 'AgentFactory',
-    declaration: 'export interface AgentFactory {\n    createAgent(ownerCtx: Context, options: CreateAgentOptions): Promise<AgentHandle>;\n    resume(ownerCtx: Context, options: ResumeAgentOptions): Promise<AgentHandle>;\n}',
+    name: 'AgentDriver',
+    declaration: 'export interface AgentDriver {\n    readonly info: AgentDriverInfo;\n    prepare(session: Session, options: AgentOptions, signal: AbortSignal): PreparedAgentDriver | Promise<PreparedAgentDriver>;\n}',
+  },
+  {
+    name: 'AgentDriverActivationId',
+    declaration: 'export type AgentDriverActivationId = Branded<\'AgentDriverActivationId\'>;',
+  },
+  {
+    name: 'AgentDriverActivationSnapshot',
+    declaration: 'export interface AgentDriverActivationSnapshot {\n    readonly owner: AgentDriverId;\n    readonly activationId: AgentDriverActivationId;\n    readonly phase: \'starting\' | \'active\' | \'stopping\' | \'stopped\' | \'failed\' | \'unavailable\';\n    readonly provenance?: AgentDriverProvenance;\n    readonly compatibility?: AgentDriverCompatibility;\n    readonly discontinuity?: AgentDriverDiscontinuity;\n    readonly failure?: AgentDriverFailure;\n    readonly driver?: AgentDriverDetail;\n}',
+  },
+  {
+    name: 'AgentDriverActivityData',
+    declaration: 'export type AgentDriverActivityData = {\n    readonly storage: \'inline\';\n    readonly bytes: number;\n    readonly data: JsonValue;\n} | {\n    readonly storage: \'spill\';\n    readonly ref: AgentDriverActivitySpillRef;\n};',
+  },
+  {
+    name: 'AgentDriverActivityId',
+    declaration: 'export type AgentDriverActivityId = Branded<\'AgentDriverActivityId\'>;',
+  },
+  {
+    name: 'AgentDriverActivitySnapshot',
+    declaration: 'export interface AgentDriverActivitySnapshot {\n    readonly owner: AgentDriverId;\n    readonly activationId: AgentDriverActivationId;\n    readonly activityId: AgentDriverActivityId;\n    readonly kind: string;\n    readonly phase: string;\n    readonly parentId?: AgentDriverActivityId;\n    readonly groupId?: AgentDriverActivityId;\n    readonly title?: string;\n    readonly summary?: string;\n    readonly data?: AgentDriverActivityData;\n    readonly driver?: AgentDriverDetail;\n}',
+  },
+  {
+    name: 'AgentDriverActivitySpillRef',
+    declaration: 'export interface AgentDriverActivitySpillRef {\n    readonly locator: string;\n    readonly digest: string;\n    readonly bytes: number;\n    readonly mediaType?: string;\n}',
+  },
+  {
+    name: 'AgentDriverCheckpointId',
+    declaration: 'export type AgentDriverCheckpointId = Branded<\'AgentDriverCheckpointId\'>;',
+  },
+  {
+    name: 'AgentDriverCheckpointSnapshot',
+    declaration: 'export interface AgentDriverCheckpointSnapshot {\n    readonly owner: AgentDriverId;\n    readonly activationId: AgentDriverActivationId;\n    readonly checkpointId: AgentDriverCheckpointId;\n    readonly phase: \'captured\' | \'restored\' | \'failed\';\n    readonly provenance?: AgentDriverProvenance;\n    readonly compatibility?: AgentDriverCompatibility;\n    readonly discontinuity?: AgentDriverDiscontinuity;\n    readonly failure?: AgentDriverFailure;\n    readonly driver?: AgentDriverDetail;\n}',
+  },
+  {
+    name: 'AgentDriverCompatibility',
+    declaration: 'export interface AgentDriverCompatibility {\n    readonly runtime: string;\n    readonly format?: string;\n    readonly status: \'same\' | \'certified\' | \'reconstructed\' | \'incompatible\' | \'unknown\';\n    readonly previousRuntime?: string;\n    readonly detail?: AgentDriverDetail;\n}',
+  },
+  {
+    name: 'AgentDriverDetail',
+    declaration: 'export interface AgentDriverDetail {\n    readonly kind: string;\n    readonly payload?: JsonValue;\n}',
+  },
+  {
+    name: 'AgentDriverDiscontinuity',
+    declaration: 'export interface AgentDriverDiscontinuity {\n    readonly kind: \'conversation\' | \'history\' | \'runtime\' | \'checkpoint\';\n    readonly message: string;\n    readonly detail?: AgentDriverDetail;\n}',
+  },
+  {
+    name: 'AgentDriverFailure',
+    declaration: 'export interface AgentDriverFailure {\n    readonly code: string;\n    readonly message: string;\n    readonly retryable?: boolean;\n    readonly detail?: AgentDriverDetail;\n}',
+  },
+  {
+    name: 'AgentDriverId',
+    declaration: 'export type AgentDriverId = Branded<\'AgentDriverId\'>;',
+  },
+  {
+    name: 'AgentDriverInfo',
+    declaration: 'export interface AgentDriverInfo {\n    readonly id: AgentDriverId;\n    readonly name: string;\n}',
+  },
+  {
+    name: 'AgentDriverModelAttemptId',
+    declaration: 'export type AgentDriverModelAttemptId = Branded<\'AgentDriverModelAttemptId\'>;',
+  },
+  {
+    name: 'AgentDriverModelAttemptSnapshot',
+    declaration: 'export interface AgentDriverModelAttemptSnapshot {\n    readonly owner: AgentDriverId;\n    readonly activationId: AgentDriverActivationId;\n    readonly requestId: AgentDriverModelRequestId;\n    readonly attemptId: AgentDriverModelAttemptId;\n    readonly attempt: number;\n    readonly outcome: \'succeeded\' | \'failed\' | \'aborted\';\n    readonly usage?: TokenUsage;\n    readonly failure?: AgentDriverFailure;\n    readonly retryDelayMs?: number;\n    readonly driver?: AgentDriverDetail;\n}',
+  },
+  {
+    name: 'AgentDriverModelRequestId',
+    declaration: 'export type AgentDriverModelRequestId = Branded<\'AgentDriverModelRequestId\'>;',
+  },
+  {
+    name: 'AgentDriverModelRequestSnapshot',
+    declaration: 'export interface AgentDriverModelRequestSnapshot {\n    readonly owner: AgentDriverId;\n    readonly activationId: AgentDriverActivationId;\n    readonly requestId: AgentDriverModelRequestId;\n    readonly turn: number;\n    readonly step: number;\n    readonly messages: readonly Message[];\n    readonly system?: string;\n    readonly instructions?: string;\n    readonly tools?: readonly ToolSchema[];\n    readonly config: LlmCallConfig;\n    readonly adapterDefaults?: LlmCallConfigAdapterDefaults;\n    readonly retryPolicy: ResolvedRetryPolicy;\n    readonly context?: RequestContext;\n    readonly modalities?: {\n        readonly input?: readonly ModelModality[];\n        readonly output?: readonly ModelModality[];\n    };\n    readonly driver?: AgentDriverDetail;\n}',
+  },
+  {
+    name: 'AgentDriverObjectiveAttention',
+    declaration: 'export interface AgentDriverObjectiveAttention {\n    readonly kind: string;\n    readonly message?: string;\n}',
+  },
+  {
+    name: 'AgentDriverObjectiveBudget',
+    declaration: 'export interface AgentDriverObjectiveBudget {\n    readonly kind: string;\n    readonly unit: string;\n    readonly limit?: number;\n    readonly consumed?: number;\n}',
+  },
+  {
+    name: 'AgentDriverObjectivePhase',
+    declaration: 'export type AgentDriverObjectivePhase = \'pending\' | \'active\' | \'paused\' | \'blocked\' | \'completed\' | \'failed\' | \'cancelled\';',
+  },
+  {
+    name: 'AgentDriverObjectiveSnapshot',
+    declaration: 'export interface AgentDriverObjectiveSnapshot {\n    readonly owner: AgentDriverId;\n    readonly objective: string;\n    readonly phase: AgentDriverObjectivePhase;\n    readonly budget?: AgentDriverObjectiveBudget;\n    readonly attention?: AgentDriverObjectiveAttention;\n    readonly stopReason?: AgentDriverObjectiveStopReason;\n    readonly routing?: JsonValue;\n}',
+  },
+  {
+    name: 'AgentDriverObjectiveStopReason',
+    declaration: 'export interface AgentDriverObjectiveStopReason {\n    readonly kind: string;\n    readonly message?: string;\n}',
+  },
+  {
+    name: 'AgentDriverProposedPlanId',
+    declaration: 'export type AgentDriverProposedPlanId = Branded<\'AgentDriverProposedPlanId\'>;',
+  },
+  {
+    name: 'AgentDriverProposedPlanLifecycle',
+    declaration: 'export type AgentDriverProposedPlanLifecycle = \'proposed\' | \'accepted\' | \'rejected\' | \'superseded\';',
+  },
+  {
+    name: 'AgentDriverProposedPlanRelation',
+    declaration: 'export interface AgentDriverProposedPlanRelation {\n    readonly kind: string;\n    readonly planId?: AgentDriverProposedPlanId;\n    readonly data?: JsonValue;\n}',
+  },
+  {
+    name: 'AgentDriverProposedPlanSnapshot',
+    declaration: 'export interface AgentDriverProposedPlanSnapshot {\n    readonly id: AgentDriverProposedPlanId;\n    readonly owner: AgentDriverId;\n    readonly title: string;\n    readonly content: string;\n    readonly lifecycle: AgentDriverProposedPlanLifecycle;\n    readonly relation?: AgentDriverProposedPlanRelation;\n    readonly routing?: JsonValue;\n}',
+  },
+  {
+    name: 'AgentDriverProvenance',
+    declaration: 'export interface AgentDriverProvenance {\n    readonly kind: \'created\' | \'resumed\' | \'reconstructed\' | \'imported\';\n    readonly sourceActivationId?: AgentDriverActivationId;\n    readonly nativeConversationId?: string;\n    readonly detail?: AgentDriverDetail;\n}',
   },
   {
     name: 'AgentHandle',
@@ -3183,7 +3362,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'CreateAgentOptions',
-    declaration: 'export interface CreateAgentOptions {\n    readonly sessionId: SessionId;\n    readonly meta?: {\n        readonly cwd?: string;\n        readonly parentSession?: SessionId;\n        readonly seedLength?: number;\n        readonly origin?: \'subagent\';\n        readonly delegationDepth?: number;\n        readonly agentPreset?: string;\n    };\n    readonly seed?: readonly SessionEvent[];\n    readonly agentOptions?: AgentOptions;\n    readonly signal?: AbortSignal;\n    readonly setup?: AgentSetup;\n}',
+    declaration: 'export interface CreateAgentOptions {\n    readonly sessionId: SessionId;\n    readonly driverId?: AgentDriverId;\n    readonly meta?: {\n        readonly cwd?: string;\n        readonly parentSession?: SessionId;\n        readonly seedLength?: number;\n        readonly origin?: \'subagent\';\n        readonly delegationDepth?: number;\n        readonly agentPreset?: string;\n    };\n    readonly seed?: readonly SessionEvent[];\n    readonly agentOptions?: AgentOptions;\n    readonly signal?: AbortSignal;\n    readonly setup?: AgentSetup;\n}',
   },
   {
     name: 'CreateGoalRequest',
@@ -3195,7 +3374,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'CreateSessionOptions',
-    declaration: 'export interface CreateSessionOptions {\n    readonly seed?: readonly SessionEvent[];\n    readonly meta?: {\n        readonly cwd?: string;\n        readonly parentSession?: SessionId;\n        readonly createdAt?: number;\n        readonly seedLength?: number;\n        readonly origin?: \'subagent\';\n        readonly delegationDepth?: number;\n        readonly agentPreset?: string;\n    };\n}',
+    declaration: 'export interface CreateSessionOptions {\n    readonly seed?: readonly SessionEvent[];\n    readonly meta: {\n        readonly driverId: AgentDriverId;\n        readonly cwd?: string;\n        readonly parentSession?: SessionId;\n        readonly createdAt?: number;\n        readonly seedLength?: number;\n        readonly origin?: \'subagent\';\n        readonly delegationDepth?: number;\n        readonly agentPreset?: string;\n    };\n}',
   },
   {
     name: 'CreateTeamTaskRequest',
@@ -3818,8 +3997,12 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface PreparedAdapterCall {\n    readonly model: LlmResolvedModelInfo;\n    stream(options: GenerateOptions): AsyncIterable<StreamChunk>;\n}',
   },
   {
+    name: 'PreparedAgentDriver',
+    declaration: 'export interface PreparedAgentDriver {\n    readonly agent: Agent;\n    start(source: SessionStartSource): void;\n    dispose(): Promise<void>;\n}',
+  },
+  {
     name: 'PreparedLlmCall',
-    declaration: 'export interface PreparedLlmCall {\n    readonly config: LlmCallConfig;\n    readonly retryPolicy: ResolvedRetryPolicy;\n    readonly context?: LlmModelContext;\n    readonly inputModalities?: readonly ModelModality[];\n    readonly adapterDefaults: LlmCallConfigAdapterDefaults;\n    stream(options: GenerateOptions): AsyncIterable<StreamChunk>;\n}',
+    declaration: 'export interface PreparedLlmCall {\n    readonly config: LlmCallConfig;\n    readonly retryPolicy: ResolvedRetryPolicy;\n    readonly context?: LlmModelContext;\n    readonly inputModalities?: readonly ModelModality[];\n    readonly adapterDefaults: LlmCallConfigAdapterDefaults;\n    nextAttempt(): PreparedLlmCall;\n    stream(options: GenerateOptions): AsyncIterable<StreamChunk>;\n}',
   },
   {
     name: 'PreparedReferencedMessage',
@@ -3926,10 +4109,6 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type RequestErrorAction = {\n    kind: \'retry\';\n} | undefined;',
   },
   {
-    name: 'RequestHeaderReason',
-    declaration: 'export type RequestHeaderReason = \'initial\' | \'resume\' | \'change\';',
-  },
-  {
     name: 'RequestImageAttachment',
     declaration: 'export interface RequestImageAttachment {\n    variantId: ImageVariantId;\n    attachment: ImageAttachmentRef;\n    data: Uint8Array;\n    mediaType: ImageMediaType;\n    bytes: number;\n    width: number;\n    height: number;\n    depth: \'uchar\';\n    space: \'srgb\';\n    hasAlpha: boolean;\n}',
   },
@@ -3979,7 +4158,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'RpcErrorDetailsMap',
-    declaration: 'export interface RpcErrorDetailsMap {\n    \'bad-request\': {\n        issues: ZodIssue[];\n    };\n    \'cancelled\': {};\n    \'session-not-found\': {\n        sessionId: SessionId;\n    };\n    \'model-unavailable\': {\n        provider: string;\n        model: string;\n    };\n    \'session-conflict\': {\n        sessionId: SessionId;\n        requestedCwd: string;\n        existingCwd?: string;\n    };\n    \'invalid-time-zone\': {\n        value: string;\n    };\n    \'workspace-attach-failed\': {\n        sessionId: SessionId;\n        workspaceId: string;\n    };\n    \'workspace-not-found\': {\n        workspaceId: string;\n    };\n    \'workspace-invalid-path\': {\n        path: string;\n    };\n    \'workspace-name-conflict\': {\n        name: string;\n    };\n    \'workspace-move-invalid\': {\n        workspaceId: string;\n        sessionId: SessionId;\n        beforeSessionId?: SessionId;\n    };\n    \'directory-unreadable\': {\n        path: string;\n    };\n    \'directory-exists\': {\n        path: string;\n    };\n    \'directory-create-failed\': {\n        path: string;\n    };\n    \'directory-picker-unavailable\': {\n        capability: string;\n    };\n    \'agent-preset-read-only\': {\n        agentPreset: string;\n        reason: string;\n    };\n    \'agent-preset-locked\': {\n        sessionId: SessionId;\n        agentPreset: string;\n    };\n    \'agent-preset-conflict\': {\n        sessionId: SessionId;\n        requestedPreset: string;\n        existingPreset?: string;\n    };\n    \'agent-preset-not-found\': {\n        agentPreset: string;\n      /* …truncated — full shape in source */',
+    declaration: 'export interface RpcErrorDetailsMap {\n    \'bad-request\': {\n        issues: ZodIssue[];\n    };\n    \'cancelled\': {};\n    \'session-not-found\': {\n        sessionId: SessionId;\n    };\n    \'model-unavailable\': {\n        provider: string;\n        model: string;\n    };\n    \'session-conflict\': {\n        sessionId: SessionId;\n        requestedCwd: string;\n        existingCwd?: string;\n    };\n    \'agent-driver-not-found\': {\n        driverId: AgentDriverId;\n    };\n    \'agent-driver-conflict\': {\n        sessionId: SessionId;\n        requestedDriverId: AgentDriverId;\n        existingDriverId: AgentDriverId;\n    };\n    \'invalid-time-zone\': {\n        value: string;\n    };\n    \'workspace-attach-failed\': {\n        sessionId: SessionId;\n        workspaceId: string;\n        driverId: AgentDriverId;\n    };\n    \'workspace-not-found\': {\n        workspaceId: string;\n    };\n    \'workspace-invalid-path\': {\n        path: string;\n    };\n    \'workspace-name-conflict\': {\n        name: string;\n    };\n    \'workspace-move-invalid\': {\n        workspaceId: string;\n        sessionId: SessionId;\n        beforeSessionId?: SessionId;\n    };\n    \'directory-unreadable\': {\n        path: string;\n    };\n    \'directory-exists\': {\n        path: string;\n    };\n    \'directory-create-failed\': {\n        path: string;\n    };\n    \'directory-picker-unavailable\': {\n        capability: string;\n    };\n    \'agent-preset-read-only\': {\n        agentPreset: string;\n        reason: string;\n    };\n    \'agent-preset-locked\': {\n        se /* …truncated — full shape in source */',
   },
   {
     name: 'RpcId',
@@ -4083,7 +4262,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SessionEventMap',
-    declaration: 'export interface SessionEventMap {\n    \'turn/start\': {\n        turn: number;\n    };\n    \'turn/end\': {\n        turn: number;\n        reason: TurnEndReason;\n    };\n    \'step/start\': {\n        turn: number;\n        step: number;\n    };\n    \'step/end\': {\n        turn: number;\n        step: number;\n    };\n    \'user/message\': UserMessage;\n    \'assistant/chunk\': {\n        turn: number;\n        step: number;\n        chunk: StreamChunk;\n    };\n    \'assistant/message\': {\n        turn: number;\n        step: number;\n        message: AssistantMessage;\n        usage?: TokenUsage;\n        interrupted?: true;\n    };\n    \'tool/call\': {\n        turn: number;\n        step: number;\n        callId: CallId;\n        name: string;\n        arguments: string;\n    };\n    \'tool/result\': {\n        turn: number;\n        step: number;\n        message: ToolResultMessage;\n        error?: {\n            name: string;\n            code: string;\n        };\n        meta?: JsonValue;\n    };\n    \'todo/write\': {\n        todos: TodoItem[];\n    };\n    \'request/header\': {\n        header: EpochHeader;\n        reason: RequestHeaderReason;\n    };\n    \'request/context\': RequestContext;\n    \'session/end-seed\': Record<string, never>;\n}',
+    declaration: 'export interface SessionEventMap {\n    \'agent-driver/activation\': AgentDriverActivationSnapshot;\n    \'agent-driver/model-request\': AgentDriverModelRequestSnapshot;\n    \'agent-driver/model-attempt\': AgentDriverModelAttemptSnapshot;\n    \'agent-driver/activity\': AgentDriverActivitySnapshot;\n    \'agent-driver/objective\': {\n        objective: AgentDriverObjectiveSnapshot | null;\n        driver?: AgentDriverDetail;\n    };\n    \'agent-driver/proposed-plan\': {\n        plan: AgentDriverProposedPlanSnapshot | null;\n        driver?: AgentDriverDetail;\n    };\n    \'agent-driver/checkpoint\': AgentDriverCheckpointSnapshot;\n    \'turn/start\': {\n        turn: number;\n    };\n    \'turn/end\': {\n        turn: number;\n        reason: TurnEndReason;\n    };\n    \'step/start\': {\n        turn: number;\n        step: number;\n    };\n    \'step/end\': {\n        turn: number;\n        step: number;\n    };\n    \'user/message\': UserMessage;\n    \'assistant/chunk\': {\n        turn: number;\n        step: number;\n        chunk: StreamChunk;\n    };\n    \'assistant/message\': {\n        turn: number;\n        step: number;\n        message: AssistantMessage;\n        usage?: TokenUsage;\n        interrupted?: true;\n    };\n    \'tool/call\': {\n        turn: number;\n        step: number;\n        callId: CallId;\n        name: string;\n        arguments: string;\n    };\n    \'tool/result\': {\n        turn: number;\n        step: number;\n        message: ToolResultMessage;\n        error?: {\n            name: string;\n            code: string /* …truncated — full shape in source */',
   },
   {
     name: 'SessionEventMetadataFilter',
@@ -4147,7 +4326,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SessionHeader',
-    declaration: 'export interface SessionHeader {\n    readonly version: number;\n    readonly id: SessionId;\n    readonly createdAt: number;\n    readonly cwd?: string;\n    readonly parentSession?: SessionId;\n    readonly seedLength?: number;\n    readonly origin?: \'subagent\';\n    readonly delegationDepth?: number;\n    readonly agentPreset?: string;\n}',
+    declaration: 'export interface SessionHeader {\n    readonly version: number;\n    readonly driverId: AgentDriverId;\n    readonly id: SessionId;\n    readonly createdAt: number;\n    readonly cwd?: string;\n    readonly parentSession?: SessionId;\n    readonly seedLength?: number;\n    readonly origin?: \'subagent\';\n    readonly delegationDepth?: number;\n    readonly agentPreset?: string;\n}',
   },
   {
     name: 'SessionId',
@@ -4224,6 +4403,46 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'SessionResultRange',
     declaration: 'export interface SessionResultRange {\n    from?: number;\n    to?: number;\n}',
+  },
+  {
+    name: 'SessionRuntimeActivation',
+    declaration: 'export interface SessionRuntimeActivation {\n    readonly sessionId: SessionId;\n    readonly driverId: AgentDriverId;\n    setPhase(phase: string): void;\n    setOperation(operation: SessionRuntimeOperation): void;\n    setDetail(detail: SessionRuntimeDetail | undefined): void;\n    setUnavailable(reason: SessionRuntimeUnavailableReason): void;\n    dispose(): void;\n}',
+  },
+  {
+    name: 'SessionRuntimeActivationSpec',
+    declaration: 'export interface SessionRuntimeActivationSpec {\n    readonly phase: string;\n    readonly operation?: SessionRuntimeOperation;\n    readonly detail?: SessionRuntimeDetail;\n}',
+  },
+  {
+    name: 'SessionRuntimeAttention',
+    declaration: 'export interface SessionRuntimeAttention {\n    readonly approvals: number;\n    readonly userInputs: number;\n}',
+  },
+  {
+    name: 'SessionRuntimeAttentionKind',
+    declaration: 'export type SessionRuntimeAttentionKind = \'approval\' | \'user-input\';',
+  },
+  {
+    name: 'SessionRuntimeAvailability',
+    declaration: 'export type SessionRuntimeAvailability = {\n    readonly kind: \'cold\';\n} | {\n    readonly kind: \'activating\';\n    readonly phase: string;\n} | {\n    readonly kind: \'available\';\n} | {\n    readonly kind: \'unavailable\';\n    readonly reason: SessionRuntimeUnavailableReason;\n};',
+  },
+  {
+    name: 'SessionRuntimeDetail',
+    declaration: 'export interface SessionRuntimeDetail {\n    readonly kind: string;\n    readonly data: JsonValue;\n}',
+  },
+  {
+    name: 'SessionRuntimeOperation',
+    declaration: 'export type SessionRuntimeOperation = SessionRuntimeOperationMap[keyof SessionRuntimeOperationMap];',
+  },
+  {
+    name: 'SessionRuntimeOperationMap',
+    declaration: 'export interface SessionRuntimeOperationMap {\n    conversation: \'conversation\';\n    planning: \'planning\';\n    review: \'review\';\n    compaction: \'compaction\';\n}',
+  },
+  {
+    name: 'SessionRuntimeStatus',
+    declaration: 'export interface SessionRuntimeStatus {\n    readonly sessionId: SessionId;\n    readonly driverId: AgentDriverId;\n    readonly availability: SessionRuntimeAvailability;\n    readonly activity?: \'idle\' | \'running\';\n    readonly attention: SessionRuntimeAttention;\n    readonly operation: SessionRuntimeOperation;\n    readonly detail?: SessionRuntimeDetail;\n    readonly revision: number;\n    readonly updatedAt: number;\n}',
+  },
+  {
+    name: 'SessionRuntimeUnavailableReason',
+    declaration: 'export interface SessionRuntimeUnavailableReason {\n    readonly code: string;\n    readonly message: string;\n    readonly retryable: boolean;\n}',
   },
   {
     name: 'SessionSearchCursor',
@@ -4724,10 +4943,6 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'TerminalWaitReason',
     declaration: 'export type TerminalWaitReason = \'stdin_read\' | \'inferred_idle\' | \'timeout\' | \'session_exit\';',
-  },
-  {
-    name: 'TodoItem',
-    declaration: 'export interface TodoItem {\n    content: string;\n    status: \'pending\' | \'in_progress\' | \'completed\';\n}',
   },
   {
     name: 'TokenMeasurement',

@@ -5,7 +5,7 @@ import type { AttachmentIdType, ImageAttachmentRef } from '@deepseek-ai/dsh-atta
 import type { SessionEvent } from '@deepseek-ai/dsh-session/types'
 import type {
   HistoryEntry, IApiClient, MessageId, MuxFrame, PromptContentPart, QueueAction, RpcError,
-  RpcId, RpcResponse, RpcResult, SessionId, SubagentAddress, ToolEventView,
+  RpcId, RpcResponse, RpcResult, SessionId, SessionRuntimeStatus, SubagentAddress, ToolEventView,
 } from '@deepseek-ai/dsh-api-remotes/client'
 // Value import from the inline-safe wire layer (not the connection plugin):
 // plugin-to-plugin value imports are a bundle purity error.
@@ -86,6 +86,7 @@ export class Session implements SessionFace {
   /** Session-owned business Context engine over the contiguous raw window. */
   private readonly conversation: ConversationNodeAssembler
   private running = false
+  private runtime: SessionRuntimeStatus | undefined
   private address: SubagentAddress | undefined
   private parentAvailable = false
   /**
@@ -536,6 +537,23 @@ export class Session implements SessionFace {
   }
 
   /**
+   * Apply a higher-revision Host runtime snapshot, or clear stale state after disconnect.
+   * @param runtime - current Host value, or `undefined` after connection loss.
+   */
+  handleRuntime(runtime: SessionRuntimeStatus | undefined): void {
+    if (runtime === undefined) {
+      if (this.runtime === undefined) return
+      this.runtime = undefined
+      this.notifier.markDirty()
+      return
+    }
+    if (runtime.sessionId !== this.sessionId) return
+    if ((this.runtime?.revision ?? -1) >= runtime.revision) return
+    this.runtime = runtime
+    this.notifier.markDirty()
+  }
+
+  /**
    * Install or clear the catalog-discovered transport address. A changed
    * address rebuilds an already-open window through its new history route.
    * @param address - direct parent/child address, or undefined for ordinary transport.
@@ -750,6 +768,7 @@ export class Session implements SessionFace {
       pending: this.pendingCache.value,
       queue: this.queueMirror.snapshot(),
       running: this.running,
+      ...this.runtime === undefined ? {} : { runtime: this.runtime },
       subagent: this.address === undefined
         ? null
         : { address: this.address, parentAvailable: this.parentAvailable },

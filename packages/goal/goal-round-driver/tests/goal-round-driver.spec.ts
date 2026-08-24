@@ -8,7 +8,7 @@ import GoalService, { GoalId } from '@deepseek-ai/dsh-goal'
 import type { GoalView } from '@deepseek-ai/dsh-goal'
 import { createUserMessage, LlmAdapter, LlmError  } from '@deepseek-ai/dsh-llm'
 import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
-import { SessionId } from '@deepseek-ai/dsh-session'
+import { AgentDriverId, SessionId } from '@deepseek-ai/dsh-session'
 import type { UserMessage } from '@deepseek-ai/dsh-session'
 import * as goalSession from '../src/index.ts'
 
@@ -94,7 +94,7 @@ async function harness(script: ScriptEntry[]): Promise<Harness> {
   await ctx.plugin(AgentLoop, { agents: [] })
   const adapter = new ScriptedAdapter(script)
   ctx.llm.registerAdapter(['mock'], adapter)
-  const agent = ctx.agentLoop.create(SessionId(`goal-session-${Math.random()}`), {
+  const agent = await ctx.agentLoop.create(SessionId(`goal-session-${Math.random()}`), {
     provider: 'mock',
     model: 'mock',
   })
@@ -217,7 +217,7 @@ describe('same-session goal driving', () => {
     await ctx.plugin(AgentLoop, { agents: [] })
     const adapter = new ScriptedAdapter([textResponse('after resume')])
     ctx.llm.registerAdapter(['mock'], adapter)
-    const agent = ctx.agentLoop.create(SessionId('goal-session-hot-load'), { provider: 'mock', model: 'mock' })
+    const agent = await ctx.agentLoop.create(SessionId('goal-session-hot-load'), { provider: 'mock', model: 'mock' })
     const created = ctx.goals.create(agent, { objective: 'wait for a human', maxGoalRounds: 1 })
 
     await ctx.plugin(goalSession)
@@ -1030,7 +1030,7 @@ describe('same-session goal driving', () => {
 
   it('ignores session events without an exact owning agent and retires disposed agent state', async () => {
     const test = await harness([])
-    const orphan = test.ctx.sessions.create(SessionId('goal-session-orphan'))
+    const orphan = test.ctx.sessions.create(SessionId('goal-session-orphan'), { meta: { driverId: AgentDriverId('dsh') } })
     orphan.append('turn/start', {
       turn: 1,
     })

@@ -13,7 +13,7 @@ import type { ToolSchema } from '@deepseek-ai/dsh-llm'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { createScope } from '@deepseek-ai/dsh-scope'
-import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, SessionId } from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import SqliteSessionQueryEngine from '@deepseek-ai/dsh-session-query-sqlite'
 import GoalService from '@deepseek-ai/dsh-goal'
@@ -380,7 +380,9 @@ const TOOL_PACKAGES: ToolPackage[] = [
     writes: ['tool/call', 'schedule/change create or delete', 'tool/result'],
     async mount(ctx) {
       await ctx.plugin(SessionStore)
-      const session = ctx.sessions.create(SessionId('tool-catalog-schedule'))
+      const session = ctx.sessions.create(SessionId('tool-catalog-schedule'), {
+        meta: { driverId: AgentDriverId('dsh') },
+      })
       const agent = { id: session.id, session } as Agent
       await mountCatalogChildScope(ctx, (childCtx) => {
         ToolSchedule.registerScheduleTools(ctx, childCtx, agent, () => {})
@@ -532,7 +534,9 @@ const TOOL_PACKAGES: ToolPackage[] = [
     async mount(ctx) {
       await ctx.plugin(AgentRegistry)
       await ctx.plugin(SessionStore)
-      const session = ctx.sessions.create(SessionId('tool-catalog-team-lead'))
+      const session = ctx.sessions.create(SessionId('tool-catalog-team-lead'), {
+        meta: { driverId: AgentDriverId('dsh') },
+      })
       let agent!: Agent
       const membership = {
         get root() { return agent },
@@ -571,7 +575,7 @@ const TOOL_PACKAGES: ToolPackage[] = [
       await ctx.plugin(ToolTodo, { allowParallelInProgress: true })
     },
     note:
-      'todo_write is session-owned state; UIs render the latest todo/write event as a checklist. `allowParallelInProgress` is required with no default, so the catalog states its choice: `true`, whose description invites several `in_progress` items. A deployment choosing `false` receives the same tool with a description asking for exactly one active task.',
+      'todo_write appends core Session state; the portable dsh-todo provider projects it as a Checklist for UIs. `allowParallelInProgress` is required with no default, so the catalog states its choice: `true`, whose description invites several `in_progress` items. A deployment choosing `false` receives the same tool with a description asking for exactly one active task.',
   },
   {
     pkg: '@deepseek-ai/dsh-tool-workflow',

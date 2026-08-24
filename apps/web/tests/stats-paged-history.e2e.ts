@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url'
 import type { Browser, Page } from 'playwright'
 import { chromium } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
+import { AgentDriverId } from '@deepseek-ai/dsh-session'
 import {
   assertFixtureInventory, captureStableAria, compareOrRefreshGolden,
   launchWebScaffold, seedSession, watchConsole, webSnapshotMode, type WebScaffold,
@@ -34,7 +35,8 @@ const FULL_COUNTS = `${TURNS} turns · ${TURNS} steps`
  */
 function buildSeed(turns: number): string {
   const lines = [JSON.stringify({
-    type: 'session', version: 0, id: '{{sessionId}}', createdAt: 1784974100000, cwd: '{{cwd}}/workspace',
+    type: 'session', version: 0, driverId: AgentDriverId('dsh'),
+    id: '{{sessionId}}', createdAt: 1784974100000, cwd: '{{cwd}}/workspace',
   })]
   let seq = 0
   let time = 1784974100000

@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import type { SessionId, SessionSummary } from '@deepseek-ai/dsh-client-runtime/client'
+import type { AgentDriverId, SessionId, SessionSummary } from '@deepseek-ai/dsh-client-runtime/client'
 import { indexSubagentDescendants } from '@deepseek-ai/dsh-client-runtime/client'
 
+const DRIVER_ID = 'dsh' as AgentDriverId
 const sid = (id: string) => id as SessionId
 
 function summary(
@@ -11,7 +12,7 @@ function summary(
   running = false,
 ): SessionSummary {
   return {
-    id: sid(id), displayTitle: id, running, blank: false, updatedAt: 0,
+    id: sid(id), driverId: DRIVER_ID, displayTitle: id, running, blank: false, updatedAt: 0,
     ...(parentId === undefined ? {} : { parentId }),
     ...(origin === undefined ? {} : { origin }),
   }

@@ -5,10 +5,45 @@ import { mkdir, open } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 
 /** Current derived-index schema version. Incompatible versions reset in place. */
-export const SESSION_QUERY_SQLITE_SCHEMA_VERSION = 8
+export const SESSION_QUERY_SQLITE_SCHEMA_VERSION = 9
 
 /** SQLite application id protecting unrelated databases from derived resets. */
 export const SESSION_QUERY_SQLITE_APPLICATION_ID = 0x44534851
+
+let nodeSqlite: Promise<typeof import('node:sqlite')> | undefined
+
+/**
+ * Import Node SQLite once without its process-wide experimental warning.
+ * @returns the Node 22/24 `node:sqlite` module namespace.
+ */
+async function importNodeSqliteWithoutExperimentalWarning(): Promise<typeof import('node:sqlite')> {
+  nodeSqlite ??= (async () => {
+    const emitWarning = Reflect.get(process, 'emitWarning')
+    /* v8 ignore start -- Node 22 alone emits this warning; primary coverage runs on Node 24. */
+    const filteredEmitWarning = (warning: string | Error, ...args: unknown[]): void => {
+      const message = warning instanceof Error ? warning.message : warning
+      const first = args[0]
+      const type = warning instanceof Error
+        ? warning.name
+        : typeof first === 'string'
+          ? first
+          : typeof first === 'object' && first !== null && 'type' in first
+            ? first.type
+            : undefined
+      if (message === 'SQLite is an experimental feature and might change at any time'
+        && type === 'ExperimentalWarning') return
+      Reflect.apply(emitWarning, process, [warning, ...args])
+    }
+    Reflect.set(process, 'emitWarning', filteredEmitWarning)
+    try {
+      return await import('node:sqlite')
+    } finally {
+      Reflect.set(process, 'emitWarning', emitWarning)
+    }
+    /* v8 ignore stop */
+  })()
+  return nodeSqlite
+}
 
 /** Supported SQLite journal modes. */
 export type JournalMode = 'wal' | 'delete' | 'truncate' | 'persist'
@@ -49,7 +84,7 @@ export async function openSearchDatabase(path: string, journalMode: JournalMode)
     await mkdir(dirname(actual), { recursive: true, mode: 0o700 })
     await createDatabaseFile(actual)
   }
-  const { DatabaseSync } = await import('node:sqlite')
+  const { DatabaseSync } = await importNodeSqliteWithoutExperimentalWarning()
   const db = new DatabaseSync(actual)
   try {
     const { application_id: applicationId } = db.prepare('PRAGMA application_id').get() as { application_id: number }
@@ -113,6 +148,7 @@ function ensurePersistentSchema(db: DatabaseSync): void {
     CREATE TABLE IF NOT EXISTS persisted_sessions (
       id             TEXT PRIMARY KEY,
       version        INTEGER NOT NULL,
+      driver_id      TEXT NOT NULL,
       created_at     INTEGER NOT NULL,
       cwd            TEXT,
       parent_session TEXT,
@@ -143,6 +179,7 @@ function ensureTemporarySchema(db: DatabaseSync): void {
     CREATE TEMP TABLE IF NOT EXISTS live_sessions (
       id             TEXT PRIMARY KEY,
       version        INTEGER NOT NULL,
+      driver_id      TEXT NOT NULL,
       created_at     INTEGER NOT NULL,
       cwd            TEXT,
       parent_session TEXT,

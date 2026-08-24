@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, SessionId } from '@deepseek-ai/dsh-session'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import SqliteSessionPersistence from '@deepseek-ai/dsh-session-persistence-sqlite'
 import { RetryId } from '@deepseek-ai/dsh-llm-retry'
@@ -32,7 +32,7 @@ describe.each(['jsonl', 'sqlite'] as const)('%s retry-event persistence', (kind)
   it('round-trips the event losslessly without adding a model message', async () => {
     const ctx = await backend(kind)
     try {
-      const session = ctx.sessions.create(SessionId(`retry-${kind}`))
+      const session = ctx.sessions.create(SessionId(`retry-${kind}`), { meta: { driverId: AgentDriverId('dsh') } })
       session.append('turn/start', { turn: 1 })
       session.append('step/start', { turn: 1, step: 1 })
       session.append('request/header', {

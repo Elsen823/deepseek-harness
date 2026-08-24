@@ -24,7 +24,7 @@
       "path": "../../core/session"
     },
     {
-      "path": "../../session/session-projection"
+      "path": "../todo"
     },
     {
       "path": "../../runtime-diagnostics/invariants"

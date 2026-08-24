@@ -9,6 +9,7 @@ import {
   createUserMessage,
 } from '@deepseek-ai/dsh-llm'
 import {
+  AgentDriverId,
   SESSION_FORMAT_VERSION,
   Session,
   SessionId,
@@ -159,6 +160,7 @@ function fixtureLog(session: Session): string {
     JSON.stringify({
       type: 'session',
       version: SESSION_FORMAT_VERSION,
+      driverId: AgentDriverId('dsh'),
       id: '{{sessionId}}',
       createdAt: Date.now() - 60_000,
       cwd: '{{cwd}}',

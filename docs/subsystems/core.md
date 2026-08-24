@@ -13,15 +13,15 @@ A turn flows through the six packages in one loop: the driver in [`agent-loop`](
 | `session/` | The append-only `SessionEvent` log and in-memory store — the single source of truth (`ctx.sessions`) | [session.md](session.md) |
 | `system-prompt/` | Prompt-section and tool-schema assembly (`ctx.systemPrompt`) | [system-prompt.md](system-prompt.md) |
 | `tools/` | The scoped tool registry and guarded execution pipeline (`ctx.tools`) | [tools.md](tools.md) |
-| `agent/` | The `Agent` interface, live registry, initiator scope, and `agent/*` event vocabulary (`ctx.agents`) | this page |
-| `agent-loop/` | The concrete driver implementing the public `Agent` contract (`ctx.agentLoop`) | this page |
+| `agent/` | The `Agent` interface, named Driver registry, generic lifecycle transaction, initiator scope, and `agent/*` event vocabulary (`ctx.agents`) | this page |
+| `agent-loop/` | The registered built-in `dsh` Driver adapter (`ctx.agentLoop`) | this page |
 | `scope/` | The scoped-registration primitive the registries and loop build per-agent scoping on | [scope.md](scope.md) |
 
-`scope/` is the one non-service package: a dependency-free library (`createScope`/`scopeOf`/`scopeTarget`) that sits below `session/` and `system-prompt/` in the module graph precisely so they can consume it without a cycle. `agent-loop` is the one concrete implementation of the public `Agent` contract and lives here because it is the harness's default product loop; it runs each driver inside `ctx.agents.withInitiator()`. Extension plugins depend on `agent` — including when they need the initiating Agent — and never on `agent-loop` directly, so the loop stays swappable. The default composition that wires this spine into a runnable agent is [`examples/agent-spine-demo`](../../packages/examples/agent-spine-demo/README.md).
+`scope/` is the one non-service package: a dependency-free library (`createScope`/`scopeOf`/`scopeTarget`) that sits below `session/` and `system-prompt/` in the module graph precisely so they can consume it without a cycle. `agent` owns the Driver seam and complete publication transaction; `agent-loop` registers the built-in `dsh` adapter and runs each DSH loop inside `ctx.agents.withInitiator()`. Extension plugins depend on `agent` — including when they need the initiating Agent — and never on `agent-loop` directly. The default composition that wires this spine into a runnable agent is [`examples/agent-spine-demo`](../../packages/examples/agent-spine-demo/README.md).
 
 ## Creation and ownership
 
-Consumers create agents through `ctx.agents` — `create()` builds a fresh session and agent under one caller-supplied `SessionId`, `resume()` loads a persisted session first — or declaratively through the loop's config entries. Programmatic creation returns the owner's handle:
+Consumers create agents through `ctx.agents`: `create()` selects an explicit or configured default Driver and persists that binding, while `resume()` prepares persistence once and selects the Driver stored in the Session header. Declarative DSH loop entries route through the same registry. Programmatic creation returns the owner's handle:
 
 Source: [`packages/core/agent/src/index.ts`](../../packages/core/agent/src/index.ts)
 
@@ -29,11 +29,10 @@ Source: [`packages/core/agent/src/index.ts`](../../packages/core/agent/src/index
 /**
  * An owned agent plus its disposer, returned by {@link AgentRegistry.create} /
  * {@link AgentRegistry.resume}. The disposer is a CAPABILITY: among consumers,
- * only the holder can tear this agent down. The registered factory provider is
- * also a structural owner because the scoped agent depends on that provider's
- * service API; provider unload stops and drains every live handle it made.
- * `dispose()` stops the loop, awaits its exit, unregisters the agent, removes
- * its session from the store, and finally unwinds its scoped world.
+ * only the holder can tear this agent down. The exact registered Driver
+ * generation is also a structural owner because the scoped Agent depends on
+ * that provider; unload stops, drains, and unwinds every live handle it made
+ * before detaching the Agent and Session registry entries.
  *
  * `ctx.agents.get(id)` still returns a bare {@link Agent} — the handle is
  * exposed only to the consumer owner that created it; the structural provider
@@ -46,9 +45,9 @@ interface AgentHandle {
 }
 ```
 
-`CreateAgentOptions` carries the shared identity and everything a fresh agent needs before publication: session metadata (`meta` — validated `cwd`, fork lineage, seed boundary, origin classification, delegation depth), an optional `seed` replay prefix for forks, per-agent `AgentOptions`, a creation-only cancellation `signal`, and `setup`. `ResumeAgentOptions` is the persisted-identity counterpart: `resumeSessionId`, `agentOptions`, `signal`, and `setup`. The `setup` callback (`AgentSetup`) composes the agent's scoped world while both ids are still unpublished — everything registered through `agentCtx` exists before `agent/created` and the first prompt assembly — and may return a synchronous commit invoked immediately before publication; a setup rejection, commit throw, or owner disposal rolls the transaction back without publishing either id.
+`CreateAgentOptions` carries the shared identity, optional `driverId`, session metadata (`meta` — validated `cwd`, fork lineage, seed boundary, origin classification, delegation depth), an optional `seed` replay prefix, per-agent `AgentOptions`, a creation-only cancellation `signal`, and `setup`. `ResumeAgentOptions` omits Driver selection because the restored `SessionHeader.driverId` is authoritative. The `setup` callback composes the fresh scoped world while both ids remain unpublished and may return a synchronous commit invoked immediately before final entry.
 
-`AgentFactory` is the creation interface behind the registry: the loop registers its factory via `ctx.agents.setFactory()`, so consumers use `ctx.agents` without depending on the concrete loop package. The exact `create`/`resume` signatures and rollback contracts are in the [generated section](#ctxagents--agentregistry) below.
+`AgentDriver` exposes immutable `{ id, name }` discovery information plus one preparation operation that returns the unpublished Agent and narrow start/dispose hooks. `AgentRegistry` owns Session preparation, setup/commit, ordered Session/Agent publication, `agent/session-start`, rollback, exact Driver-generation and caller ownership, cancellation, quiescent scope teardown, registry detach, and same-id retirement. The exact methods are in the [generated section](#ctxagents--agentregistry) below.
 
 ## The agent handle
 
@@ -344,35 +343,17 @@ Source: [`packages/core/agent-default-model/src/index.ts`](../../packages/core/a
 
 ### `ctx.agentLoop` — `AgentLoop`
 
-Concrete agent factory and driver service.
+Declarative launcher and public helper for the built-in DSH Agent Driver.
 
 ```ts cordis-catalog
 /**
- * Create an agent and session under one caller-supplied identity, owned by
- * the accessing fiber. Constructor-driven config calls mint a fresh combined
- * id before entering this boundary.
- * @param id - shared agent/session identity.
- * @param options - concrete loop options.
- * @param meta - optional fresh-session workspace metadata.
- * @returns the published running agent.
+ * Create one DSH-driven Agent through the generic registry.
+ * @param id - shared Agent and Session identity.
+ * @param options - initial loop options.
+ * @param meta - optional fresh Session workspace metadata.
+ * @returns the published Agent.
  */
-create(id: SessionId, options: AgentOptions = {}, meta: Pick<SessionHeader, 'cwd'> = {}): Agent
-
-/**
- * Create an owned agent on a caller-supplied session id.
- * @param ownerCtx - caller context that structurally owns the lifecycle.
- * @param options - identities, session seed/metadata, loop options, setup, and cancellation.
- * @returns the published handle.
- */
-async createAgent(ownerCtx: Context, options: CreateAgentOptions): Promise<AgentHandle>
-
-/**
- * Resume an owned agent from the configured persistence service.
- * @param ownerCtx - caller context that owns load, setup, and the live lifecycle.
- * @param options - persisted identity, loop options, setup, and cancellation.
- * @returns the published handle.
- */
-async resume(ownerCtx: Context, options: ResumeAgentOptions): Promise<AgentHandle>
+async create(id: SessionId, options: AgentOptions = {}, meta: Pick<SessionHeader, 'cwd'> = {}): Promise<Agent>
 ```
 
 Types: [SessionHeader](persistence.md)
@@ -554,7 +535,7 @@ Source: [`packages/preset/agent-presets/src/index.ts`](../../packages/preset/age
 
 ### `ctx.agents` — `AgentRegistry`
 
-Agent service (`ctx.agents`): tracks live agents and carries the initiating Agent through one process-local asynchronous driver chain. Agent *creation* is provided by whichever plugin implements the AgentFactory (`@deepseek-ai/dsh-agent-loop`), registered via setFactory.
+Agent service (`ctx.agents`): tracks live agents, registered Agent Drivers, and the initiating Agent through one process-local asynchronous driver chain.
 
 Initiator methods provide same-process causal attribution only. Ambient presence is neither liveness proof nor authorization; subjects and owners remain explicit, as does identity at worker, process, persistence, and wire boundaries. Returned Promise boundaries drain during teardown, except a nested lineage that starts an owning-fiber unload is excluded from its own drain.
 
@@ -609,36 +590,42 @@ withInitiator<T>(agent: Agent, operation: () => T): T
 withoutInitiator<T>(operation: () => T): T
 
 /**
- * Register the agent-creation factory (the loop calls this on construction,
- * effect-scoped). A traced Cordis service is canonicalized to its concrete
- * target; each create/resume call is then traced through that caller's
- * context so ownership follows the caller without stacking proxy layers.
- * Throws if a factory is already registered. Returns the disposer; on
- * dispose the factory slot is cleared.
- * @param factory - the loop-owned factory {@link create}/{@link resume} delegate to.
- * @returns the disposer that clears the factory slot. The exact
- *   Cordis effect disposer (single-shot): composite (generator) effects may
- *   yield it directly — exact identity nests the teardown in order.
+ * Register one named Agent Driver as a reversible provider contribution.
+ * Discovery metadata is detached, frozen, and returned in Driver-id order.
+ * Provider unload aborts unpublished work, drains every live Agent prepared by
+ * this generation, and only then removes the registration.
+ * @param driver - Driver implementation and immutable discovery metadata.
+ * @returns the exact Cordis effect disposer for the registration.
  */
-setFactory(factory: AgentFactory): () => void
+registerDriver(driver: AgentDriver): () => void
 
 /**
- * Create and publish a new agent through the registered factory.
- * Distinct from {@link register} (which records an already-constructed
- * agent): this constructs the agent and its session. Rejects if no factory is
- * registered or creation/setup fails. The resolved {@link AgentHandle} lets
- * the owner tear down exactly this agent.
- * @param options - shared identity, session seed/metadata, and agent options.
- * @returns the handle after setup, rollback-covered publication, and loop start complete.
+ * Look up immutable discovery information for one registered Driver.
+ * @param id - stable Driver id.
+ * @returns a frozen detached record, or `undefined` when inactive.
+ */
+getDriver(id: AgentDriverId): AgentDriverInfo | undefined
+
+/**
+ * List registered Drivers deterministically by id.
+ * @returns a fresh array of frozen discovery records.
+ */
+listDrivers(): AgentDriverInfo[]
+
+/**
+ * Create and publish a fresh Agent through an explicit or default Driver.
+ * The selected id is written into the immutable Session header before Driver
+ * preparation. The caller and Driver provider co-own the returned lifecycle.
+ * @param options - shared identity, Driver selection, metadata, setup, and Agent options.
+ * @returns the handle after setup, ordered publication, notification, and start.
  */
 async create(options: CreateAgentOptions): Promise<AgentHandle>
 
 /**
- * Load a persisted session and resume an agent on it through the registered
- * factory. Rejects if no factory is registered; the factory rejects if
- * session persistence is not configured or persistence/setup fails.
- * @param options - persisted identity, configuration, and optional setup.
- * @returns the handle after setup, rollback-covered publication, and loop start complete.
+ * Prepare persistence exactly once, select the Driver stored in its header,
+ * and publish a resumed Agent. A caller cannot override the durable binding.
+ * @param options - persisted identity, setup, cancellation, and Agent options.
+ * @returns the handle after load, setup, ordered publication, notification, and start.
  */
 async resume(options: ResumeAgentOptions): Promise<AgentHandle>
 
@@ -1028,14 +1015,14 @@ Source: [`packages/core/agent/src/runtime-types.ts`](../../packages/core/agent/s
 
 #### `agent-loop/config-start-failed` — emit
 
-A declarative agent entry failed before it could publish a live agent. Consumers that buffer work for the configured identity use this transient signal to reject that work instead of waiting forever. Normal factory teardown suppresses failures from the cancelled startup attempt.
+A declarative agent entry failed before it could publish a live agent. Consumers that buffer work for the configured identity use this transient signal to reject that work instead of waiting forever. Normal Driver teardown suppresses failures from the cancelled startup attempt.
 
 ```ts cordis-catalog
 /**
  * A declarative agent entry failed before it could publish a live agent.
  * Consumers that buffer work for the configured identity use this
  * transient signal to reject that work instead of waiting forever. Normal
- * factory teardown suppresses failures from the cancelled startup attempt.
+ * Driver teardown suppresses failures from the cancelled startup attempt.
  * @param payload.sessionId - exact shared agent/session identity that failed startup.
  * @param payload.error - persistence, setup, or publication failure.
  * @mode emit

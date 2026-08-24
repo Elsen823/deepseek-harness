@@ -9,13 +9,14 @@ import { performance } from 'node:perf_hooks'
 import type { DatabaseSync } from 'node:sqlite'
 import { setTimeout as delay } from 'node:timers/promises'
 import {
+  AgentDriverId,
   SessionId,
   type SessionHeader,
 } from '@deepseek-ai/dsh-session'
 import { sql } from './sql.ts'
 
 /** Current physical-record schema with packed and compressed event rows. */
-export const SCHEMA_VERSION = 17
+export const SCHEMA_VERSION = 18
 /** Application id reserved for DeepSeek Harness SQLite session databases. */
 export const SESSION_PERSISTENCE_SQLITE_APPLICATION_ID = 0x44534850
 
@@ -23,6 +24,7 @@ export const SESSION_PERSISTENCE_SQLITE_APPLICATION_ID = 0x44534850
 export interface SessionRow {
   readonly id: string
   readonly version: number
+  readonly driver_id: string
   readonly created_at: number
   readonly cwd: string | null
   readonly parent_session: string | null
@@ -206,7 +208,7 @@ function initializeDatabase(db: DatabaseSync): void {
   db.exec(sql('schema'))
   db.prepare(sql('insert-persistence-state')).run(randomUUID())
   db.exec(sql('set-application-id'))
-  db.exec(sql('set-user-version-17'))
+  db.exec(sql('set-user-version-18'))
 }
 
 let canonicalSchema: readonly SchemaObjectRow[] | undefined
@@ -294,6 +296,7 @@ export function decodeSessionRow(value: unknown): SessionRow {
   return {
     id,
     version,
+    driver_id: nonemptyStringField(row, 'driver_id'),
     created_at: nonnegativeSafeIntegerField(row, 'created_at'),
     cwd,
     parent_session: parent,
@@ -347,6 +350,7 @@ export function decodeStoreIdentity(value: unknown): string {
 export function rowToMeta(row: SessionRow): SessionHeader {
   return {
     version: row.version,
+    driverId: AgentDriverId(row.driver_id),
     id: SessionId(row.id),
     createdAt: row.created_at,
     ...row.cwd === null ? {} : { cwd: row.cwd },

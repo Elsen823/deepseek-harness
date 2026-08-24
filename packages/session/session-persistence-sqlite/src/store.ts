@@ -371,6 +371,7 @@ export class SqliteStore implements PersistenceBackend<number> {
     this.db.prepare(sql('upsert-session')).run(
       meta.id,
       meta.version,
+      meta.driverId,
       meta.createdAt,
       meta.cwd ?? null,
       meta.parentSession ?? null,

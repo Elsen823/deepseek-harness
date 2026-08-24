@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import SessionStore, { Session, SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, Session, SessionId } from '@deepseek-ai/dsh-session'
 import type { SandboxMode } from '@deepseek-ai/dsh-sandbox'
 import type { ApprovalPolicy } from '@deepseek-ai/dsh-user-approval'
 import PermissionPresetService, {
@@ -78,6 +78,19 @@ describe('effectivePermissionPreset', () => {
 })
 
 describe('PermissionPresetService', () => {
+  it('leaves alternate Agent Drivers to their native permission controls', async () => {
+    const ctx = await mounted()
+    const session = ctx.sessions.create(SessionId('codex-permissions'), {
+      meta: { driverId: AgentDriverId('codex') },
+    })
+
+    expect(session.events).toHaveLength(0)
+    expect(() => { ctx.permissionPresets.set(session, 'danger-full-access') }).toThrow(
+      'DSH permission presets are unavailable for Agent Driver "codex"',
+    )
+    expect(session.events).toHaveLength(0)
+  })
+
   it('advertises the preset table in declaration order and resolves bundles', async () => {
     const ctx = await mounted()
     expect(ctx.permissionPresets.names).toEqual(['workspace-write', 'danger-full-access'])
@@ -195,7 +208,7 @@ describe('PermissionPresetService', () => {
 describe('new-session default', () => {
   it('pins the current setting into each new session without changing earlier sessions', async () => {
     const ctx = await mountedStore()
-    const first = ctx.sessions.create(SessionId('first'))
+    const first = ctx.sessions.create(SessionId('first'), { meta: { driverId: AgentDriverId('dsh') } })
     expect(first.events.map(event => [event.type, event.data])).toEqual([
       ['permission/preset', { preset: 'workspace-write' }],
       ['sandbox/mode', { mode: 'workspace-write' }],
@@ -206,7 +219,7 @@ describe('new-session default', () => {
       defaultPreset: 'danger-full-access',
     })
     expect(ctx.permissionPresets.defaultPreset).toBe('danger-full-access')
-    const second = ctx.sessions.create(SessionId('second'))
+    const second = ctx.sessions.create(SessionId('second'), { meta: { driverId: AgentDriverId('dsh') } })
     expect(ctx.permissionPresets.current(first.events)).toBe('workspace-write')
     expect(ctx.permissionPresets.current(second.events)).toBe('danger-full-access')
     expect(second.events.map(event => event.type)).toEqual([
@@ -222,7 +235,7 @@ describe('new-session default', () => {
     const legacy = freshSession('legacy-source')
     legacy.append('turn/start', { turn: 1 })
     legacy.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
-    const resumed = ctx.sessions.create(SessionId('legacy-resumed'), { seed: legacy.events })
+    const resumed = ctx.sessions.create(SessionId('legacy-resumed'), { seed: legacy.events, meta: { driverId: AgentDriverId('dsh') } })
     expect(ctx.permissionPresets.current(resumed.events)).toBe('workspace-write')
     expect(resumed.events.slice(-3).map(event => event.type)).toEqual([
       'permission/preset', 'sandbox/mode', 'approval/policy',
@@ -234,7 +247,7 @@ describe('new-session default', () => {
     await ctx.settings.update(PERMISSION_SETTINGS_NAMESPACE, {
       defaultPreset: 'danger-full-access',
     })
-    const resumed = ctx.sessions.create(SessionId('empty-resumed'), { seed: [] })
+    const resumed = ctx.sessions.create(SessionId('empty-resumed'), { seed: [], meta: { driverId: AgentDriverId('dsh') } })
     expect(ctx.permissionPresets.current(resumed.events)).toBe('workspace-write')
     expect(resumed.events.map(event => event.type)).toEqual([
       'session/end-seed', 'permission/preset', 'sandbox/mode', 'approval/policy',
@@ -251,7 +264,7 @@ describe('new-session default', () => {
       start() { throw new Error('permission tests do not execute bash') },
     })
     ctx.provide('approval', { config: { policy: 'ask' } })
-    const existing = ctx.sessions.create(SessionId('existing-before-permission'))
+    const existing = ctx.sessions.create(SessionId('existing-before-permission'), { meta: { driverId: AgentDriverId('dsh') } })
     expect(existing.events).toEqual([])
 
     await ctx.plugin(PermissionPresetService, {})
@@ -266,7 +279,7 @@ describe('new-session default', () => {
     const partial = freshSession('partial-source')
     partial.append('sandbox/mode', { mode: 'workspace-write' })
     partial.append('approval/policy', { policy: 'ask' })
-    const resumed = ctx.sessions.create(SessionId('partial-resumed'), { seed: partial.events })
+    const resumed = ctx.sessions.create(SessionId('partial-resumed'), { seed: partial.events, meta: { driverId: AgentDriverId('dsh') } })
     expect(resumed.events.at(-1)).toMatchObject({
       type: 'permission/preset',
       data: { preset: 'workspace-write' },
@@ -275,7 +288,7 @@ describe('new-session default', () => {
     const custom = freshSession('custom-source')
     custom.append('sandbox/mode', { mode: 'read-only' })
     custom.append('approval/policy', { policy: 'never' })
-    const unmatched = ctx.sessions.create(SessionId('custom-resumed'), { seed: custom.events })
+    const unmatched = ctx.sessions.create(SessionId('custom-resumed'), { seed: custom.events, meta: { driverId: AgentDriverId('dsh') } })
     expect(ctx.permissionPresets.current(unmatched.events)).toBe(CUSTOM_PRESET)
     expect(unmatched.events.at(-1)?.type).toBe('session/end-seed')
   })
@@ -284,7 +297,7 @@ describe('new-session default', () => {
     const ctx = await mountedStore({ approvalDefault: undefined })
     const partial = freshSession('approval-fallback-source')
     partial.append('sandbox/mode', { mode: 'workspace-write' })
-    const resumed = ctx.sessions.create(SessionId('approval-fallback-resumed'), { seed: partial.events })
+    const resumed = ctx.sessions.create(SessionId('approval-fallback-resumed'), { seed: partial.events, meta: { driverId: AgentDriverId('dsh') } })
     expect(resumed.events.at(-1)).toMatchObject({
       type: 'approval/policy',
       data: { policy: 'ask' },

@@ -9,7 +9,7 @@ import type { z as zCore } from 'zod'
 type ZodIssue = zCore.core.$ZodIssue
 import type { Branded } from '@deepseek-ai/dsh-brand'
 import type { MessageId } from '@deepseek-ai/dsh-llm/brand'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { AgentDriverId, SessionId } from '@deepseek-ai/dsh-session/types'
 
 /**
  * Message correlation id: the initiator mints it on a request; a response
@@ -35,8 +35,14 @@ export interface RpcErrorDetailsMap {
   'session-not-found': { sessionId: SessionId }
   'model-unavailable': { provider: string; model: string }
   'session-conflict': { sessionId: SessionId; requestedCwd: string; existingCwd?: string }
+  'agent-driver-not-found': { driverId: AgentDriverId }
+  'agent-driver-conflict': {
+    sessionId: SessionId
+    requestedDriverId: AgentDriverId
+    existingDriverId: AgentDriverId
+  }
   'invalid-time-zone': { value: string }
-  'workspace-attach-failed': { sessionId: SessionId; workspaceId: string }
+  'workspace-attach-failed': { sessionId: SessionId; workspaceId: string; driverId: AgentDriverId }
   'workspace-not-found': { workspaceId: string }
   'workspace-invalid-path': { path: string }
   'workspace-name-conflict': { name: string }

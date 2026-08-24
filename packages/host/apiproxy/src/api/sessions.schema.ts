@@ -6,13 +6,15 @@
  */
 
 import { z } from 'zod'
-import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session/types'
+import type { AgentDriverId, SessionEvent, SessionId } from '@deepseek-ai/dsh-session/types'
+import type { SessionRuntimeStatus } from '@deepseek-ai/dsh-session-runtime/types'
 import type { MessageId } from '@deepseek-ai/dsh-llm/brand'
 import type { RequestPayload, ResponseValue } from './rpc-map.ts'
 import type { Wire } from './rpc.schema.ts'
 import type {
-  HistoryEntry, ModelCatalogFailure, ModelCatalogModel, ModelProviderGroup, ModelReasoning,
-  ModelReasoningEffort, ModelSelection, SessionListMetadata, SessionProjectionsBlock, SessionSearchItem, SessionSummary,
+  AgentDriverCatalog, AgentDriverCatalogItem, HistoryEntry, ModelCatalogFailure, ModelCatalogModel,
+  ModelProviderGroup, ModelReasoning, ModelReasoningEffort, ModelSelection, SessionListMetadata,
+  SessionProjectionsBlock, SessionSearchItem, SessionSummary,
 } from './sessions.ts'
 import type { ToolEventView } from './events.ts'
 import type { AttachmentIdType, ImageAttachmentLimits, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
@@ -25,6 +27,9 @@ import {
 
 /** SessionId: one brand cast after schema validation (the only cast point in this domain). */
 export const sessionIdSchema = z.string().min(1) as unknown as z.ZodType<SessionId>
+
+/** AgentDriverId: one brand cast after non-empty string validation. */
+export const agentDriverIdSchema = z.string().min(1) as unknown as z.ZodType<AgentDriverId>
 
 /** MessageId: one brand cast after non-empty string validation. */
 export const messageIdSchema = z.string().min(1) as unknown as z.ZodType<MessageId>
@@ -48,9 +53,32 @@ export const sessionEventSchema = z.object({
   ignorable: z.literal(true).optional(),
 }) as unknown as z.ZodType<SessionEvent>
 
+/** Process-local Session runtime snapshot. Driver details stay lossless and open. */
+export const sessionRuntimeStatusSchema = z.object({
+  sessionId: sessionIdSchema,
+  driverId: agentDriverIdSchema,
+  availability: z.discriminatedUnion('kind', [
+    z.object({ kind: z.literal('cold') }),
+    z.object({ kind: z.literal('activating'), phase: z.string().min(1) }),
+    z.object({ kind: z.literal('available') }),
+    z.object({
+      kind: z.literal('unavailable'),
+      reason: z.object({ code: z.string().min(1), message: z.string(), retryable: z.boolean() }),
+    }),
+  ]),
+  activity: z.union([z.literal('idle'), z.literal('running')]).optional(),
+  attention: z.object({ approvals: z.number().int().nonnegative(), userInputs: z.number().int().nonnegative() }),
+  operation: z.string().min(1),
+  detail: z.object({ kind: z.string().min(1), data: z.unknown() }).optional(),
+  revision: z.number().int().nonnegative(),
+  updatedAt: z.number(),
+}) as unknown as z.ZodType<Wire<SessionRuntimeStatus>>
+
 /** SessionSummary row of session.list (`projections` reuses the history block's shape and schema). */
 export const sessionSummarySchema = z.object({
   sessionId: sessionIdSchema,
+  driverId: agentDriverIdSchema,
+  runtime: sessionRuntimeStatusSchema.optional(),
   updatedAt: z.number(),
   running: z.boolean(),
   blank: z.boolean(),
@@ -60,6 +88,21 @@ export const sessionSummarySchema = z.object({
   agentPreset: z.string().optional(),
   projections: z.lazy(() => sessionProjectionsBlockSchema).optional(),
 }) as unknown as z.ZodType<Wire<SessionSummary>>
+
+/** One active Driver catalog row. */
+export const agentDriverCatalogItemSchema = z.object({
+  id: agentDriverIdSchema,
+  name: z.string().min(1),
+}) satisfies z.ZodType<Wire<AgentDriverCatalogItem>>
+
+/** session.drivers request payload. */
+export const sessionDriversRequestSchema = z.object({}) satisfies z.ZodType<Wire<RequestPayload<'session.drivers'>>>
+
+/** session.drivers response value. */
+export const sessionDriversValueSchema = z.object({
+  defaultId: agentDriverIdSchema,
+  items: z.array(agentDriverCatalogItemSchema),
+}) satisfies z.ZodType<Wire<AgentDriverCatalog>>
 
 /** session.list request payload (cursor is a reserved seat, unimplemented in v1). */
 export const sessionListRequestSchema = z.object({
@@ -103,6 +146,7 @@ export const sessionCreateRequestSchema = z.object({
   workspaceId: workspaceIdSchema.optional(),
   cwd: z.string().optional(),
   sessionId: sessionIdSchema.optional(),
+  driverId: agentDriverIdSchema.optional(),
   agentPreset: z.string().optional(),
 }).refine(
   payload => payload.workspaceId === undefined || payload.cwd === undefined,
@@ -112,6 +156,7 @@ export const sessionCreateRequestSchema = z.object({
 /** session.create response value. */
 export const sessionCreateValueSchema = z.object({
   sessionId: sessionIdSchema,
+  driverId: agentDriverIdSchema,
   agentPreset: z.string().optional(),
 }) satisfies z.ZodType<Wire<ResponseValue<'session.create'>>>
 
@@ -131,11 +176,13 @@ export const sessionRenameValueSchema = z.object({
 export const sessionForkRequestSchema = z.object({
   sessionId: sessionIdSchema,
   atSeq: z.number().int().nonnegative().optional(),
+  driverId: agentDriverIdSchema.optional(),
 }) satisfies z.ZodType<Wire<RequestPayload<'session.fork'>>>
 
 /** session.fork response value (the child session id). */
 export const sessionForkValueSchema = z.object({
   sessionId: sessionIdSchema,
+  driverId: agentDriverIdSchema,
 }) satisfies z.ZodType<Wire<ResponseValue<'session.fork'>>>
 
 /** session.history request payload (beforeSeq/maxMessages page backwards from the window tail). */

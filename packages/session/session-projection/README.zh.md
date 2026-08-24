@@ -31,7 +31,7 @@
 
 ## 职责
 
-本包承担能力 seam 的 Service Definition 与驱动角色：领域 host 插件（如 `dsh-tool-todo`）贡献单元，载体（`dsh-host-apiproxy`）消费快照与变更流，两侧互不相识。
+本包承担能力 seam 的 Service Definition 与驱动角色：领域 Service Provider（如 `dsh-todo`）贡献单元，载体（`dsh-host-apiproxy`）消费快照与变更流，两侧互不相识。
 
 ## 模型体验
 

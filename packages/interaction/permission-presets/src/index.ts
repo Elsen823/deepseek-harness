@@ -11,6 +11,7 @@
  */
 
 import { Context, Service } from '@deepseek-ai/cordis'
+import { DSH_AGENT_DRIVER_ID } from '@deepseek-ai/dsh-agent'
 import z from '@deepseek-ai/schemastery'
 import { z as zod } from 'zod'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
@@ -170,7 +171,8 @@ export interface Config {
 /**
  * Owns the deployment's permission presets and their write path. Requires a
  * confining `ctx.shell` executor and `ctx.approval`; unmatched knob values are
- * reported as {@link CUSTOM_PRESET}, not an error.
+ * reported as {@link CUSTOM_PRESET}, not an error. It owns only built-in `dsh`
+ * Sessions; alternate Drivers retain their native permission controls.
  */
 export class PermissionPresetService extends Service {
   // Inline schema call: the config catalog walks `static Config` statically.
@@ -234,10 +236,10 @@ export class PermissionPresetService extends Service {
     })
 
     ctx.on('session/created', (session) => {
-      this.pinInitialPermission(session)
+      if (session.header.driverId === DSH_AGENT_DRIVER_ID) this.pinInitialPermission(session)
     })
     for (const session of ctx.sessions.list()) {
-      this.pinInitialPermission(session)
+      if (session.header.driverId === DSH_AGENT_DRIVER_ID) this.pinInitialPermission(session)
     }
 
     // The permissions projection unit: fold the three whole-value knob
@@ -279,6 +281,9 @@ export class PermissionPresetService extends Service {
         // surface that renders `name · text` (the web command row) would
         // otherwise read `permission · Permission preset: workspace-write.`
         handler: ({ agent, rawInput }) => {
+          if (agent.session.header.driverId !== DSH_AGENT_DRIVER_ID) {
+            return { kind: 'error', text: `DSH permission presets are unavailable for Agent Driver "${agent.session.header.driverId}".` }
+          }
           const name = rawInput.trim()
           if (name === '') {
             return { kind: 'success', text: `current preset ${this.current(agent.session.events)} (available: ${this.names.join(', ')})` }
@@ -387,8 +392,12 @@ export class PermissionPresetService extends Service {
    * setter. Selecting the effective preset again appends nothing.
    * @param session - the session the switch belongs to.
    * @param name - the preset to switch to; unknown names throw.
+   * @throws when the Session is bound to an alternate Agent Driver.
    */
   set(session: Session, name: string): void {
+    if (session.header.driverId !== DSH_AGENT_DRIVER_ID) {
+      throw new Error(`DSH permission presets are unavailable for Agent Driver "${session.header.driverId}"`)
+    }
     this.apply(session, name, (policy) =>{  setApprovalPolicy(session, policy) })
   }
 

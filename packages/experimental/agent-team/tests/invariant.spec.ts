@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import InvariantService, { InvariantError } from '@deepseek-ai/dsh-invariants'
-import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, SessionId } from '@deepseek-ai/dsh-session'
 import * as TeamInvariant from '../src/invariant.ts'
 import { TeamId, TeamTaskId } from '../src/types.ts'
 
@@ -16,7 +16,7 @@ async function setup(): Promise<Context> {
 describe('Agent Teams stream invariant', () => {
   it('accepts provisioning and rejects a terminal member as the first edge', async () => {
     const ctx = await setup()
-    const session = ctx.sessions.create(SessionId('team-invariant'))
+    const session = ctx.sessions.create(SessionId('team-invariant'), { meta: { driverId: AgentDriverId('dsh') } })
     const member = {
       id: SessionId('team-invariant-child'),
       name: 'worker',
@@ -29,7 +29,7 @@ describe('Agent Teams stream invariant', () => {
       session.append('team/member', { version: 1, teamId: TeamId(session.id), member })
     }).not.toThrow()
 
-    const invalid = ctx.sessions.create(SessionId('team-invariant-invalid'))
+    const invalid = ctx.sessions.create(SessionId('team-invariant-invalid'), { meta: { driverId: AgentDriverId('dsh') } })
     expect(() => {
       invalid.append('team/member', {
         version: 1,
@@ -45,7 +45,7 @@ describe('Agent Teams stream invariant', () => {
 
   it('rejects an invalid task dependency before publication', async () => {
     const ctx = await setup()
-    const session = ctx.sessions.create(SessionId('team-task-invariant'))
+    const session = ctx.sessions.create(SessionId('team-task-invariant'), { meta: { driverId: AgentDriverId('dsh') } })
 
     expect(() => {
       session.append('team/task', {

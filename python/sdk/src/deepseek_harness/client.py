@@ -15,7 +15,15 @@ from typing import Callable, TypeAlias, TypeVar
 from pydantic import BaseModel
 
 from .errors import JsonRpcError, TransportClosedError
-from .models import IncomingRequest, InitializeResponse, JsonObject, JsonValue, Notification
+from .models import (
+    AgentDriverCatalog,
+    IncomingRequest,
+    InitializeResponse,
+    JsonObject,
+    JsonValue,
+    Notification,
+    SessionRuntimeResponse,
+)
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
 NotificationFilter: TypeAlias = Callable[[Notification], bool]
@@ -121,6 +129,7 @@ class HarnessClient:
         provider: str,
         model: str,
         max_tokens: int | None = None,
+        driver_id: str | None = None,
     ) -> InitializeResponse:
         payload: JsonObject = {
             "cwd": str(Path(cwd).resolve()),
@@ -129,21 +138,38 @@ class HarnessClient:
         }
         if max_tokens is not None:
             payload["maxTokens"] = max_tokens
+        if driver_id is not None:
+            payload["driverId"] = driver_id
         try:
             return self.request("initialize", payload, response_model=InitializeResponse)
         except BaseException:
             self.close()
             raise
 
+    def drivers(self) -> AgentDriverCatalog:
+        """Return the active Agent Driver catalog."""
+        return self.request("agent/drivers", None, response_model=AgentDriverCatalog)
+
+    def runtime(self, session_id: str) -> SessionRuntimeResponse:
+        """Return one process-local Session runtime value without activating it."""
+        return self.request(
+            "session/runtime",
+            {"sessionId": session_id},
+            response_model=SessionRuntimeResponse,
+        )
+
     def session_prompt(
         self,
         session_id: str,
         content_blocks: list[JsonObject],
         *,
+        driver_id: str | None = None,
         on_notification: Callable[[Notification], None] | None = None,
         notification_subscription: "NotificationSubscription | None" = None,
     ) -> str:
         payload: JsonObject = {"sessionId": session_id, "contentBlocks": content_blocks}
+        if driver_id is not None:
+            payload["driverId"] = driver_id
         response = self.request(
             "session/prompt",
             payload,
@@ -482,7 +508,8 @@ class HarnessClient:
                 ):
                     return True
                 return payload.get("childSessionId") == session_id
-            related_id = payload.get("sessionId")
+            status = payload.get("status") if notification.method == "session.runtime" else None
+            related_id = status.get("sessionId") if isinstance(status, dict) else payload.get("sessionId")
             return (
                 isinstance(related_id, str)
                 and self._session_is_descendant_of(related_id, session_id)

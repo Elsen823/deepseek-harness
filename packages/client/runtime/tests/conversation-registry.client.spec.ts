@@ -8,7 +8,7 @@ import type {
 } from '../src/client/contract/conversation.ts'
 import { Session } from '../src/client/sessions/session.ts'
 import { SessionRuntime } from '../src/client/sessions/service.ts'
-import { FakeApiClient, fakeRemote, ok } from './fake-api.client.ts'
+import { DRIVER_ID, FakeApiClient, fakeRemote, ok } from './fake-api.client.ts'
 
 function eventDefinition(kind: string): ConversationNodeDefinition<null> {
   return {
@@ -143,7 +143,7 @@ describe('Conversation registries', () => {
     const api = new FakeApiClient()
     const sessionId = 'resident' as SessionId
     api.onList = () => Promise.resolve(ok({
-      items: [{ sessionId, updatedAt: 1, running: false, blank: true }],
+      items: [{ sessionId, driverId: DRIVER_ID, updatedAt: 1, running: false, blank: true }],
     }) as never)
     const sessions = new SessionRuntime(ctx, api, fakeRemote())
     await sessions.refresh()

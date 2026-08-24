@@ -2,8 +2,8 @@
  * Keyless snapshot coverage for the TypeScript SDK path: each scenario spawns
  * the REAL `dsh-jsonrpc-agent` runtime (per `DSH_EXAMPLE_MODE`) through the
  * REAL `@deepseek-ai/dsh-sdk-client`, drives one turn over stdio JSON-RPC,
- * and pins the SDK `RunResult`, the complete notification stream, and the
- * persisted session logs. Replay serves recorded model
+ * and pins the Driver catalog, immutable Session binding, runtime current value,
+ * SDK `RunResult`, complete notification stream, and persisted session logs. Replay serves recorded model
  * responses via `llm-replay` (`cordis.snapshot.yml`); `DSH_SNAPSHOT=record`
  * re-records against the live API; `DSH_SNAPSHOT=refresh` replays committed
  * fixtures and rewrites expected outputs.
@@ -29,7 +29,13 @@ import {
   type NormalizeContext,
 } from '@deepseek-ai/dsh-acp-snapshot'
 import { resolveExampleLaunch } from '@deepseek-ai/dsh-loader-smoke'
-import { DeepSeekHarness, type HarnessNotification, type RunResult } from '@deepseek-ai/dsh-sdk-client'
+import {
+  DeepSeekHarness,
+  type AgentDriverCatalogResult,
+  type HarnessNotification,
+  type RunResult,
+  type SessionRuntimeResult,
+} from '@deepseek-ai/dsh-sdk-client'
 
 const testsDir = dirOf(import.meta.url)
 const snapshotsDir = join(testsDir, 'snapshots')
@@ -245,6 +251,13 @@ function normalizeNotifications(notifications: readonly HarnessNotification[], c
     )).trimEnd().split('\n').map(line => JSON.parse(line) as Record<string, unknown>)
   let eventIndex = 0
   const records = notifications.map((notification) => {
+    if (notification.method === 'session.runtime') {
+      const status = notification.params.status as Record<string, unknown>
+      return {
+        method: notification.method,
+        params: { ...notification.params, status: { ...status, updatedAt: 0 } },
+      }
+    }
     if (notification.method !== 'session.event') return { method: notification.method, params: notification.params }
     const event = normalizedEvents[eventIndex++]
     return { method: notification.method, params: { ...notification.params, event } }
@@ -263,6 +276,9 @@ function normalizeResult(result: RunResult, ctx: NormalizeContext): string {
 /** One SDK turn against a fresh runtime subprocess in an isolated cwd. */
 async function runScenario(scenario: SdkScenario): Promise<{
   result: RunResult
+  drivers: AgentDriverCatalogResult
+  runtimeBefore: SessionRuntimeResult
+  runtimeAfter: SessionRuntimeResult
   notifications: HarnessNotification[]
   logs: PersistedLog[]
   observedFiles: Record<string, string | MissingFile>
@@ -308,10 +324,13 @@ async function runScenario(scenario: SdkScenario): Promise<{
   })
   try {
     const notifications: HarnessNotification[] = []
+    const drivers = await harness.drivers()
+    const runtimeBefore = await harness.runtime(scenario.sessionId)
     const result = await harness.run(scenario.prompt.replaceAll('{{cwd}}', cwd), {
       sessionId: scenario.sessionId,
       onNotification: (notification) => { notifications.push(notification) },
     })
+    const runtimeAfter = await harness.runtime(scenario.sessionId)
     await harness.close()
     const logs = await persistedLogs(sessionsRoot)
     const observedFiles = Object.fromEntries(await Promise.all(
@@ -320,7 +339,7 @@ async function runScenario(scenario: SdkScenario): Promise<{
         await readExpectedFile(join(cwd, path)),
       ]),
     ))
-    return { result, notifications, logs, observedFiles, cwd }
+    return { result, drivers, runtimeBefore, runtimeAfter, notifications, logs, observedFiles, cwd }
   } finally {
     await harness.close()
     await rm(cwd, { recursive: true, force: true })
@@ -352,7 +371,9 @@ describe('TypeScript SDK snapshots over the jsonrpc runtime', () => {
       const notificationsExpectedPath = join(scenarioDir, 'notifications.expected.jsonl')
       const resultExpectedPath = join(scenarioDir, 'result.expected.json')
 
-      const { result, notifications, logs, observedFiles, cwd } = await runScenario(scenario)
+      const {
+        result, drivers, runtimeBefore, runtimeAfter, notifications, logs, observedFiles, cwd,
+      } = await runScenario(scenario)
       const ordered = orderLogs(logs, scenario)
       const actualContext = contextOf(ordered, cwd)
       const files = fixtureFiles(scenario)
@@ -423,11 +444,28 @@ describe('TypeScript SDK snapshots over the jsonrpc runtime', () => {
       expect(normalizedNotifications).toBe(await readFile(notificationsExpectedPath, 'utf8'))
       expect(normalizedResult).toBe(await readFile(resultExpectedPath, 'utf8'))
 
+      // Driver discovery, immutable binding, and process-local runtime are real assembled values.
+      expect(drivers.defaultId).toBe('dsh')
+      expect(drivers.items).toContainEqual({ id: 'dsh', name: 'DeepSeek Harness' })
+      expect(runtimeBefore).toEqual({ status: null })
+      expect(runtimeAfter).toMatchObject({
+        status: {
+          sessionId: scenario.sessionId,
+          driverId: 'dsh',
+          availability: { kind: 'available' },
+          activity: 'idle',
+          attention: { approvals: 0, userInputs: 0 },
+          operation: 'conversation',
+        },
+      })
+      expect(ordered[0]?.header.driverId).toBe('dsh')
+
       // Wire-shape invariants that must hold in every mode.
-      expect(notifications.at(-1)).toMatchObject({
+      expect(notifications.findLast(notification => notification.method === 'session.status')).toMatchObject({
         method: 'session.status',
         params: { status: 'idle' },
       })
+      expect(notifications.some(notification => notification.method === 'session.runtime')).toBe(true)
       expect(observedFiles).toEqual(scenario.expectedFiles ?? {})
       if (scenario.expectedTools !== undefined) {
         const parent = ordered[0]

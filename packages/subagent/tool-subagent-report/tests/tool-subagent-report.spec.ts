@@ -75,7 +75,7 @@ async function setup(options: { load?: boolean; config?: tool.Config } = {}) {
     : await ctx.plugin(tool, options.config ?? { reportDelivery: 'quiet' })
   const adapter = new HeldAdapter()
   ctx.llm.registerAdapter(['mock'], adapter)
-  const parent = ctx.agentLoop.create(SessionId('parent'), { provider: 'mock', model: 'mock' })
+  const parent = await ctx.agentLoop.create(SessionId('parent'), { provider: 'mock', model: 'mock' })
   cleanups.push(async () => {
     adapter.release()
     await ctx.fiber.dispose()
@@ -269,6 +269,7 @@ describe('dsh-tool-subagent-report', () => {
     expect((await callReport(ctx, child, 'ORDERED_REPORT')).isError).toBe(false)
     adapter.release(started.childId)
     await vi.waitFor(() => { expect(ctx.agents.get(started.childId)).toBeUndefined() })
+    await vi.waitFor(() => { expect(parent.inbox.nextStep).toHaveLength(2) })
 
     expect(parent.inbox.nextStep.map(message => message.source.kind)).toEqual([
       'subagent-report',

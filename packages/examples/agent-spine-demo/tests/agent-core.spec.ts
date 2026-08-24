@@ -7,7 +7,7 @@ import Loader from '@deepseek-ai/cordis-plugin-loader'
 import { renderPrompt, TOOL_ORDER_REST } from '@deepseek-ai/dsh-system-prompt'
 import * as agentCore from '../src/index.ts'
 import { agentEvents, type Agent } from '@deepseek-ai/dsh-agent'
-import { SessionId } from '@deepseek-ai/dsh-session'
+import { AgentDriverId, SessionId } from '@deepseek-ai/dsh-session'
 import LocalBashExecutor from '@deepseek-ai/dsh-bash-local'
 import LocalFileSystem from '@deepseek-ai/dsh-fs-local'
 import * as ToolFs from '@deepseek-ai/dsh-tool-fs'
@@ -38,7 +38,7 @@ declare module '@deepseek-ai/dsh-jobs' {
 }
 
 async function composePrefix(ctx: Context, cwd: string): Promise<Message[]> {
-  const agent = ctx.agentLoop.create(SessionId('agent-spine-prefix'), {}, { cwd })
+  const agent = await ctx.agentLoop.create(SessionId('agent-spine-prefix'), {}, { cwd })
   const signal = new AbortController().signal
   const decision = await agentEvents(ctx, agent).waterfall(
     'agent/pre-step', { messages: [], turn: 1, step: 1, signal },
@@ -172,7 +172,9 @@ describe('dsh-agent-spine-demo bundle', () => {
         maxTitleBytes: 80,
       },
     })
-    const session = ctx.sessions.create(SessionId('configured-title-limits'))
+    const session = ctx.sessions.create(SessionId('configured-title-limits'), {
+      meta: { driverId: AgentDriverId('dsh') },
+    })
     session.append('turn/start', {
       turn: 1,
     })
@@ -216,7 +218,9 @@ describe('dsh-agent-spine-demo bundle', () => {
 
   it('mounts package companions and forwards invariant selection config', async () => {
     const nestedTurn = (ctx: Context): void => {
-      const session = ctx.sessions.create()
+      const session = ctx.sessions.create(undefined, {
+        meta: { driverId: AgentDriverId('dsh') },
+      })
       session.append('turn/start', { turn: 1 })
       session.append('turn/start', { turn: 2 })
     }

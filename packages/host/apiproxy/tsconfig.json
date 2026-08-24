@@ -54,6 +54,9 @@
       "path": "../../session/session-persistence"
     },
     {
+      "path": "../../session/session-runtime"
+    },
+    {
       "path": "../../session/session-projection"
     },
     {

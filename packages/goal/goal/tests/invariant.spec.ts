@@ -7,7 +7,7 @@ import {
 } from '@deepseek-ai/dsh-goal'
 import * as GoalInvariantCompanion from '@deepseek-ai/dsh-goal/invariant'
 import InvariantRegistry, { InvariantError } from '@deepseek-ai/dsh-invariants'
-import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, SessionId } from '@deepseek-ai/dsh-session'
 
 const change: GoalSnapshotChangeMeta = {
   kind: 'goal/change',
@@ -36,7 +36,7 @@ async function setup(): Promise<Context> {
 describe('goal stream invariants', () => {
   it('accepts canonical goal snapshots and sequential admitted rounds', async () => {
     const ctx = await setup()
-    const session = ctx.sessions.create(SessionId('goal-invariant-valid'))
+    const session = ctx.sessions.create(SessionId('goal-invariant-valid'), { meta: { driverId: AgentDriverId('dsh') } })
     session.append('goal/change', change)
     session.append('turn/start', { turn: 1 })
     expect(() => {
@@ -49,7 +49,7 @@ describe('goal stream invariants', () => {
 
   it('rejects a malformed goal change before committing it and keeps the fold reusable', async () => {
     const ctx = await setup()
-    const session = ctx.sessions.create(SessionId('goal-invariant-invalid'))
+    const session = ctx.sessions.create(SessionId('goal-invariant-invalid'), { meta: { driverId: AgentDriverId('dsh') } })
     expect(() => {
       session.append('goal/change', { ...change, extra: true } as never)
     }).toThrow(expect.objectContaining<Partial<InvariantError>>({
@@ -65,7 +65,7 @@ describe('goal stream invariants', () => {
   it('reconstructs an existing durable goal before checking later rounds', async () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
-    const session = ctx.sessions.create(SessionId('goal-invariant-late-load'))
+    const session = ctx.sessions.create(SessionId('goal-invariant-late-load'), { meta: { driverId: AgentDriverId('dsh') } })
     session.append('goal/change', change)
 
     await ctx.plugin(InvariantRegistry, { enabled: true })

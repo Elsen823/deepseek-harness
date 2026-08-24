@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import InvariantRegistry, { InvariantError } from '@deepseek-ai/dsh-invariants'
-import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import * as scheduleInvariant from '../src/invariant.ts'
 import { ScheduleId } from '../src/domain.ts'
@@ -50,7 +50,9 @@ async function harness() {
 describe('Schedule package invariant', () => {
   it('accepts valid candidates and rejects invalid transitions before append', async () => {
     const { ctx } = await harness()
-    const session = ctx.sessions.create(SessionId('schedule-invariant'))
+    const session = ctx.sessions.create(SessionId('schedule-invariant'), {
+      meta: { driverId: AgentDriverId('dsh') },
+    })
     session.append('turn/start', { turn: 1 })
     session.append('schedule/change', create('schedule-1'))
     expect(session.events).toHaveLength(2)
@@ -69,7 +71,9 @@ describe('Schedule package invariant', () => {
 
   it('requires a decision time for Every dispatch and advances the live stream', async () => {
     const { ctx } = await harness()
-    const session = ctx.sessions.create(SessionId('schedule-every-invariant'))
+    const session = ctx.sessions.create(SessionId('schedule-every-invariant'), {
+      meta: { driverId: AgentDriverId('dsh') },
+    })
     session.append('schedule/change', createEvery('schedule-every'))
     expect(() => session.append('schedule/change', {
       version: 1,
@@ -92,6 +96,7 @@ describe('Schedule package invariant', () => {
     await ctx.plugin(InvariantRegistry)
     ctx.sessions.create(SessionId('schedule-invalid-seed'), {
       seed: [event({ version: 9, operation: 'delete', id: 'schedule-1' }, 0)],
+      meta: { driverId: AgentDriverId('dsh') },
     })
     await expect(ctx.plugin(scheduleInvariant).then(() => undefined)).rejects.toThrow(InvariantError)
     await ctx.fiber.dispose()
@@ -102,6 +107,7 @@ describe('Schedule package invariant', () => {
     const id = SessionId('schedule-invalid-future-seed')
     expect(() => ctx.sessions.create(id, {
       seed: [event({ version: 9, operation: 'delete', id: 'schedule-1' }, 0)],
+      meta: { driverId: AgentDriverId('dsh') },
     })).toThrow(InvariantError)
     expect(ctx.sessions.get(id)).toBeUndefined()
     await ctx.fiber.dispose()
@@ -113,7 +119,11 @@ describe('Schedule package invariant', () => {
     await ctx.plugin(InvariantRegistry)
     const child = ctx.sessions.create(SessionId('schedule-fork'), {
       seed: [event({ version: 9, operation: 'delete', id: 'parent' }, 0)],
-      meta: { parentSession: SessionId('parent'), seedLength: 1 },
+      meta: {
+        driverId: AgentDriverId('dsh'),
+        parentSession: SessionId('parent'),
+        seedLength: 1,
+      },
     })
     const fiber = await ctx.plugin(scheduleInvariant)
     child.append('schedule/change', create('child'))

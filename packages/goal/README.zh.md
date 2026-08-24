@@ -7,6 +7,7 @@ agent 会话的持久目标状态，独立于消费它的面向模型工具与�
 | 包 | 职责 | ctx 键 |
 |---|---|---|
 | [`goal/`](goal/README.zh.md) | 目标状态与生命周期 | `ctx.goals` |
+| [`objective/`](objective/README.zh.md) | Driver 中立 Objective projection，包括 DSH Goal 适配 | 无 |
 | [`goal-round-driver/`](goal-round-driver/README.zh.md) | 同会话目标续行 | 无 |
 | [`tool-goal/`](tool-goal/README.zh.md) | 面向模型的目标工具 | 无 |
 | [`command-goal/`](command-goal/README.zh.md) | 面向用户的目标命令 | 无 |

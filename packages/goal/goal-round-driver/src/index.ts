@@ -6,7 +6,7 @@
 import { isDeepStrictEqual } from 'node:util'
 import { FiberState } from '@deepseek-ai/cordis'
 import type { Context } from '@deepseek-ai/cordis'
-import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
+import { DSH_AGENT_DRIVER_ID, type Agent, type PreStepDecision } from '@deepseek-ai/dsh-agent'
 import type { GoalMessageSource, GoalRef, GoalView } from '@deepseek-ai/dsh-goal'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock, MessageId, MessageSource } from '@deepseek-ai/dsh-llm'
@@ -75,6 +75,11 @@ function renderThrown(value: unknown): string {
 /** Install automatic same-session continuation and its race fences. */
 export function apply(ctx: Context): void {
   const states = new Map<Agent, DriverState>()
+
+  /** Automatic DSH Goal rounds belong only to the built-in Driver. */
+  function owns(agent: Agent): boolean {
+    return agent.session.header.driverId === DSH_AGENT_DRIVER_ID
+  }
 
   /** Create state for an exact currently live agent. */
   function stateFor(agent: Agent): DriverState {
@@ -244,19 +249,22 @@ export function apply(ctx: Context): void {
   // plugin's own scheduling tasks settle.
   ctx.effect(function* () {
     ctx.on('agent/error', ({ agent }) => {
+      if (!owns(agent)) return
       const state = stateFor(agent)
       disarm(state)
     })
 
-    ctx.on('agent/created', ({ agent }) => { stateFor(agent) })
+    ctx.on('agent/created', ({ agent }) => { if (owns(agent)) stateFor(agent) })
     ctx.on('agent/disposed', ({ agent }) => { states.delete(agent) })
     ctx.on('agent/session-start', ({ agent }) => {
+      if (!owns(agent)) return
       const state = stateFor(agent)
       state.attempt = undefined
       state.competingQueued = false
       state.needsCheckpoint = false
     })
     ctx.on('agent/status', ({ agent, status }) => {
+      if (!owns(agent)) return
       const state = stateFor(agent)
       if (status === 'idle') {
         state.competingQueued = false
@@ -276,13 +284,14 @@ export function apply(ctx: Context): void {
       }
     })
     ctx.on('goal/changed', ({ agent }) => {
+      if (!owns(agent)) return
       const state = stateFor(agent)
       state.needsCheckpoint = true
       requestDrive(state)
     })
 
     ctx.on('agent/inbox/inserted', ({ agent, message }) => {
-      if (!agent.inbox.nextTurn.some(candidate => candidate.id === message.id)) return
+      if (!owns(agent) || !agent.inbox.nextTurn.some(candidate => candidate.id === message.id)) return
       const state = stateFor(agent)
       const attempt = state.attempt
       if (attempt !== undefined && sameQueued(message.content, message.source, attempt)) return
@@ -290,6 +299,7 @@ export function apply(ctx: Context): void {
       if (attempt?.phase === 'queued') attempt.stale = true
     })
     ctx.on('agent/inbox/claimed', ({ agent, message }) => {
+      if (!owns(agent)) return
       const state = stateFor(agent)
       const attempt = state.attempt
       if (attempt !== undefined && sameQueued(message.content, message.source, attempt)) {
@@ -297,6 +307,7 @@ export function apply(ctx: Context): void {
       }
     })
     ctx.on('agent/inbox/discarded', ({ agent, message }) => {
+      if (!owns(agent)) return
       const state = stateFor(agent)
       const attempt = state.attempt
       if (attempt !== undefined && sameQueued(message.content, message.source, attempt)) {
@@ -306,7 +317,7 @@ export function apply(ctx: Context): void {
 
     ctx.on('session/event', (session: Session, event: SessionEvent) => {
       const agent = ctx.agents.get(session.id)
-      if (agent === undefined || agent.session !== session) return
+      if (agent === undefined || agent.session !== session || !owns(agent)) return
       const state = stateFor(agent)
       switch (event.type) {
         case 'user/message':
@@ -347,6 +358,7 @@ export function apply(ctx: Context): void {
     }
 
     ctx.on('agent/pre-step', async ({ agent, messages, signal }, next): Promise<PreStepDecision> => {
+      if (!owns(agent)) return next()
       const submitted = messages.find((message): message is UserMessage & { source: GoalMessageSource } =>
         isGoalRoundSource(message.source))
       if (submitted === undefined) return next()
@@ -416,6 +428,7 @@ export function apply(ctx: Context): void {
     // Loading a lifecycle driver over existing agents never inherits hidden
     // automatic authority from an earlier producer instance.
     for (const agent of ctx.agents.list()) {
+      if (!owns(agent)) continue
       const state = stateFor(agent)
       disarm(state)
     }

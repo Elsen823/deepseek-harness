@@ -6,7 +6,8 @@
 // The ./api and ./client subpath exports are the browser-safe channels.
 
 export type {
-  ApiProxy, SessionsApi, SessionSearchItem, SessionSummary, PromptContentPart, HostApi, EventsApi, MuxFrame, HostFrame,
+  AgentDriverCatalog, AgentDriverCatalogItem, ApiProxy, SessionsApi, SessionSearchItem, SessionSummary,
+  PromptContentPart, HostApi, EventsApi, MuxFrame, HostFrame,
   ApprovalResponsePayload, QuestionResponsePayload, HistoryEntry, ToolEventView,
   DirectoryEntry, DirectoryListing,
   ResponseValue, WorkspaceApi, WorkspaceId, WorkspaceView,
@@ -34,7 +35,8 @@ export {
 } from '@deepseek-ai/dsh-host-apiproxy/api'
 export { AbstractApiClient } from '@deepseek-ai/dsh-host-apiproxy/client'
 export type { IApiClient } from '@deepseek-ai/dsh-host-apiproxy/client'
-export type { SessionId, SessionEvent } from '@deepseek-ai/dsh-session/types'
+export type { AgentDriverId, SessionId, SessionEvent } from '@deepseek-ai/dsh-session/types'
+export type { SessionRuntimeStatus } from '@deepseek-ai/dsh-session-runtime/client'
 export type { MessageId } from '@deepseek-ai/dsh-llm/brand'
 export type { ContentBlock, StreamChunk } from '@deepseek-ai/dsh-llm/types'
 

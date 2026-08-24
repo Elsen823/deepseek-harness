@@ -2,7 +2,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { describe, expect, it, vi } from 'vitest'
 import LlmRuntime, { createUserMessage, LlmAdapter  } from '@deepseek-ai/dsh-llm'
 import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
-import SessionStore, { Session, SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, Session, SessionId } from '@deepseek-ai/dsh-session'
 import SessionTitleService, { type SessionTitleProvider } from '@deepseek-ai/dsh-session-title'
 import * as providerPlugin from '@deepseek-ai/dsh-session-title-first-prompt-llm'
 
@@ -59,7 +59,7 @@ describe('first-prompt LLM title provider', () => {
     const adapter = new RecordingAdapter()
     ctx.llm.registerAdapter(['title-route'], adapter)
     await ctx.plugin(providerPlugin, LLM_CONFIG)
-    const session = ctx.sessions.create(SessionId('first-plugin'))
+    const session = ctx.sessions.create(SessionId('first-plugin'), { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', { turn: 1 })
     const first = session.append('user/message', createUserMessage({
       content: [{ type: 'text', text: 'first input' }], source: { kind: 'user' },

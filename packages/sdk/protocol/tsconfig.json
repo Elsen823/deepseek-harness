@@ -21,6 +21,9 @@
       "path": "../../core/session"
     },
     {
+      "path": "../../session/session-runtime"
+    },
+    {
       "path": "../../subagent/subagent"
     },
     {

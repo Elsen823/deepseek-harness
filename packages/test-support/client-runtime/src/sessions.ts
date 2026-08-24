@@ -4,9 +4,9 @@ import type { AttachmentIdType } from '@deepseek-ai/dsh-attachment'
 import { createScope, scopeOf, SessionProvideChannel } from '@deepseek-ai/dsh-client-runtime/client'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
 import type {
-  AgentContext, ConversationSnapshot, ISessions, ObservableSnapshot, ProjectionsFace, SessionFace, SessionId,
-  SessionListState, SessionProvideDescriptor, SessionSearchResultItem, SessionSummary, SnapshotStore,
-  SubagentAddress,
+  AgentContext, AgentDriverCatalog, AgentDriverId, ConversationSnapshot, ISessions, ObservableSnapshot,
+  ProjectionsFace, SessionFace, SessionId, SessionListState, SessionProvideDescriptor, SessionSearchResultItem,
+  SessionSummary, SnapshotStore, SubagentAddress, WorkspaceId,
 } from '@deepseek-ai/dsh-client-runtime/client'
 // The double reports the wire schema's own search bound, like the production
 // service — a transport-varying limit would be a fiction no client can see.
@@ -185,12 +185,18 @@ export class TestSessions implements ISessions {
   /** Calls observed on the service-level face, newest last. */
   readonly calls: {
     method: 'open' | 'openSubagent' | 'setSubagentCatalogOpen' | 'refreshSubagents'
-      | 'clear' | 'search' | 'fork'
+      | 'clear' | 'drivers' | 'create' | 'search' | 'fork'
     args: unknown[]
   }[] = []
 
   /** The wire schema's `session.search` result bound (production parity). */
   readonly searchResultLimit = SESSION_SEARCH_RESULT_LIMIT
+
+  /** Fixture Driver catalog used by Driver-aware feature benches. */
+  readonly driverCatalog: AgentDriverCatalog = {
+    defaultId: 'dsh' as AgentDriverId,
+    items: [{ id: 'dsh' as AgentDriverId, name: 'DeepSeek Harness' }],
+  }
 
   /** Replaceable search behavior (see {@link TestSessions.stubSearch}). */
   private searchStub: ((query: string, signal: AbortSignal) => { items: SessionSearchResultItem[]; hasMore: boolean }) | undefined
@@ -457,6 +463,37 @@ export class TestSessions implements ISessions {
     })
   }
 
+  /** Read the fixture Agent Driver catalog. */
+  drivers(): Promise<AgentDriverCatalog> {
+    this.calls.push({ method: 'drivers', args: [] })
+    return Promise.resolve(this.driverCatalog)
+  }
+
+  /**
+   * Materialize one blank Driver-bound fixture Session and select it.
+   * @param opts - optional fixture identity, workspace metadata, and Driver.
+   * @returns the created fixture Session id.
+   */
+  async create(opts: {
+    workspaceId?: WorkspaceId
+    cwd?: string
+    sessionId?: SessionId
+    driverId?: AgentDriverId
+  } = {}): Promise<SessionId> {
+    this.calls.push({ method: 'create', args: [opts] })
+    const id = opts.sessionId ?? `test-created-${this.records.size + 1}` as SessionId
+    await this.add({
+      id,
+      summary: {
+        driverId: opts.driverId ?? this.driverCatalog.defaultId,
+        ...opts.cwd === undefined ? {} : { cwd: opts.cwd },
+        blank: true,
+      },
+      snapshot: { blank: true },
+    })
+    return id
+  }
+
   /**
    * Replace the sidebar-search result page (the call is still recorded).
    * @param impl - hits for a query, as the Host would rank them.
@@ -484,7 +521,12 @@ export class TestSessions implements ISessions {
    * @param opts - source session id, optional cut anchor, and client title policy.
    * @returns the source id (no child record is created).
    */
-  fork(opts: { sessionId: SessionId; atSeq?: number; increaseTitle?: boolean }): Promise<SessionId> {
+  fork(opts: {
+    sessionId: SessionId
+    atSeq?: number
+    driverId?: AgentDriverId
+    increaseTitle?: boolean
+  }): Promise<SessionId> {
     this.calls.push({ method: 'fork', args: [opts] })
     return Promise.resolve(opts.sessionId)
   }

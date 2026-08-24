@@ -13,7 +13,7 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { describe, expect, it, vi } from 'vitest'
 import { Context, type Fiber } from '@deepseek-ai/cordis'
 import { scopeTarget } from '@deepseek-ai/dsh-scope'
-import SessionStore, { SESSION_FORMAT_VERSION, Session, SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, SESSION_FORMAT_VERSION, Session, SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import { meta, oneTurnLog, appendLog } from './contract.ts'
 
@@ -204,7 +204,7 @@ async function liveSessionInFiber(
 ): Promise<Session> {
   let session!: Session
   await ctx.plugin(Object.assign((inner: Context) => {
-    session = inner.sessions.create(SessionId(id), cwd !== undefined ? { meta: { cwd } } : undefined)
+    session = inner.sessions.create(SessionId(id), { meta: { driverId: AgentDriverId('dsh'), ...cwd === undefined ? {} : { cwd } } })
   }, { inject: ['sessions'] }))
   return session
 }
@@ -229,7 +229,7 @@ export function runCoordinatorContract(name: string, makeFixture: () => Promise<
       const fix = await makeFixture()
       const { ctx, fiber } = await freshCtx(fix)
       try {
-        const session = ctx.sessions.create(SessionId('live'), { meta: { cwd: WORK } })
+        const session = ctx.sessions.create(SessionId('live'), { meta: { driverId: AgentDriverId('dsh'), cwd: WORK } })
         send(session, oneTurnLog())
         await ctx.sessions.flush(session)
 
@@ -247,7 +247,7 @@ export function runCoordinatorContract(name: string, makeFixture: () => Promise<
       const { ctx, fiber } = await freshCtx(fix)
       let session!: Session
       const sessionFiber = await ctx.plugin(Object.assign((inner: Context) => {
-        session = inner.sessions.create(SessionId('live-load'), { meta: { cwd: WORK } })
+        session = inner.sessions.create(SessionId('live-load'), { meta: { driverId: AgentDriverId('dsh'), cwd: WORK } })
       }, { inject: ['sessions'] }))
       try {
         session.append('turn/start', { turn: 1 })
@@ -314,7 +314,7 @@ export function runCoordinatorContract(name: string, makeFixture: () => Promise<
       const fix = await makeFixture()
       const { ctx, fiber } = await freshCtx(fix)
       try {
-        const session = ctx.sessions.create(SessionId('empty-live'), { meta: { cwd: WORK } })
+        const session = ctx.sessions.create(SessionId('empty-live'), { meta: { driverId: AgentDriverId('dsh'), cwd: WORK } })
         await expect(ctx.sessionPersistence.load(session.id)).rejects.toThrow(/not found/)
       } finally {
         await fiber.dispose()
@@ -331,7 +331,7 @@ export function runCoordinatorContract(name: string, makeFixture: () => Promise<
       try {
         let session!: Session
         const sessionFiber = await ctx.plugin(Object.assign((inner: Context) => {
-          session = inner.sessions.create(SessionId('forked-child'), { meta: { cwd: WORK, seedLength: 3 } })
+          session = inner.sessions.create(SessionId('forked-child'), { meta: { driverId: AgentDriverId('dsh'), cwd: WORK, seedLength: 3 } })
         }, { inject: ['sessions'] }))
         send(session, oneTurnLog())
         await ctx.sessions.flush(session)
@@ -355,7 +355,7 @@ export function runCoordinatorContract(name: string, makeFixture: () => Promise<
         let session!: Session
         const sessionFiber = await ctx.plugin(Object.assign((inner: Context) => {
           session = inner.sessions.create(SessionId('delegated-child'), {
-            meta: { cwd: WORK, parentSession: SessionId('root'), delegationDepth: 2 },
+            meta: { driverId: AgentDriverId('dsh'), cwd: WORK, parentSession: SessionId('root'), delegationDepth: 2 },
           })
         }, { inject: ['sessions'] }))
         send(session, oneTurnLog())
@@ -374,7 +374,7 @@ export function runCoordinatorContract(name: string, makeFixture: () => Promise<
       const fix = await makeFixture()
       const { ctx, fiber } = await freshCtx(fix)
       try {
-        const session = ctx.sessions.create(SessionId('mutate'), { meta: { cwd: WORK } })
+        const session = ctx.sessions.create(SessionId('mutate'), { meta: { driverId: AgentDriverId('dsh'), cwd: WORK } })
         session.append('turn/start', { turn: 1 })
         const ev = session.append('user/message', createUserMessage({
           content: [{ type: 'text', text: 'original' }], source: { kind: 'user' },
@@ -399,7 +399,7 @@ export function runCoordinatorContract(name: string, makeFixture: () => Promise<
       const { ctx, fiber } = await freshCtx(fix)
       try {
         const id = SessionId('immutable-read')
-        const session = ctx.sessions.create(id, { meta: { cwd: WORK } })
+        const session = ctx.sessions.create(id, { meta: { driverId: AgentDriverId('dsh'), cwd: WORK } })
         send(session, oneTurnLog())
         await ctx.sessions.flush(session)
 
@@ -777,7 +777,7 @@ export function runCoordinatorContract(name: string, makeFixture: () => Promise<
       try {
         const seed = oneTurnLog()
         // A fork: a brand-new id whose seed came from elsewhere.
-        const forked = ctx.sessions.create(SessionId('forked'), { seed, meta: { cwd: WORK } })
+        const forked = ctx.sessions.create(SessionId('forked'), { seed, meta: { driverId: AgentDriverId('dsh'), cwd: WORK } })
         await ctx.sessions.flush(forked) // onCreated persisted the seed
         const loaded = await ctx.sessionPersistence.load(SessionId('forked'))
         // Fork is where the marker earns its keep: the inherited prefix may
@@ -799,7 +799,7 @@ export function runCoordinatorContract(name: string, makeFixture: () => Promise<
       const fix = await makeFixture()
       const first = await freshCtx(fix)
       try {
-        const s1 = first.ctx.sessions.create(SessionId('resumed'), { meta: { cwd: WORK } })
+        const s1 = first.ctx.sessions.create(SessionId('resumed'), { meta: { driverId: AgentDriverId('dsh'), cwd: WORK } })
         send(s1, oneTurnLog())
         await first.ctx.sessions.flush(s1)
       } finally {
@@ -809,7 +809,7 @@ export function runCoordinatorContract(name: string, makeFixture: () => Promise<
       const second = await freshCtx(fix)
       try {
         const loaded = await second.ctx.sessionPersistence.load(SessionId('resumed'))
-        const s2 = second.ctx.sessions.create(SessionId('resumed'), { seed: loaded.events, meta: { cwd: WORK } })
+        const s2 = second.ctx.sessions.create(SessionId('resumed'), { seed: loaded.events, meta: { driverId: AgentDriverId('dsh'), cwd: WORK } })
         await second.ctx.sessions.flush(s2) // let onCreated adopt
         s2.append('turn/start', { turn: 2 })
         s2.append('turn/end', { turn: 2, reason: { kind: 'completed' } })
@@ -832,7 +832,7 @@ export function runCoordinatorContract(name: string, makeFixture: () => Promise<
       const ctx = new Context()
       await ctx.plugin(SessionStore)
       // A session exists BEFORE the persistence plugin is applied.
-      const session = ctx.sessions.create(SessionId('pre-existing'), { meta: { cwd: WORK } })
+      const session = ctx.sessions.create(SessionId('pre-existing'), { meta: { driverId: AgentDriverId('dsh'), cwd: WORK } })
       session.append('turn/start', { turn: 1 })
       session.append('user/message', createUserMessage({
         content: [{ type: 'text', text: 'hi' }], source: { kind: 'user' },
@@ -981,7 +981,7 @@ export function runCoordinatorContract(name: string, makeFixture: () => Promise<
       const fix = await makeFixture()
       const first = await freshCtx(fix)
       try {
-        const s1 = first.ctx.sessions.create(SessionId('collide'), { meta: { cwd: WORK } })
+        const s1 = first.ctx.sessions.create(SessionId('collide'), { meta: { driverId: AgentDriverId('dsh'), cwd: WORK } })
         send(s1, oneTurnLog())
         await first.ctx.sessions.flush(s1)
       } finally {
@@ -993,7 +993,7 @@ export function runCoordinatorContract(name: string, makeFixture: () => Promise<
       // that initialization rejection.
       const second = await freshCtx(fix)
       try {
-        const s2 = second.ctx.sessions.create(SessionId('collide'), { meta: { cwd: WORK } })
+        const s2 = second.ctx.sessions.create(SessionId('collide'), { meta: { driverId: AgentDriverId('dsh'), cwd: WORK } })
         s2.append('turn/start', { turn: 1 })
         await expect(second.ctx.sessions.flush(s2))
           .rejects.toThrow(/already has a persisted log|id collision/)
@@ -1011,14 +1011,14 @@ export function runCoordinatorContract(name: string, makeFixture: () => Promise<
         // never materialized. A new live session reusing the id must reclaim it.
         let firstSession!: Session
         const firstFiber = await ctx.plugin(Object.assign((inner: Context) => {
-          firstSession = inner.sessions.create(SessionId('abandoned'), { meta: { cwd: WORK } })
+          firstSession = inner.sessions.create(SessionId('abandoned'), { meta: { driverId: AgentDriverId('dsh'), cwd: WORK } })
         }, { inject: ['sessions'] }))
         await ctx.sessions.flush(firstSession) // register the lazy state
         await firstFiber.dispose() // disposed before any append → never materialized
 
         let reuse!: Session
         await ctx.plugin(Object.assign((inner: Context) => {
-          reuse = inner.sessions.create(SessionId('abandoned'), { meta: { cwd: WORK } })
+          reuse = inner.sessions.create(SessionId('abandoned'), { meta: { driverId: AgentDriverId('dsh'), cwd: WORK } })
         }, { inject: ['sessions'] }))
         await expect(ctx.sessions.flush(reuse)).resolves.toBe(true)
         reuse.append('turn/start', { turn: 1 })
@@ -1038,7 +1038,7 @@ export function runCoordinatorContract(name: string, makeFixture: () => Promise<
       try {
         let first!: Session
         const firstFiber = await ctx.plugin(Object.assign((inner: Context) => {
-          first = inner.sessions.create(SessionId('buffered'), { meta: { cwd: WORK } })
+          first = inner.sessions.create(SessionId('buffered'), { meta: { driverId: AgentDriverId('dsh'), cwd: WORK } })
         }, { inject: ['sessions'] }))
         await ctx.sessions.flush(first)
         // Append a turn but do NOT flush — events sit in the write-behind buffer.
@@ -1055,7 +1055,7 @@ export function runCoordinatorContract(name: string, makeFixture: () => Promise<
 
         let reuse!: Session
         await ctx.plugin(Object.assign((inner: Context) => {
-          reuse = inner.sessions.create(SessionId('buffered'), { meta: { cwd: WORK } })
+          reuse = inner.sessions.create(SessionId('buffered'), { meta: { driverId: AgentDriverId('dsh'), cwd: WORK } })
         }, { inject: ['sessions'] }))
         await expect(ctx.sessions.flush(reuse)).rejects.toThrow(/persisted log|id collision/)
       } finally {
@@ -1068,7 +1068,7 @@ export function runCoordinatorContract(name: string, makeFixture: () => Promise<
       const fix = await makeFixture()
       const { ctx, fiber } = await freshCtx(fix)
       try {
-        const session = ctx.sessions.create(SessionId('idem'), { meta: { cwd: WORK } })
+        const session = ctx.sessions.create(SessionId('idem'), { meta: { driverId: AgentDriverId('dsh'), cwd: WORK } })
         session.append('turn/start', { turn: 1 })
         session.append('user/message', createUserMessage({
           content: [{ type: 'text', text: 'x' }], source: { kind: 'user' },
@@ -1096,7 +1096,7 @@ export function runCoordinatorContract(name: string, makeFixture: () => Promise<
         await ctx.sessionPersistence.create(meta('lazy-claim', WORK))
         // A live session with that id arrives and claims it (cursor 0 matches
         // trivially), persisting its seed.
-        const live = ctx.sessions.create(SessionId('lazy-claim'), { seed: oneTurnLog(), meta: { cwd: WORK } })
+        const live = ctx.sessions.create(SessionId('lazy-claim'), { seed: oneTurnLog(), meta: { driverId: AgentDriverId('dsh'), cwd: WORK } })
         await expect(ctx.sessions.flush(live)).resolves.toBe(true)
         const loaded = await ctx.sessionPersistence.load(SessionId('lazy-claim'))
         // Seeded 0-5 plus the constructor's end-seed event at 6.
@@ -1122,7 +1122,7 @@ export function runCoordinatorContract(name: string, makeFixture: () => Promise<
         // seq 0..cursor-1 events would otherwise be filtered as already-persisted.
         let fresh!: Session
         await ctx.plugin(Object.assign((inner: Context) => {
-          fresh = inner.sessions.create(SessionId('preview'), { meta: { cwd: WORK } })
+          fresh = inner.sessions.create(SessionId('preview'), { meta: { driverId: AgentDriverId('dsh'), cwd: WORK } })
         }, { inject: ['sessions'] }))
         await expect(ctx.sessions.flush(fresh))
           .rejects.toThrow(/do not match this live session|already has a persisted log|id collision/)
@@ -1145,7 +1145,7 @@ export function runCoordinatorContract(name: string, makeFixture: () => Promise<
         await ctx.sessionPersistence.append(id, completeSeed)
         const { events } = await ctx.sessionPersistence.load(id)
 
-        const live = ctx.sessions.create(id, { seed: events, meta: { cwd: WORK } })
+        const live = ctx.sessions.create(id, { seed: events, meta: { driverId: AgentDriverId('dsh'), cwd: WORK } })
         await expect(ctx.sessions.flush(live)).resolves.toBe(true)
         expect((await ctx.sessionPersistence.load(id)).events).toEqual(events)
       } finally {
@@ -1172,7 +1172,7 @@ export function runCoordinatorContract(name: string, makeFixture: () => Promise<
             ...events,
             { type: 'turn/start', seq: 6, time: 7, data: { turn: 2 } },
             { type: 'turn/end', seq: 7, time: 8, data: { turn: 2, reason: { kind: 'completed' } } },
-          ], meta: { cwd: WORK, createdAt: 2000 } })
+          ], meta: { driverId: AgentDriverId('dsh'), cwd: WORK, createdAt: 2000 } })
         }, { inject: ['sessions'] }))
         await ctx.sessions.flush(cont)
         const loaded = await ctx.sessionPersistence.load(SessionId('claim'))
@@ -1202,7 +1202,7 @@ export function runCoordinatorContract(name: string, makeFixture: () => Promise<
         // A live session reusing the id but at cwd WORK must NOT claim it — the
         // cwd scope is the fence (without it, WORK events would append under the
         // OTHER header). Rejected as a collision.
-        const live = ctx.sessions.create(SessionId('wrong-cwd-claim'), { seed: oneTurnLog(), meta: { cwd: WORK } })
+        const live = ctx.sessions.create(SessionId('wrong-cwd-claim'), { seed: oneTurnLog(), meta: { driverId: AgentDriverId('dsh'), cwd: WORK } })
         await expect(ctx.sessions.flush(live)).rejects.toThrow(/different cwd|id collision/)
       } finally {
         await fiber.dispose()
@@ -1220,7 +1220,7 @@ export function runCoordinatorContract(name: string, makeFixture: () => Promise<
         const { events } = await ctx.sessionPersistence.load(SessionId('wrong-cwd-load'))
         // A live session whose SEED matches the loaded prefix but whose cwd is
         // WORK must still be rejected — the cwd guard runs before the seed check.
-        const live = ctx.sessions.create(SessionId('wrong-cwd-load'), { seed: events, meta: { cwd: WORK } })
+        const live = ctx.sessions.create(SessionId('wrong-cwd-load'), { seed: events, meta: { driverId: AgentDriverId('dsh'), cwd: WORK } })
         await expect(ctx.sessions.flush(live)).rejects.toThrow(/different cwd|id collision/)
       } finally {
         await fiber.dispose()
@@ -1236,7 +1236,7 @@ export function runCoordinatorContract(name: string, makeFixture: () => Promise<
         await ctx.sessionPersistence.create(meta('no-cwd-state'))
         // A live session reusing the id but WITH cwd WORK is a cwd mismatch
         // (undefined vs WORK) and must be rejected.
-        const live = ctx.sessions.create(SessionId('no-cwd-state'), { seed: oneTurnLog(), meta: { cwd: WORK } })
+        const live = ctx.sessions.create(SessionId('no-cwd-state'), { seed: oneTurnLog(), meta: { driverId: AgentDriverId('dsh'), cwd: WORK } })
         await expect(ctx.sessions.flush(live)).rejects.toThrow(/different cwd|id collision/)
       } finally {
         await fiber.dispose()
@@ -1329,7 +1329,7 @@ export function runCoordinatorContract(name: string, makeFixture: () => Promise<
       const fix = await makeFixture()
       const { ctx, fiber } = await freshCtx(fix)
       try {
-        const m = { version: 99, id: SessionId('v99'), createdAt: 1, cwd: WORK }
+        const m = { version: 99, driverId: AgentDriverId('dsh'), id: SessionId('v99'), createdAt: 1, cwd: WORK }
         await ctx.sessionPersistence.create(m)
         await ctx.sessionPersistence.append(m.id, oneTurnLog())
         const failure = await ctx.sessionPersistence.load(m.id).then(() => undefined, (error: unknown) => error as Error)
@@ -1345,7 +1345,7 @@ export function runCoordinatorContract(name: string, makeFixture: () => Promise<
       const fix = await makeFixture()
       const { ctx, fiber } = await freshCtx(fix)
       try {
-        const m = { version: -1, id: SessionId('v-older'), createdAt: 1, cwd: WORK }
+        const m = { version: -1, driverId: AgentDriverId('dsh'), id: SessionId('v-older'), createdAt: 1, cwd: WORK }
         await ctx.sessionPersistence.create(m)
         await ctx.sessionPersistence.append(m.id, oneTurnLog())
         const failure = await ctx.sessionPersistence.load(m.id).then(() => undefined, (error: unknown) => error as Error)
@@ -1389,7 +1389,14 @@ export function runCoordinatorContract(name: string, makeFixture: () => Promise<
       const fix = await makeFixture()
       const { ctx, fiber } = await freshCtx(fix)
       try {
-        const m = { version: SESSION_FORMAT_VERSION, id: SessionId('forked-child'), createdAt: 1, cwd: WORK, parentSession: SessionId('the-parent') }
+        const m = {
+          version: SESSION_FORMAT_VERSION,
+          driverId: AgentDriverId('dsh'),
+          id: SessionId('forked-child'),
+          createdAt: 1,
+          cwd: WORK,
+          parentSession: SessionId('the-parent'),
+        }
         await ctx.sessionPersistence.create(m)
         await ctx.sessionPersistence.append(m.id, oneTurnLog())
         const loaded = await ctx.sessionPersistence.load(m.id)
@@ -1407,7 +1414,7 @@ export function runCoordinatorContract(name: string, makeFixture: () => Promise<
         // Append directly to a live session and flush IMMEDIATELY, before the
         // async onCreated init has necessarily set state (exercises the
         // state-undefined cursor path).
-        const session = ctx.sessions.create(SessionId('flush-nostate'), { meta: { cwd: WORK } })
+        const session = ctx.sessions.create(SessionId('flush-nostate'), { meta: { driverId: AgentDriverId('dsh'), cwd: WORK } })
         session.append('turn/start', { turn: 1 })
         session.append('user/message', createUserMessage({
           content: [{ type: 'text', text: 'q' }], source: { kind: 'user' },

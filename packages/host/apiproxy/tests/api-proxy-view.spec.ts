@@ -11,7 +11,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import SessionStore from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId } from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime, { defineContentToolFixture } from '@deepseek-ai/dsh-tools'
 import { CallId, createMessage, createToolResultMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
@@ -111,7 +111,7 @@ describe('mux live view computation', () => {
     const collected = collect(stream, 9, abort)
     const rawResult = `RAW_RESULT:${'x'.repeat(64 * 1024)}`
 
-    const session = ctx.sessions.create()
+    const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', { turn: 1 })
     session.append('tool/call', { turn: 1, step: 1, callId: CallId('c-gen'), name: 'gen', arguments: '{}' })
     session.append('tool/call', { turn: 1, step: 1, callId: CallId('c-term'), name: 'term', arguments: '{"cmd":"echo hi"}' })
@@ -171,7 +171,7 @@ describe('mux live view computation', () => {
   it('serves history entries with call/result views, backscan pairing, and soft-falls', async () => {
     const { ctx } = await harness()
     const api = createApiProxy(ctx, { defaultModelSelection: () => ({ provider: 'p', model: 'm' }), cwd: '/tmp' })
-    const session = ctx.sessions.create()
+    const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     // history resolves the agent first; a live structural stub is enough (only
     // .session is read on this path).
     ctx.agents.register({ id: session.id, session, status: 'idle', ctx } as Agent)
@@ -239,7 +239,7 @@ describe('mux live view computation', () => {
   it('counts only append-origin messages toward maxMessages and keeps each compaction summary with its replacement', async () => {
     const { ctx } = await harness()
     const api = createApiProxy(ctx, { defaultModelSelection: () => ({ provider: 'p', model: 'm' }), cwd: '/tmp' })
-    const session = ctx.sessions.create()
+    const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     ctx.agents.register({ id: session.id, session, status: 'idle', ctx } as Agent)
     session.append('turn/start', { turn: 1 })
     const first = appendUserText(session, 'first prompt')
@@ -288,7 +288,7 @@ describe('mux live view computation', () => {
   it('paginates a message with many provenance sources without variadic argument expansion', async () => {
     const { ctx } = await harness()
     const api = createApiProxy(ctx, { defaultModelSelection: () => ({ provider: 'p', model: 'm' }), cwd: '/tmp' })
-    const session = ctx.sessions.create()
+    const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     ctx.agents.register({ id: session.id, session, status: 'idle', ctx } as Agent)
     session.append('turn/start', { turn: 1 })
     const sources = Array.from({ length: 128 }, (_unused, index) => session.append('assistant/chunk', {
@@ -332,7 +332,7 @@ describe('mux live view computation', () => {
 
     let session: Session | undefined
     const fiber = await ctx.plugin(Object.assign((inner: Context) => {
-      session = inner.sessions.create('session-doomed' as SessionId)
+      session = inner.sessions.create('session-doomed' as SessionId, { meta: { driverId: AgentDriverId('dsh') } })
     }, { inject: ['sessions'] }))
     session?.append('turn/start', { turn: 1 })
     session?.append('tool/call', { turn: 1, step: 1, callId: CallId('c-doomed'), name: 'term', arguments: '{"cmd":"x"}' })
@@ -352,7 +352,7 @@ describe('mux live view computation', () => {
     const stream = api.events.mux({ rpcId: RpcId('t-mux2'), payload: {} }, abort.signal)
     const collected = collect(stream, 4, abort)
 
-    const session = ctx.sessions.create()
+    const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', { turn: 1 })
     session.append('tool/call', { turn: 1, step: 1, callId: CallId('c-late'), name: 'term', arguments: '{"cmd":"tail"}' })
     session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })

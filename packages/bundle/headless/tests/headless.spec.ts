@@ -3,10 +3,10 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry, { Inbox } from '@deepseek-ai/dsh-agent'
-import type { Agent, AgentHandle, CreateAgentOptions } from '@deepseek-ai/dsh-agent'
+import type { Agent, AgentDriver } from '@deepseek-ai/dsh-agent'
 import AgentDefaultModelConfig from '@deepseek-ai/dsh-agent-default-model'
 import { createAssistantMessage } from '@deepseek-ai/dsh-llm'
-import SessionStore from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId } from '@deepseek-ai/dsh-session'
 import type { Session, UserMessage } from '@deepseek-ai/dsh-session'
 import { apply, Config, internals } from '../src/index.ts'
 
@@ -56,17 +56,15 @@ async function bench(script: Script): Promise<{
   await ctx.plugin(SessionStore)
   await ctx.plugin(AgentRegistry)
   await ctx.plugin(AgentDefaultModelConfig, { provider: 'test-provider', model: 'test-model' })
-  ctx.agents.setFactory({
-    async createAgent(ownerCtx: Context, options: CreateAgentOptions): Promise<AgentHandle> {
-      const session = ctx.sessions.create(options.sessionId, {
-        ...options.meta === undefined ? {} : { meta: options.meta },
-      })
+  const driver: AgentDriver = {
+    info: { id: AgentDriverId('dsh'), name: 'Test DSH Driver' },
+    prepare(session, options) {
       let idle = Promise.resolve()
       const agent = {} as Agent
-      const agentCtx = ownerCtx.extend({ agent })
+      const agentCtx = new Context().extend({ agent })
       Object.assign(agent, {
         id: session.id,
-        options: options.agentOptions ?? {},
+        options,
         session,
         inbox: new Inbox(session, { inserted: () => {}, discarded: () => {}, claimed: () => {} }),
         status: 'idle',
@@ -82,13 +80,14 @@ async function bench(script: Script): Promise<{
         inject: () => {},
         whenIdle: () => idle,
       } satisfies Partial<Agent>)
-      await options.setup?.(agentCtx)
-      script.before?.(session)
-      ctx.agents.register(agent)
-      return { agent, dispose: () => Promise.resolve() }
+      return {
+        agent,
+        start: () => { script.before?.(session) },
+        dispose: () => agentCtx.fiber.dispose(),
+      }
     },
-    resume: () => Promise.reject(new Error('not used')),
-  })
+  }
+  ctx.agents.registerDriver(driver)
   return {
     ctx,
     run: async () => {

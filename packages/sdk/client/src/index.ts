@@ -19,6 +19,7 @@ export {
 } from './client.ts'
 export type { NotificationSubscription } from './client.ts'
 export { JsonRpcResponseError } from '@deepseek-ai/dsh-sdk-protocol'
+export type { AgentDriverCatalogItem, AgentDriverCatalogResult, SessionRuntimeResult } from '@deepseek-ai/dsh-sdk-protocol'
 export type {
   ContentBlock,
   DeepSeekHarnessOptions,

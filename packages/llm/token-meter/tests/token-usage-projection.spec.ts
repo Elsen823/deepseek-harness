@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { createMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { TokenUsage } from '@deepseek-ai/dsh-llm'
-import SessionStore from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId } from '@deepseek-ai/dsh-session'
 import type { Session } from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import TokenMeter from '@deepseek-ai/dsh-token-meter'
@@ -26,7 +26,7 @@ async function harness(): Promise<{
   await ctx.plugin(SessionStore)
   await ctx.plugin(SessionProjectionRegistry)
   const meterFiber = await ctx.plugin(TokenMeter)
-  return { ctx, session: ctx.sessions.create(), meterFiber }
+  return { ctx, session: ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } }), meterFiber }
 }
 
 function startStep(session: Session, turn: number, step: number): void {

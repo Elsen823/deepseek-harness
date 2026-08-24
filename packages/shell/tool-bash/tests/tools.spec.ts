@@ -10,7 +10,7 @@ import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime, { TOOL_ABORTED, TOOL_ABORTED_BEFORE_DISPATCH } from '@deepseek-ai/dsh-tools'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, SessionId } from '@deepseek-ai/dsh-session'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import LocalJobRegistry from '@deepseek-ai/dsh-jobs-local'
 import * as ToolTasks from '@deepseek-ai/dsh-tool-jobs'
@@ -69,7 +69,7 @@ function registerFakeAgent(ctx: Context, sessionId: string, inject: (...args: un
     id,
     ctx: scopeFiber.ctx,
     inject,
-    session: { id, header: { version: 0, id, createdAt: 0 } },
+    session: { id, header: { version: 0, driverId: AgentDriverId('dsh'), id, createdAt: 0 } },
   } as unknown as Agent
   ctx.agents.register(agent)
   return agent
@@ -209,7 +209,7 @@ function sandboxAgent(
     ...ctx === undefined ? {} : { ctx: ctx.plugin(() => {}).ctx },
     session: {
       id,
-      header: { version: 0, id, createdAt: 0 },
+      header: { version: 0, driverId: AgentDriverId('dsh'), id, createdAt: 0 },
       events,
       append: (type: string, data: Record<string, unknown>) => {
         const event = { type, data }
@@ -801,7 +801,7 @@ describe('processOutcome', () => {
 describe('session-cwd routing (per-session workdir)', () => {
   // An agent whose session header carries a cwd (what session/new records).
   const agentInCwd = (cwd: string) =>
-    ({ inject: () => undefined, session: { header: { version: 0, id: 'c', createdAt: 0, cwd } } }) as unknown as Agent
+    ({ inject: () => undefined, session: { header: { version: 0, driverId: AgentDriverId('dsh'), id: 'c', createdAt: 0, cwd } } }) as unknown as Agent
 
   it('defaults bash to the agent\'s session cwd (not the server launch dir)', async () => {
     const ctx = await setup()

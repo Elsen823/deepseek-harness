@@ -4,9 +4,9 @@
  */
 
 import { describe, expect, it, vi } from 'vitest'
-import type { SessionId } from '@deepseek-ai/dsh-api-remotes/client'
+import type { AgentDriverId, SessionId, SessionRuntimeStatus } from '@deepseek-ai/dsh-api-remotes/client'
 import { SessionManager } from '../src/client/sessions/manager.ts'
-import { FakeApiClient, deferred, err, fakeRemote, ok } from './fake-api.client.ts'
+import { DRIVER_ID, FakeApiClient, deferred, err, fakeRemote, ok } from './fake-api.client.ts'
 import { entries, ev, plainTurn } from './event-script.client.ts'
 
 const S1 = 'fk-m1' as SessionId
@@ -21,7 +21,20 @@ type SummaryOver = Partial<{
 }>
 
 function summary(sessionId: SessionId, over: SummaryOver = {}) {
-  return { sessionId, updatedAt: 100, running: false, blank: false, ...over }
+  return { sessionId, driverId: DRIVER_ID, updatedAt: 100, running: false, blank: false, ...over }
+}
+
+function runtimeStatus(revision: number, driverId: AgentDriverId = DRIVER_ID): SessionRuntimeStatus {
+  return {
+    sessionId: S1,
+    driverId,
+    availability: { kind: 'available' },
+    activity: 'running',
+    attention: { approvals: 1, userInputs: 0 },
+    operation: 'conversation',
+    revision,
+    updatedAt: 1_000 + revision,
+  }
 }
 
 describe('instances', () => {
@@ -51,7 +64,7 @@ describe('instances', () => {
   it('retains every live answerable request and compacts resolutions before instantiation', () => {
     const api = new FakeApiClient()
     const manager = new SessionManager(api, fakeRemote())
-    manager.handleHostEnvelope({ rpcId: 'h1' as never, payload: { type: 'host/session-added', sessionId: S1, blank: false } })
+    manager.handleHostEnvelope({ rpcId: 'h1' as never, payload: { type: 'host/session-added', driverId: DRIVER_ID, sessionId: S1, blank: false } })
     for (let i = 0; i < 40; i++) {
       manager.handleMuxEnvelope({ rpcId: `q${i}` as never, payload: { type: 'question/requested', sessionId: S1, questions: [] } })
     }
@@ -100,7 +113,7 @@ describe('list lifecycle', () => {
     const hydration = manager.refreshList()
     manager.handleHostEnvelope({
       rpcId: 'during-first' as never,
-      payload: { type: 'host/session-added', blank: true, sessionId: S2 },
+      payload: { type: 'host/session-added', driverId: DRIVER_ID, blank: true, sessionId: S2 },
     })
     first.resolve(ok({ items: [summary(S1)] as never[] }))
     await hydration
@@ -183,7 +196,7 @@ describe('list lifecycle', () => {
 
   it('merges create into the list immediately without waiting for a refresh', async () => {
     const api = new FakeApiClient()
-    api.onCreate = () => Promise.resolve(ok({ sessionId: S2 }))
+    api.onCreate = () => Promise.resolve(ok({ sessionId: S2, driverId: DRIVER_ID }))
     const manager = new SessionManager(api, fakeRemote())
     const result = await manager.create()
     expect(result).toMatchObject({ ok: true, value: { sessionId: S2 } })
@@ -213,7 +226,7 @@ describe('list lifecycle', () => {
     expect(titled.items[1]?.title).toBeUndefined()
 
     manager.handleHostEnvelope({ rpcId: 'removed' as never, payload: { type: 'host/session-removed', sessionId: S1 } })
-    manager.handleHostEnvelope({ rpcId: 'readded' as never, payload: { type: 'host/session-added', blank: true, sessionId: S1 } })
+    manager.handleHostEnvelope({ rpcId: 'readded' as never, payload: { type: 'host/session-added', driverId: DRIVER_ID, blank: true, sessionId: S1 } })
     expect(manager.getListSnapshot().items.find(item => item.sessionId === S1)?.title).toBeUndefined()
   })
 
@@ -310,8 +323,8 @@ describe('host frame routing', () => {
   it('adds/removes/flips sessions from host frames and keeps removed instances resident', async () => {
     const api = new FakeApiClient()
     const manager = new SessionManager(api, fakeRemote())
-    manager.handleHostEnvelope({ rpcId: 'h1' as never, payload: { type: 'host/session-added', blank: true, sessionId: S1 } })
-    manager.handleHostEnvelope({ rpcId: 'h2' as never, payload: { type: 'host/session-added', blank: true, sessionId: S1 } }) // dup: ignored
+    manager.handleHostEnvelope({ rpcId: 'h1' as never, payload: { type: 'host/session-added', driverId: DRIVER_ID, blank: true, sessionId: S1 } })
+    manager.handleHostEnvelope({ rpcId: 'h2' as never, payload: { type: 'host/session-added', driverId: DRIVER_ID, blank: true, sessionId: S1 } }) // dup: ignored
     expect(manager.getListSnapshot().items).toHaveLength(1)
 
     const session = manager.get(S1)
@@ -416,13 +429,13 @@ describe('subagent catalogs', () => {
       manager.handleHostEnvelope({
         rpcId: 'child-added' as never,
         payload: {
-          type: 'host/session-added', sessionId: S2, parentSessionId: S1, blank: false,
+          type: 'host/session-added', driverId: DRIVER_ID, sessionId: S2, parentSessionId: S1, blank: false,
         },
       })
       manager.handleHostEnvelope({
         rpcId: 'child-added-again' as never,
         payload: {
-          type: 'host/session-added', sessionId: 'fk-m3' as SessionId, parentSessionId: S1, blank: false,
+          type: 'host/session-added', driverId: DRIVER_ID, sessionId: 'fk-m3' as SessionId, parentSessionId: S1, blank: false,
         },
       })
       await vi.advanceTimersByTimeAsync(50)
@@ -432,7 +445,7 @@ describe('subagent catalogs', () => {
       manager.handleHostEnvelope({
         rpcId: 'child-added-closed' as never,
         payload: {
-          type: 'host/session-added', sessionId: 'fk-m4' as SessionId, parentSessionId: S1, blank: false,
+          type: 'host/session-added', driverId: DRIVER_ID, sessionId: 'fk-m4' as SessionId, parentSessionId: S1, blank: false,
         },
       })
       await vi.advanceTimersByTimeAsync(50)
@@ -464,14 +477,14 @@ describe('subagent catalogs', () => {
     manager.handleHostEnvelope({
       rpcId: 'nested-subagent' as never,
       payload: {
-        type: 'host/session-added', sessionId: 'fk-grandchild' as SessionId,
+        type: 'host/session-added', driverId: DRIVER_ID, sessionId: 'fk-grandchild' as SessionId,
         parentSessionId: S1, origin: 'subagent', blank: false,
       },
     })
     manager.handleHostEnvelope({
       rpcId: 'ordinary-fork' as never,
       payload: {
-        type: 'host/session-added', sessionId: 'fk-fork' as SessionId,
+        type: 'host/session-added', driverId: DRIVER_ID, sessionId: 'fk-fork' as SessionId,
         parentSessionId: S2, blank: false,
       },
     })
@@ -493,7 +506,7 @@ describe('subagent catalogs', () => {
     manager.handleHostEnvelope({
       rpcId: 'nested-subagent' as never,
       payload: {
-        type: 'host/session-added', sessionId: 'fk-grandchild' as SessionId,
+        type: 'host/session-added', driverId: DRIVER_ID, sessionId: 'fk-grandchild' as SessionId,
         parentSessionId: S1, origin: 'subagent', blank: false,
       },
     })
@@ -616,7 +629,7 @@ describe('subagent catalogs', () => {
       manager.handleHostEnvelope({
         rpcId: 'child-added' as never,
         payload: {
-          type: 'host/session-added', sessionId: S2, parentSessionId: root, blank: false,
+          type: 'host/session-added', driverId: DRIVER_ID, sessionId: S2, parentSessionId: root, blank: false,
         },
       })
       await vi.advanceTimersByTimeAsync(50)
@@ -746,7 +759,7 @@ describe('remaining branches', () => {
 
   it('create passes cwd and a preallocated id, folds transport throws, and deduplicates the echo', async () => {
     const api = new FakeApiClient()
-    api.onCreate = () => Promise.resolve(ok({ sessionId: S1 }))
+    api.onCreate = () => Promise.resolve(ok({ sessionId: S1, driverId: DRIVER_ID }))
     const manager = new SessionManager(api, fakeRemote())
     await manager.create({ cwd: '/tmp/w', sessionId: S1 })
     expect(api.callsOf('session.create')).toEqual([{ cwd: '/tmp/w', sessionId: S1 }])
@@ -760,12 +773,54 @@ describe('remaining branches', () => {
     expect(await manager.create()).toMatchObject({ ok: false })
   })
 
+  it('forwards selected Drivers through create and fork and records the returned binding', async () => {
+    const api = new FakeApiClient()
+    const selected = 'codex' as AgentDriverId
+    api.onCreate = () => Promise.resolve(ok({ sessionId: S1, driverId: selected, agentPreset: 'codex' }))
+    api.onFork = () => Promise.resolve(ok({ sessionId: S2, driverId: selected }))
+    const manager = new SessionManager(api, fakeRemote())
+
+    await manager.create({ cwd: '/tmp/w', driverId: selected })
+    await manager.fork({ sessionId: S1, atSeq: 7, driverId: selected })
+
+    expect(api.callsOf('session.create')).toEqual([{ cwd: '/tmp/w', driverId: selected }])
+    expect(api.callsOf('session.fork')).toEqual([{ sessionId: S1, atSeq: 7, driverId: selected }])
+    expect(manager.getListSnapshot().items).toEqual([
+      expect.objectContaining({ sessionId: S1, driverId: selected, agentPreset: 'codex' }),
+      expect.objectContaining({ sessionId: S2, driverId: selected, parentSessionId: S1 }),
+    ])
+  })
+
+  it('keeps the highest runtime revision and clears runtime state on disconnect', () => {
+    const manager = new SessionManager(new FakeApiClient(), fakeRemote())
+    manager.handleHostEnvelope({
+      rpcId: 'added' as never,
+      payload: { type: 'host/session-added', driverId: DRIVER_ID, sessionId: S1, blank: false },
+    })
+    const session = manager.get(S1)
+    manager.handleHostEnvelope({
+      rpcId: 'runtime-2' as never,
+      payload: { type: 'host/session-runtime', status: runtimeStatus(2) },
+    })
+    manager.handleHostEnvelope({
+      rpcId: 'runtime-1' as never,
+      payload: { type: 'host/session-runtime', status: runtimeStatus(1) },
+    })
+
+    expect(manager.getListSnapshot().items[0]?.runtime?.revision).toBe(2)
+    expect(session.getSnapshot().runtime?.revision).toBe(2)
+
+    manager.handleDisconnected()
+
+    expect(session.getSnapshot().runtime).toBeUndefined()
+  })
+
   it('publishes a real Ungrouped summary from workspace-attach-failed', async () => {
     const api = new FakeApiClient()
     api.onCreate = () => Promise.resolve(err({
       code: 'workspace-attach-failed',
       message: 'published but unattached',
-      details: { sessionId: S1, workspaceId: 'w1' },
+      details: { sessionId: S1, workspaceId: 'w1', driverId: DRIVER_ID },
     } as never))
     const manager = new SessionManager(api, fakeRemote())
     const result = await manager.create({ workspaceId: 'w1' as never, sessionId: S1 })
@@ -779,7 +834,7 @@ describe('remaining branches', () => {
     api.onFork = () => Promise.resolve(err({
       code: 'workspace-attach-failed',
       message: 'forked but unattached',
-      details: { sessionId: S2, workspaceId: 'w1' },
+      details: { sessionId: S2, workspaceId: 'w1', driverId: DRIVER_ID },
     } as never))
     const manager = new SessionManager(api, fakeRemote())
     const result = await manager.fork({ sessionId: S1 })
@@ -801,14 +856,14 @@ describe('remaining branches', () => {
 
     manager.handleHostEnvelope({
       rpcId: 'published-later' as never,
-      payload: { type: 'host/session-added', blank: true, sessionId: S1, cwd: '/w/one' },
+      payload: { type: 'host/session-added', driverId: DRIVER_ID, blank: true, sessionId: S1, cwd: '/w/one' },
     })
     expect(manager.getListSnapshot().items).toEqual([
       expect.objectContaining({ sessionId: S1, cwd: '/w/one' }),
     ])
     manager.handleHostEnvelope({
       rpcId: 'duplicate-frame' as never,
-      payload: { type: 'host/session-added', blank: true, sessionId: S1, cwd: '/w/one' },
+      payload: { type: 'host/session-added', driverId: DRIVER_ID, blank: true, sessionId: S1, cwd: '/w/one' },
     })
     expect(manager.getListSnapshot().items).toHaveLength(1)
   })
@@ -823,7 +878,7 @@ describe('remaining branches', () => {
     expect(notified).toBeGreaterThan(0)
     const seen = notified
     unsubscribe()
-    manager.handleHostEnvelope({ rpcId: 'h' as never, payload: { type: 'host/session-added', blank: true, sessionId: S1 } })
+    manager.handleHostEnvelope({ rpcId: 'h' as never, payload: { type: 'host/session-added', driverId: DRIVER_ID, blank: true, sessionId: S1 } })
     await new Promise(resolve => setTimeout(resolve, 0))
     expect(notified).toBe(seen)
   })
@@ -862,11 +917,11 @@ describe('remaining branches', () => {
   it('carries parentSessionId from host/session-added into the lineage row', () => {
     const api = new FakeApiClient()
     const manager = new SessionManager(api, fakeRemote())
-    manager.handleHostEnvelope({ rpcId: 'h1' as never, payload: { type: 'host/session-added', blank: true, sessionId: S1 } })
+    manager.handleHostEnvelope({ rpcId: 'h1' as never, payload: { type: 'host/session-added', driverId: DRIVER_ID, blank: true, sessionId: S1 } })
     manager.handleHostEnvelope({
       rpcId: 'h2' as never,
       payload: {
-        type: 'host/session-added', blank: true, sessionId: S2,
+        type: 'host/session-added', driverId: DRIVER_ID, blank: true, sessionId: S2,
         parentSessionId: S1, origin: 'subagent',
       },
     })
@@ -917,7 +972,7 @@ describe('connected generation', () => {
 describe('pending-interaction list status', () => {
   it('tracks approval requests through replay and resolution without instantiation', () => {
     const manager = new SessionManager(new FakeApiClient(), fakeRemote())
-    manager.handleHostEnvelope({ rpcId: 'h1' as never, payload: { type: 'host/session-added', sessionId: S1, blank: false } })
+    manager.handleHostEnvelope({ rpcId: 'h1' as never, payload: { type: 'host/session-added', driverId: DRIVER_ID, sessionId: S1, blank: false } })
     expect(manager.getListSnapshot().items[0]?.pendingInteraction).toBeUndefined()
     manager.handleMuxEnvelope({ rpcId: 'ra' as never, payload: { type: 'approval/requested', sessionId: S1, approvalId: 'ap1' as never, toolName: 'rm' } })
     expect(manager.getListSnapshot().items[0]?.pendingInteraction).toBe('approval')
@@ -930,7 +985,7 @@ describe('pending-interaction list status', () => {
 
   it('classifies ordinary questions and renderable plan reviews, then clears by question rpcId', () => {
     const manager = new SessionManager(new FakeApiClient(), fakeRemote())
-    manager.handleHostEnvelope({ rpcId: 'h1' as never, payload: { type: 'host/session-added', sessionId: S1, blank: false } })
+    manager.handleHostEnvelope({ rpcId: 'h1' as never, payload: { type: 'host/session-added', driverId: DRIVER_ID, sessionId: S1, blank: false } })
     manager.handleMuxEnvelope({
       rpcId: 'q1' as never,
       payload: { type: 'question/requested', sessionId: S1, questions: [{ id: 'name', question: 'Name?' }] },
@@ -963,7 +1018,7 @@ describe('pending-interaction list status', () => {
     ['missing approve option', { detail: '# Plan', options: [{ label: 'Refuse' }] }],
   ])('keeps an unrenderable %s plan intent on the ordinary question flow', (_name, over) => {
     const manager = new SessionManager(new FakeApiClient(), fakeRemote())
-    manager.handleHostEnvelope({ rpcId: 'h1' as never, payload: { type: 'host/session-added', sessionId: S1, blank: false } })
+    manager.handleHostEnvelope({ rpcId: 'h1' as never, payload: { type: 'host/session-added', driverId: DRIVER_ID, sessionId: S1, blank: false } })
     manager.handleMuxEnvelope({
       rpcId: 'q-plan' as never,
       payload: {
@@ -980,7 +1035,7 @@ describe('pending-interaction list status', () => {
 
   it('the first question outranks sibling approvals and resolving it reveals the remaining wait', () => {
     const manager = new SessionManager(new FakeApiClient(), fakeRemote())
-    manager.handleHostEnvelope({ rpcId: 'h1' as never, payload: { type: 'host/session-added', sessionId: S1, blank: false } })
+    manager.handleHostEnvelope({ rpcId: 'h1' as never, payload: { type: 'host/session-added', driverId: DRIVER_ID, sessionId: S1, blank: false } })
     manager.handleMuxEnvelope({ rpcId: 'r1' as never, payload: { type: 'approval/requested', sessionId: S1, approvalId: 'a1' as never, toolName: 'rm' } })
     manager.handleMuxEnvelope({
       rpcId: 'q1' as never,
@@ -999,7 +1054,7 @@ describe('pending-interaction list status', () => {
 
   it('drops stale status at generation death before replay re-adds live interactions', () => {
     const manager = new SessionManager(new FakeApiClient(), fakeRemote())
-    manager.handleHostEnvelope({ rpcId: 'h1' as never, payload: { type: 'host/session-added', sessionId: S1, blank: false } })
+    manager.handleHostEnvelope({ rpcId: 'h1' as never, payload: { type: 'host/session-added', driverId: DRIVER_ID, sessionId: S1, blank: false } })
     manager.handleMuxEnvelope({ rpcId: 'ra' as never, payload: { type: 'approval/requested', sessionId: S1, approvalId: 'ap1' as never, toolName: 'rm' } })
     expect(manager.getListSnapshot().items[0]?.pendingInteraction).toBe('approval')
     // Generation death clears (resolved-while-disconnected questions send no frame)…
@@ -1014,7 +1069,7 @@ describe('pending-interaction list status', () => {
 
   it('generation death drops buffered answerable frames (a dead generation cannot be answered)', () => {
     const manager = new SessionManager(new FakeApiClient(), fakeRemote())
-    manager.handleHostEnvelope({ rpcId: 'h1' as never, payload: { type: 'host/session-added', sessionId: S1, blank: false } })
+    manager.handleHostEnvelope({ rpcId: 'h1' as never, payload: { type: 'host/session-added', driverId: DRIVER_ID, sessionId: S1, blank: false } })
     // Buffered pre-instantiation: an approval pair and a queued row.
     manager.handleMuxEnvelope({ rpcId: 'ra' as never, payload: { type: 'approval/requested', sessionId: S1, approvalId: 'ap1' as never, toolName: 'rm' } })
     manager.handleMuxEnvelope({ rpcId: 'q1' as never, payload: { type: 'question/requested', sessionId: S1, questions: [] } })
@@ -1034,7 +1089,7 @@ describe('completed reminder', () => {
   })
   const added = (rpcId: string, sessionId: SessionId) => ({
     rpcId: rpcId as never,
-    payload: { type: 'host/session-added' as const, sessionId, blank: false },
+    payload: { type: 'host/session-added' as const, driverId: DRIVER_ID, sessionId, blank: false },
   })
   const entry = (manager: SessionManager, sessionId: SessionId) =>
     manager.getListSnapshot().items.find(item => item.sessionId === sessionId)
@@ -1192,7 +1247,7 @@ describe('background-job mirror', () => {
 
   it('drops the rows when the session is removed, whichever stream lands first', () => {
     const manager = new SessionManager(new FakeApiClient(), fakeRemote())
-    manager.handleHostEnvelope({ rpcId: 'a' as never, payload: { type: 'host/session-added', blank: true, sessionId: S1 } })
+    manager.handleHostEnvelope({ rpcId: 'a' as never, payload: { type: 'host/session-added', driverId: DRIVER_ID, blank: true, sessionId: S1 } })
     manager.handleMuxEnvelope(tasksFrame(S1, [view()]))
     manager.handleHostEnvelope({ rpcId: 'r' as never, payload: { type: 'host/session-removed', sessionId: S1 } })
     expect(S1 in manager.getListSnapshot().jobsBySession).toBe(false)

@@ -2,11 +2,11 @@
 
 [English](README.md) | 中文
 
-按 agent（智能体）分别记录到日志的 plan 协作状态，提供由部署方配置的引导内容、用于直接进入的 `/plan [message]` 命令、用于直接退出的 `/plan off` 命令，以及经用户评审的 `exit_plan_mode` 退出方式。Plan mode 是软引导；沙箱模式和批准策略各自强制执行限制，且不读写 plan 状态。
+仅供内置 `dsh` Agent Driver 使用、按 agent（智能体）分别记录到日志的 plan 协作状态，提供由部署方配置的引导内容、用于直接进入的 `/plan [message]` 命令、用于直接退出的 `/plan off` 命令，以及经用户评审的 `exit_plan_mode` 退出方式。备用 Driver 保持其原生规划生命周期独立：`get()` 报告未激活，`set()` 失败，也不会组装 `plan:policy` section。Plan mode 是软引导；沙箱模式和批准策略各自强制执行限制，且不读写 plan 状态。
 
 ## 持久状态
 
-`plan/mode`（`{ active: boolean }`）是一个仅存在于日志中、每次以完整值替换的 `SessionEventMap` 成员。`foldPlanMode(events)` 返回最后记录的值，如果没有则返回 `false`，因此恢复、fork 和压缩（compaction）都能直接从会话日志恢复 plan 状态。UI 通过 `session/event` 观察已提交的切换。
+`plan/mode`（`{ active: boolean }`）是一个仅存在于日志中、每次以完整值替换的 `SessionEventMap` 成员。`foldPlanMode(events)` 返回最后记录的值，如果没有则返回 `false`，因此恢复、同 Driver fork 和压缩（compaction）都能直接从会话日志恢复 plan 状态。跨 Driver fork 会因所有权变化而省略该控制事件。UI 通过 `session/event` 观察已提交的切换。
 
 `ctx.planMode.set(agent, active)` 会在 agent 空闲时立即追加独立的 `plan/mode` 事件，因为下一个提示词之前不会运行轮内 pre-step。agent 运行时，该方法会保留待生效选择，直到下一个被接受的轮内 pre-step。返回值区分 `committed`、`queued`、表示反转的 `cancelled` 和 `noop`。`get(agent)` 返回 `{ active, pending? }`，将用于组装当前步骤的日志状态与用户的轮中选择分开。初始与续步 pre-step 都会应用待生效选择；同一步骤的请求恢复重试会复用已冻结的 assembly，并将该选择保留到下一个被接受的轮内 pre-step。当最后记录的请求头描述了另一状态时，用户选择的变更会贡献一条插件来源的 `user/message` 通知（两条提交路径皆然）。
 

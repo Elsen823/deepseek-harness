@@ -5,6 +5,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { createAssistantMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { MessageId } from '@deepseek-ai/dsh-llm/brand'
 import SessionStore, {
+  AgentDriverId,
   SESSION_FORMAT_VERSION,
   Session,
   SessionId,
@@ -99,6 +100,7 @@ export function messageFixture(
   const id = SessionId(rawId)
   const header: SessionHeader = {
     version: SESSION_FORMAT_VERSION,
+    driverId: AgentDriverId('dsh'),
     id,
     createdAt: options.createdAt ?? 1_700_000_000_000,
     ...(options.cwd === undefined ? {} : { cwd: options.cwd }),

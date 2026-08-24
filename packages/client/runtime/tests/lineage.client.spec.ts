@@ -4,11 +4,12 @@
  */
 
 import { describe, expect, it, vi } from 'vitest'
-import type { SessionId, SessionSummary } from '@deepseek-ai/dsh-api-remotes/client'
+import type { AgentDriverId, SessionId, SessionSummary } from '@deepseek-ai/dsh-api-remotes/client'
 import { flattenLineage } from '../src/client/sessions/lineage.ts'
 
+const DRIVER_ID = 'dsh' as AgentDriverId
 const s = (id: string, updatedAt: number, parent?: string): SessionSummary => ({
-  sessionId: id as SessionId, updatedAt, running: false, blank: false,
+  sessionId: id as SessionId, driverId: DRIVER_ID, updatedAt, running: false, blank: false,
   ...(parent !== undefined ? { parentSessionId: parent as SessionId } : {}),
 })
 

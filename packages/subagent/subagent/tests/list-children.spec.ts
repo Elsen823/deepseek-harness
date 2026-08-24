@@ -7,7 +7,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
-import SessionStore, { SESSION_FORMAT_VERSION, SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, SESSION_FORMAT_VERSION, SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionEvent, SessionHeader } from '@deepseek-ai/dsh-session'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
@@ -55,7 +55,7 @@ async function setup(
   await ctx.plugin(SubagentSpawn, { providerName: 'spawn' })
   await ctx.plugin(SubagentFork, { providerName: 'fork' })
   ctx.llm.registerAdapter(['mock'], new MockAdapter(script))
-  const parent = ctx.agentLoop.create(SessionId('parent'), { provider: 'mock', model: 'mock' })
+  const parent = await ctx.agentLoop.create(SessionId('parent'), { provider: 'mock', model: 'mock' })
   return { ctx, parent }
 }
 
@@ -64,7 +64,7 @@ const testSignal = new AbortController().signal
 /** Start one continuable child through the real service path and await Activation release. */
 async function startChild(
   ctx: Context,
-  parent: ReturnType<Context['agentLoop']['create']>,
+  parent: Awaited<ReturnType<Context['agentLoop']['create']>>,
   label: string,
 ): Promise<SessionId> {
   const started = await ctx.subagents.startContinuable({
@@ -89,6 +89,7 @@ async function authorChild(
   const sessionId = SessionId(id)
   await ctx.sessionPersistence.create({
     version: SESSION_FORMAT_VERSION,
+    driverId: AgentDriverId('dsh'),
     id: sessionId,
     createdAt: 1,
     ...header,
@@ -162,10 +163,10 @@ describe('SubagentRuntime.listChildren', () => {
     expect(ctx.get('sessionPersistence')).toBeUndefined()
 
     const parentId = SessionId('live-only-parent')
-    ctx.sessions.create(parentId)
+    ctx.sessions.create(parentId, { meta: { driverId: AgentDriverId('dsh') } })
     const childId = SessionId('live-only-child')
     const child = ctx.sessions.create(childId, {
-      meta: { parentSession: parentId, origin: 'subagent' },
+      meta: { driverId: AgentDriverId('dsh'), parentSession: parentId, origin: 'subagent' },
     })
     child.append('turn/start', {
       turn: 1,
@@ -217,6 +218,7 @@ describe('SubagentRuntime.listChildren', () => {
     })
     const oneShotId = oneShot.id
     await oneShot.result
+    await ctx.sessions.flush(oneShot.localAgent!.session)
     await oneShot.dispose()
     const continuableId = await startChild(ctx, parent, 'continuable child')
 
@@ -245,6 +247,7 @@ describe('SubagentRuntime.listChildren', () => {
     const coldParent = SessionId('00000000-0000-4000-8000-00000000cccc')
     await ctx.sessionPersistence.create({
       version: SESSION_FORMAT_VERSION,
+      driverId: AgentDriverId('dsh'),
       id: coldParent,
       createdAt: 1,
     })
@@ -270,7 +273,7 @@ describe('SubagentRuntime.listChildren', () => {
     /** Publish one live child with a pinned header ordering key. */
     const liveChild = (parentId: SessionId, id: string, createdAt: number, label: string): SessionId => {
       const session = ctx.sessions.create(SessionId(id), {
-        meta: { parentSession: parentId, origin: 'subagent', createdAt },
+        meta: { driverId: AgentDriverId('dsh'), parentSession: parentId, origin: 'subagent', createdAt },
       })
       session.append('turn/start', { turn: 1 })
       session.append('subagent/descriptor', descriptorPayload(label))
@@ -293,7 +296,7 @@ describe('SubagentRuntime.listChildren', () => {
   it('omits a live child that has not appended its descriptor yet', async () => {
     const { ctx, parent } = await setup([])
     const pending = ctx.sessions.create(SessionId('creation-window-child'), {
-      meta: { parentSession: parent.id, origin: 'subagent' },
+      meta: { driverId: AgentDriverId('dsh'), parentSession: parent.id, origin: 'subagent' },
     })
     pending.append('turn/start', { turn: 1 })
     // The creation window: the establishing provider has not appended the
@@ -327,7 +330,7 @@ describe('SubagentRuntime.listChildren', () => {
     // descriptor and the parent lineage, without starting an Activation.
     const liveId = SessionId('live-child')
     const live = ctx.sessions.create(liveId, {
-      meta: { parentSession: parent.id, origin: 'subagent' },
+      meta: { driverId: AgentDriverId('dsh'), parentSession: parent.id, origin: 'subagent' },
     })
     live.append('turn/start', { turn: 1 })
     live.append('subagent/descriptor', descriptorPayload('live child'))
@@ -374,7 +377,7 @@ describe('SubagentRuntime.listChildren', () => {
     const { ctx, parent } = await setup([])
     const liveId = SessionId('invalidated-live-child')
     const live = ctx.sessions.create(liveId, {
-      meta: { parentSession: parent.id, origin: 'subagent' },
+      meta: { driverId: AgentDriverId('dsh'), parentSession: parent.id, origin: 'subagent' },
     })
     live.append('turn/start', { turn: 1 })
     live.append('subagent/descriptor', descriptorPayload('was valid'))
@@ -618,13 +621,13 @@ describe('SubagentRuntime.listChildren', () => {
     ctx.sessionProjections.register(hostileProjectionDefinition)
     const poisonedId = SessionId('live-poisoned-child')
     const poisoned = ctx.sessions.create(poisonedId, {
-      meta: { parentSession: parent.id, origin: 'subagent' },
+      meta: { driverId: AgentDriverId('dsh'), parentSession: parent.id, origin: 'subagent' },
     })
     poisoned.append('turn/start', { turn: 1 })
     poisoned.append('subagent/descriptor', descriptorPayload('poison me'))
     const healthyId = SessionId('live-healthy-child')
     const healthy = ctx.sessions.create(healthyId, {
-      meta: { parentSession: parent.id, origin: 'subagent' },
+      meta: { driverId: AgentDriverId('dsh'), parentSession: parent.id, origin: 'subagent' },
     })
     healthy.append('turn/start', { turn: 1 })
     healthy.append('subagent/descriptor', descriptorPayload('live healthy'))
@@ -749,7 +752,7 @@ describe('SubagentRuntime.listChildren', () => {
     }, childEvents(descriptorPayload('cold authored child')))
     const liveId = SessionId('live-mixed-child')
     const live = ctx.sessions.create(liveId, {
-      meta: { parentSession: parent.id, origin: 'subagent' },
+      meta: { driverId: AgentDriverId('dsh'), parentSession: parent.id, origin: 'subagent' },
     })
     live.append('turn/start', { turn: 1 })
     live.append('subagent/descriptor', descriptorPayload('live mixed child'))
@@ -1025,7 +1028,7 @@ describe('SubagentRuntime.listDescendants', () => {
     const { ctx, parent } = await setup([])
     const bareId = SessionId('live-creation-window')
     const bare = ctx.sessions.create(bareId, {
-      meta: { createdAt: 1, parentSession: parent.id, origin: 'subagent' },
+      meta: { driverId: AgentDriverId('dsh'), createdAt: 1, parentSession: parent.id, origin: 'subagent' },
     })
     bare.append('turn/start', { turn: 1 })
     const below = await authorChild(ctx, '00000000-0000-4000-8000-00000000aaaf', {
@@ -1067,13 +1070,13 @@ describe('SubagentRuntime.listDescendants', () => {
     let parentId = parent.id
     for (let level = 1; level < depth; level += 1) {
       const session = ctx.sessions.create(SessionId(`deep-ordinary-${level}`), {
-        meta: { createdAt: level, parentSession: parentId },
+        meta: { driverId: AgentDriverId('dsh'), createdAt: level, parentSession: parentId },
       })
       parentId = session.id
     }
     const leafId = SessionId('deep-subagent-leaf')
     const leaf = ctx.sessions.create(leafId, {
-      meta: { createdAt: depth, parentSession: parentId, origin: 'subagent' },
+      meta: { driverId: AgentDriverId('dsh'), createdAt: depth, parentSession: parentId, origin: 'subagent' },
     })
     leaf.append('turn/start', { turn: 1 })
     leaf.append('subagent/descriptor', descriptorPayload('deep leaf'))

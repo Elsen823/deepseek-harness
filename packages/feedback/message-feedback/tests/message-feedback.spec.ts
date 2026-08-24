@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import type { MessageId } from '@deepseek-ai/dsh-llm/brand'
-import { Session, SessionId } from '@deepseek-ai/dsh-session'
+import { AgentDriverId, Session, SessionId } from '@deepseek-ai/dsh-session'
 import { remoteMethods } from '@deepseek-ai/dsh-typert-protocol'
 import MessageFeedbackService, { messageFeedbackRowSchema } from '../src/index.ts'
 import type {
@@ -80,7 +80,7 @@ describe('MessageFeedbackService public contract', () => {
 
     const pending = ctx.messageFeedback.list({ sessionId })
     await listed.promise
-    ctx.sessions.create(sessionId, { meta: { createdAt: 1_700_000_000_001 } })
+    ctx.sessions.create(sessionId, { meta: { driverId: AgentDriverId('dsh'), createdAt: 1_700_000_000_001 } })
     release.resolve(undefined)
 
     await expect(pending).resolves.toEqual({ ok: true, value: { items: [] } })
@@ -545,7 +545,7 @@ describe('MessageFeedbackService durability ordering', () => {
   it('commits and physically verifies a live target checkpoint before the sidecar write', async () => {
     const { ctx, persistence } = await harness()
     const session = ctx.sessions.create(SessionId('live-checkpoint'), {
-      meta: { createdAt: 30, cwd: '/live' },
+      meta: { driverId: AgentDriverId('dsh'), createdAt: 30, cwd: '/live' },
     })
     const fixture = appendMessageFixture(session)
     const order: string[] = []
@@ -573,7 +573,7 @@ describe('MessageFeedbackService durability ordering', () => {
 
   it('fails closed when a live checkpoint fails, has no participant, or is not physically durable', async () => {
     const failed = await harness()
-    const failedSession = failed.ctx.sessions.create(SessionId('live-flush-failure'))
+    const failedSession = failed.ctx.sessions.create(SessionId('live-flush-failure'), { meta: { driverId: AgentDriverId('dsh') } })
     const failedFixture = appendMessageFixture(failedSession)
     const diskFailure = new Error('disk unavailable')
     failed.ctx.on('session/flush', () => { throw diskFailure })
@@ -589,7 +589,7 @@ describe('MessageFeedbackService durability ordering', () => {
     })
 
     const absent = await harness()
-    const absentSession = absent.ctx.sessions.create(SessionId('live-no-flush'))
+    const absentSession = absent.ctx.sessions.create(SessionId('live-no-flush'), { meta: { driverId: AgentDriverId('dsh') } })
     const absentFixture = appendMessageFixture(absentSession)
     await expect(absent.ctx.messageFeedback.put({
       sessionId: absentSession.id,
@@ -603,7 +603,7 @@ describe('MessageFeedbackService durability ordering', () => {
     })
 
     const noDurability = await harness()
-    const unpersistedSession = noDurability.ctx.sessions.create(SessionId('live-unpersisted'))
+    const unpersistedSession = noDurability.ctx.sessions.create(SessionId('live-unpersisted'), { meta: { driverId: AgentDriverId('dsh') } })
     const unpersistedFixture = appendMessageFixture(unpersistedSession)
     noDurability.ctx.on('session/flush', () => {})
     await expect(noDurability.ctx.messageFeedback.put({
@@ -622,7 +622,7 @@ describe('MessageFeedbackService durability ordering', () => {
   it('finishes the captured live checkpoint when the Session detaches mid-flush', async () => {
     const { ctx, persistence } = await harness()
     const session = ctx.sessions.prepare(SessionId('detach-during-flush'), {
-      meta: { createdAt: 40, cwd: '/detach' },
+      meta: { driverId: AgentDriverId('dsh'), createdAt: 40, cwd: '/detach' },
     })
     const detach = ctx.sessions.enter(session)
     ctx.sessions.announce(session)

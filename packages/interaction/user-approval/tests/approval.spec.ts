@@ -4,7 +4,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import { CallId } from '@deepseek-ai/dsh-llm'
 import { carrierKeyOf, createScope } from '@deepseek-ai/dsh-scope'
 import type { Scope } from '@deepseek-ai/dsh-scope'
-import SessionStore, { Session, SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, Session, SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ApprovalService, { ApprovalOutcome, ApprovalRequest, effectiveApprovalPolicy, setApprovalPolicy } from '@deepseek-ai/dsh-user-approval'
@@ -117,7 +117,7 @@ describe('ApprovalService.request', () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
     await ctx.plugin(ApprovalService)
-    const session = ctx.sessions.create(SessionId('asked-observer-throw'))
+    const session = ctx.sessions.create(SessionId('asked-observer-throw'), { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', { turn: 1 })
     const agent = { session } as unknown as Agent
     const warn = vi.spyOn(ctx.logger, 'warn').mockImplementation(() => {})
@@ -140,7 +140,7 @@ describe('ApprovalService.request', () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
     await ctx.plugin(ApprovalService)
-    const session = ctx.sessions.create(SessionId('decided-observer-throw'))
+    const session = ctx.sessions.create(SessionId('decided-observer-throw'), { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', { turn: 1 })
     const agent = { session } as unknown as Agent
     const warn = vi.spyOn(ctx.logger, 'warn').mockImplementation(() => {})

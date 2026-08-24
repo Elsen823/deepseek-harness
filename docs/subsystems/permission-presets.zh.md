@@ -79,7 +79,7 @@ Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnp
 
 ### `ctx.permissionPresets` — `PermissionPresetService`
 
-Owns the deployment's permission presets and their write path. Requires a confining `ctx.shell` executor and `ctx.approval`; unmatched knob values are reported as CUSTOM_PRESET, not an error.
+Owns the deployment's permission presets and their write path. Requires a confining `ctx.shell` executor and `ctx.approval`; unmatched knob values are reported as CUSTOM_PRESET, not an error. It owns only built-in `dsh` Sessions; alternate Drivers retain their native permission controls.
 
 ```ts cordis-catalog
 /**
@@ -121,6 +121,7 @@ optionOf(name: string): PresetOption
  * setter. Selecting the effective preset again appends nothing.
  * @param session - the session the switch belongs to.
  * @param name - the preset to switch to; unknown names throw.
+ * @throws when the Session is bound to an alternate Agent Driver.
  */
 set(session: Session, name: string): void
 ```

@@ -9,6 +9,7 @@ import { chromium } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import {
+  AgentDriverId,
   SESSION_FORMAT_VERSION,
   Session,
   SessionId,
@@ -55,6 +56,7 @@ function sourceSessionFixture(): string {
     JSON.stringify({
       type: 'session',
       version: SESSION_FORMAT_VERSION,
+      driverId: AgentDriverId('dsh'),
       id: '{{sessionId}}',
       createdAt: 0,
       cwd: '{{cwd}}',
@@ -102,6 +104,7 @@ function targetSessionFixture(): string {
     JSON.stringify({
       type: 'session',
       version: SESSION_FORMAT_VERSION,
+      driverId: AgentDriverId('dsh'),
       id: '{{sessionId}}',
       createdAt: 0,
       cwd: '{{cwd}}',

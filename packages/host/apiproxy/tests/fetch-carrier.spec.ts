@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { AgentDriverId } from '@deepseek-ai/dsh-session'
 import type { ApiProxy, HostFrame, MuxFrame } from '../src/api/index.ts'
 import type { ClientResponse, RpcMessage, RpcReceipt, RpcRequest } from '../src/api/rpc.ts'
 import { RpcId } from '../src/api/rpc.ts'
@@ -17,6 +18,12 @@ function fakeApi(overrides: Partial<{ muxFrames: MuxFrame[]; hostFrames: HostFra
   }
   return {
     sessions: {
+      async drivers(request) {
+        return {
+          rpcId: request.rpcId,
+          result: { ok: true, value: { defaultId: AgentDriverId('dsh'), items: [{ id: AgentDriverId('dsh'), name: 'DeepSeek Harness' }] } },
+        }
+      },
       async list(request) {
         if (overrides.crashOn === 'session.list') throw new Error('impl crashed')
         return { rpcId: request.rpcId, result: { ok: true, value: { items: [] } } }
@@ -42,7 +49,7 @@ function fakeApi(overrides: Partial<{ muxFrames: MuxFrame[]; hostFrames: HostFra
         }
       },
       async create(request) {
-        return { rpcId: request.rpcId, result: { ok: true, value: { sessionId: 's-new' as never } } }
+        return { rpcId: request.rpcId, result: { ok: true, value: { sessionId: 's-new' as never, driverId: AgentDriverId('dsh') } } }
       },
       async history(request) {
         if (request.payload.sessionId === ('with-projections' as never)) {
@@ -91,7 +98,7 @@ function fakeApi(overrides: Partial<{ muxFrames: MuxFrame[]; hostFrames: HostFra
         return { rpcId: request.rpcId, result: { ok: true, value: { title: request.payload.title, seq: 0 } } }
       },
       async fork(request) {
-        return { rpcId: request.rpcId, result: { ok: true, value: { sessionId: 's-fork' as never } } }
+        return { rpcId: request.rpcId, result: { ok: true, value: { sessionId: 's-fork' as never, driverId: AgentDriverId('dsh') } } }
       },
       async prompt(request) {
         return { rpcId: request.rpcId, result: { ok: true, value: { accepted: true as const } } }

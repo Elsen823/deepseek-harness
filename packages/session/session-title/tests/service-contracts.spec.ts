@@ -1,7 +1,7 @@
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { Context, type Fiber } from '@deepseek-ai/cordis'
 import { describe, expect, it, vi } from 'vitest'
-import SessionStore, { Session, SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, Session, SessionId } from '@deepseek-ai/dsh-session'
 import SessionTitleService, {
   SessionTitleProviderId,
   type Config,
@@ -34,7 +34,7 @@ async function setup(config: Config = CONFIG): Promise<Context> {
 }
 
 function startSession(ctx: Context, id: string): ReturnType<Context['sessions']['create']> {
-  const session = ctx.sessions.create(SessionId(id))
+  const session = ctx.sessions.create(SessionId(id), { meta: { driverId: AgentDriverId('dsh') } })
   session.append('turn/start', {
     turn: 1,
   })
@@ -64,7 +64,7 @@ describe('SessionTitleService configuration and refresh boundaries', () => {
 
   it('returns no title for empty input with or without a provider, and rejects detached or pre-aborted refreshes', async () => {
     const fallbackOnly = await setup()
-    const empty = fallbackOnly.sessions.create(SessionId('empty-fallback'))
+    const empty = fallbackOnly.sessions.create(SessionId('empty-fallback'), { meta: { driverId: AgentDriverId('dsh') } })
     await expect(fallbackOnly.sessionTitle.refresh(empty)).resolves.toBeUndefined()
 
     const withProvider = await setup()
@@ -77,7 +77,7 @@ describe('SessionTitleService configuration and refresh boundaries', () => {
       automatic: 'first-prompt',
       generate,
     })
-    const providerEmpty = withProvider.sessions.create(SessionId('empty-provider'))
+    const providerEmpty = withProvider.sessions.create(SessionId('empty-provider'), { meta: { driverId: AgentDriverId('dsh') } })
     await expect(withProvider.sessionTitle.refresh(providerEmpty)).resolves.toBeUndefined()
     expect(generate).not.toHaveBeenCalled()
 
@@ -145,7 +145,9 @@ describe('SessionTitleService configuration and refresh boundaries', () => {
         return disposePending.promise
       },
     })
-    const disposed = disposeCtx.sessions.prepare(SessionId('session-dispose'))
+    const disposed = disposeCtx.sessions.prepare(SessionId('session-dispose'), {
+      meta: { driverId: AgentDriverId('dsh') },
+    })
     const detach = disposeCtx.sessions.enter(disposed)
     disposeCtx.sessions.announce(disposed)
     disposed.append('turn/start', {
@@ -169,7 +171,10 @@ describe('SessionTitleService configuration and refresh boundaries', () => {
     })
     const source = appendPrompt(seed, 'Create exactly one fallback title')
     seed.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
-    const session = ctx.sessions.create(SessionId('fallback-concurrency'), { seed: seed.events })
+    const session = ctx.sessions.create(SessionId('fallback-concurrency'), {
+      seed: seed.events,
+      meta: { driverId: AgentDriverId('dsh') },
+    })
 
     const results = await Promise.all([
       ctx.sessionTitle.refresh(session),
@@ -328,7 +333,9 @@ describe('SessionTitleService configuration and refresh boundaries', () => {
   it('warns when a detached session prevents queued fallback publication', async () => {
     const ctx = await setup()
     const warn = vi.spyOn(ctx.logger, 'warn').mockImplementation(() => undefined)
-    const session = ctx.sessions.prepare(SessionId('fallback-detach'))
+    const session = ctx.sessions.prepare(SessionId('fallback-detach'), {
+      meta: { driverId: AgentDriverId('dsh') },
+    })
     const detach = ctx.sessions.enter(session)
     ctx.sessions.announce(session)
     ctx.on('session/event', (subject, event) => {

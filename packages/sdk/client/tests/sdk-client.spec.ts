@@ -126,6 +126,73 @@ describe('DeepSeekHarness', () => {
     await harness.close()
   })
 
+  it('projects Driver discovery, immutable Session selection, and runtime lookup', async () => {
+    const harness = harnessWith()
+
+    expect(await harness.drivers()).toEqual({
+      defaultId: 'dsh',
+      items: [
+        { id: 'dsh', name: 'DeepSeek Harness' },
+        { id: 'codex', name: 'Codex' },
+      ],
+    })
+    expect(await harness.runtime('driver-session')).toEqual({ status: null })
+
+    const seen: HarnessNotification[] = []
+    await harness.run('use codex', {
+      sessionId: 'driver-session',
+      driverId: 'codex',
+      onNotification: (notification) => { seen.push(notification) },
+    })
+    expect(await harness.runtime('driver-session')).toEqual({
+      status: {
+        sessionId: 'driver-session',
+        driverId: 'codex',
+        availability: { kind: 'cold' },
+        attention: { approvals: 0, userInputs: 0 },
+        operation: 'conversation',
+        revision: 1,
+        updatedAt: 1,
+      },
+    })
+    await expect(harness.run('switch', { sessionId: 'driver-session', driverId: 'dsh' }))
+      .rejects.toThrow('is bound to Agent Driver "codex"')
+    expect(seen.some(notification => notification.method === 'session.created')).toBe(false)
+    expect(seen.some(notification => notification.method === 'session.runtime')).toBe(false)
+    await harness.close()
+  })
+
+  it('rejects malformed Session runtime values at the JSON-RPC wire', async () => {
+    const client = new HarnessClient(fakeLaunch({ FAKE_MALFORMED_RUNTIME: '1' }))
+    cleanups.push(() => client.close())
+    await client.initialize({ cwd: process.cwd(), provider: 'p', model: 'm' })
+
+    await expect(client.runtime('malformed-runtime')).rejects.toThrow(SdkProtocolError)
+  })
+
+  it('keeps session.created and session.runtime notifications available to low-level subscribers', async () => {
+    const client = new HarnessClient(fakeLaunch())
+    cleanups.push(() => client.close())
+    await client.initialize({ cwd: process.cwd(), provider: 'p', model: 'm' })
+    const subscription = client.subscribeSessionTree('notification-session')
+
+    await client.prompt('notification-session', normalizeInput('go'), 'codex')
+
+    expect(await subscription.next()).toEqual({
+      method: 'session.created',
+      params: { sessionId: 'notification-session', driverId: 'codex' },
+    })
+    const runtimeNotification = await subscription.next()
+    expect(runtimeNotification.method).toBe('session.runtime')
+    if (runtimeNotification.method !== 'session.runtime') throw new Error('expected session.runtime notification')
+    expect(runtimeNotification.params.status).toMatchObject({
+      sessionId: 'notification-session',
+      driverId: 'codex',
+    })
+    subscription.close()
+    await client.close()
+  })
+
   it('keeps events root-scoped while streaming notifications for the session tree', async () => {
     const harness = harnessWith({ FAKE_SUBAGENT: '1' })
     const seen: HarnessNotification[] = []
@@ -147,7 +214,7 @@ describe('DeepSeekHarness', () => {
     await harness.close()
   })
 
-  it('sends the configured cwd/provider/model/maxTokens in the handshake exactly once', async () => {
+  it('sends the configured cwd/provider/model/maxTokens/driverId in the handshake exactly once', async () => {
     const dir = await tempDir('sdk-client-init-')
     const recordFile = join(dir, 'init.jsonl')
     const harness = new DeepSeekHarness({
@@ -156,6 +223,7 @@ describe('DeepSeekHarness', () => {
       provider: 'custom-provider',
       model: 'custom-model',
       maxTokens: 4096,
+      driverId: 'codex',
     })
     cleanups.push(() => harness.close())
     await harness.run('one')
@@ -167,6 +235,7 @@ describe('DeepSeekHarness', () => {
       provider: 'custom-provider',
       model: 'custom-model',
       maxTokens: 4096,
+      driverId: 'codex',
     }])
   })
 
@@ -227,6 +296,13 @@ describe('DeepSeekHarness', () => {
   it('rejects a malformed initialize result as a protocol error', async () => {
     const harness = harnessWith({ FAKE_MALFORMED: '1' })
     await expect(harness.run('bad')).rejects.toThrow(SdkProtocolError)
+  })
+
+  it('rejects promptly when the selected Driver becomes unavailable before receipt', async () => {
+    const harness = harnessWith({ FAKE_UNAVAILABLE: '1' })
+    await expect(harness.run('unavailable')).rejects.toThrow(
+      'is unavailable (fake-unavailable): Fake Driver unavailable.',
+    )
   })
 
   it('supports await using disposal', async () => {
@@ -361,7 +437,7 @@ describe('HarnessClient', () => {
     await client.prompt('sub-test', normalizeInput('go'))
 
     const first = await firstPending
-    expect(first.method).toBe('session.event')
+    expect(first.method).toBe('session.created')
     const idle = await idleOnly.next()
     expect(idle.method).toBe('session.status')
     expect(idleOnly.tryNext()).toBeUndefined()

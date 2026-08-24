@@ -21,6 +21,7 @@ import {
   sessionCancelValueSchema,
   sessionAttachmentValueSchema,
   sessionCreateValueSchema,
+  sessionDriversValueSchema,
   sessionForkValueSchema,
   sessionHistoryValueSchema,
   sessionListValueSchema,
@@ -86,6 +87,7 @@ import {
  */
 export interface IApiClient {
   sessions: {
+    drivers(payload: RequestPayload<'session.drivers'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'session.drivers'>>>
     list(payload: RequestPayload<'session.list'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'session.list'>>>
     search(payload: RequestPayload<'session.search'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'session.search'>>>
     create(payload: RequestPayload<'session.create'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'session.create'>>>
@@ -170,6 +172,7 @@ export interface IApiClient {
  * mirror of the handler's request table; key coverage compiler-enforced against RpcMethodMap).
  */
 const UNARY_VALUE_SCHEMAS: { [K in keyof RpcMethodMap]: z.ZodType<Wire<ResponseValue<K>>> } = {
+  'session.drivers': sessionDriversValueSchema,
   'session.list': sessionListValueSchema,
   'session.search': sessionSearchValueSchema,
   'session.create': sessionCreateValueSchema,
@@ -410,6 +413,7 @@ export abstract class AbstractApiClient implements IApiClient {
   // ---- IApiClient API (arrow properties so destructured/passed references stay bound) ----
 
   readonly sessions: IApiClient['sessions'] = {
+    drivers: (payload, signal) => this.callUnary('session.drivers', payload, signal),
     list: (payload, signal) => this.callUnary('session.list', payload, signal),
     search: (payload, signal) => this.callUnary('session.search', payload, signal),
     create: (payload, signal) => this.callUnary('session.create', payload, signal),

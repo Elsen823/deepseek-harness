@@ -11,7 +11,8 @@ import type { Wire } from './rpc.schema.ts'
 import { rpcErrorSchema, rpcIdSchema } from './rpc.schema.ts'
 import { approvalRequestIdSchema } from './approvals.schema.ts'
 import {
-  contentBlockSchema, messageIdSchema, sessionEventSchema, sessionIdSchema, toolEventViewSchema,
+  agentDriverIdSchema, contentBlockSchema, messageIdSchema, sessionEventSchema, sessionIdSchema,
+  sessionRuntimeStatusSchema, toolEventViewSchema,
 } from './sessions.schema.ts'
 import { taskViewSchema } from './jobs.schema.ts'
 import { workspaceIdSchema, workspaceViewSchema } from './workspace.schema.ts'
@@ -71,6 +72,7 @@ export const hostFrameSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('host/session-added'),
     sessionId: sessionIdSchema,
+    driverId: agentDriverIdSchema,
     blank: z.boolean(),
     parentSessionId: sessionIdSchema.optional(),
     origin: z.literal('subagent').optional(),
@@ -79,6 +81,7 @@ export const hostFrameSchema = z.discriminatedUnion('type', [
   }),
   z.object({ type: z.literal('host/session-removed'), sessionId: sessionIdSchema }),
   z.object({ type: z.literal('host/session-status'), sessionId: sessionIdSchema, running: z.boolean() }),
+  z.object({ type: z.literal('host/session-runtime'), status: sessionRuntimeStatusSchema }),
   z.object({ type: z.literal('host/agent-error'), sessionId: sessionIdSchema, message: z.string() }),
   z.object({ type: z.literal('host/workspace-changed'), workspace: workspaceViewSchema }),
   z.object({ type: z.literal('host/workspace-removed'), workspaceId: workspaceIdSchema }),

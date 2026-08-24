@@ -11,7 +11,7 @@
 
 import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, SessionId } from '@deepseek-ai/dsh-session'
 import type { Session } from '@deepseek-ai/dsh-session'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { createScope } from '@deepseek-ai/dsh-scope'
@@ -34,7 +34,7 @@ async function harness(options: { withPermission?: boolean; config?: Config } = 
   })
   await ctx.plugin(ApprovalService)
   if (options.withPermission !== false) await ctx.plugin(PermissionPresetService, options.config ?? {})
-  return { ctx, session: ctx.sessions.create(SessionId('perm-projected')) }
+  return { ctx, session: ctx.sessions.create(SessionId('perm-projected'), { meta: { driverId: AgentDriverId('dsh') } }) }
 }
 
 /** Mint a scoped agent over a live session (the command executor's addressing shape). */

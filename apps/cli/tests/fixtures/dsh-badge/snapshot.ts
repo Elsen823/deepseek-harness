@@ -3,7 +3,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { agentEvents, Inbox, type Agent } from '@deepseek-ai/dsh-agent'
 import { CallId } from '@deepseek-ai/dsh-llm'
 import { boot, loadOverlayPatches } from '@deepseek-ai/dsh-app-boot'
-import { SessionId } from '@deepseek-ai/dsh-session'
+import { AgentDriverId, SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-skill'
 import type {} from '@deepseek-ai/dsh-tools'
 
@@ -18,7 +18,9 @@ const ctx = await boot('dsh-badge-snapshot', rootConfigPath, [
 
 try {
   const agentId = SessionId('dsh-badge-snapshot')
-  const session = ctx.sessions.create(agentId, { meta: { cwd: process.cwd() } })
+  const session = ctx.sessions.create(agentId, {
+    meta: { driverId: AgentDriverId('dsh'), cwd: process.cwd() },
+  })
   const agent: Agent = {
     ctx: new Context(),
     id: agentId,

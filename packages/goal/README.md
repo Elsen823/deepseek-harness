@@ -7,6 +7,7 @@ Durable objective state for an agent session, owned independently of the model-f
 | Package | Role | ctx key |
 |---|---|---|
 | [`goal/`](goal/README.md) | Goal state and lifecycle | `ctx.goals` |
+| [`objective/`](objective/README.md) | Driver-neutral Objective projection, including DSH Goal adaptation | — |
 | [`goal-round-driver/`](goal-round-driver/README.md) | Same-session goal continuation | — |
 | [`tool-goal/`](tool-goal/README.md) | Model-facing goal tools | — |
 | [`command-goal/`](command-goal/README.md) | Human-facing goal command | — |

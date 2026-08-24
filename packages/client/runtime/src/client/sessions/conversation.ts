@@ -12,7 +12,7 @@ import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type { LlmRetryEventData } from '@deepseek-ai/dsh-llm-retry/types'
 import type { TodoItem } from '@deepseek-ai/dsh-session/types'
 import type {
-  RpcError, SessionId, SubagentAddress, ToolCallView, ToolResultView,
+  RpcError, SessionId, SessionRuntimeStatus, SubagentAddress, ToolCallView, ToolResultView,
 } from '@deepseek-ai/dsh-api-remotes/client'
 import type { PendingInteraction } from './pending.ts'
 import type { ContextProvenanceView, KnownContextForm } from './context-provenance.ts'
@@ -452,6 +452,8 @@ export interface ConversationSnapshot {
   /** Authoritative transient inbox snapshot, including queued and steering placements. */
   queue: readonly QueuedMessage[]
   running: boolean
+  /** Latest Host process-local availability, operation, and human-attention snapshot. */
+  runtime?: SessionRuntimeStatus
   /**
    * Catalog-discovered continuation address. Its parent availability controls
    * human input; null means ordinary session transport.

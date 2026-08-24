@@ -7,7 +7,7 @@ from typing import Callable
 
 from .client import HarnessClient, HarnessConfig
 from .errors import SdkProtocolError
-from .models import JsonObject, Notification
+from .models import AgentDriverCatalog, JsonObject, Notification, SessionRuntimeResponse
 
 
 @dataclass(slots=True)
@@ -22,6 +22,7 @@ class DeepSeekHarnessConfig:
     provider: str = "deepseek-official"
     model: str = "deepseek-v4-flash"
     max_tokens: int | None = None
+    driver_id: str | None = None
     cwd: str | None = None
     runtime_cwd: str | None = None
     session_root: str | None = None
@@ -103,6 +104,7 @@ class DeepSeekHarness:
             provider=self.config.provider,
             model=self.config.model,
             max_tokens=self.config.max_tokens,
+            driver_id=self.config.driver_id,
         )
         self._initialized = True
 
@@ -110,24 +112,46 @@ class DeepSeekHarness:
         self._client.close()
         self._initialized = False
 
-    def start_session(self, session_id: str | None = None) -> "Session":
+    def drivers(self) -> AgentDriverCatalog:
+        """Return the active Agent Driver catalog."""
         self.start()
-        return Session(self, session_id or f"session-{uuid.uuid4().hex}")
+        return self._client.drivers()
+
+    def runtime(self, session_id: str) -> SessionRuntimeResponse:
+        """Return one process-local Session runtime value without activating it."""
+        self.start()
+        return self._client.runtime(session_id)
+
+    def start_session(
+        self,
+        session_id: str | None = None,
+        driver_id: str | None = None,
+    ) -> "Session":
+        self.start()
+        selected_driver_id = self.config.driver_id if driver_id is None else driver_id
+        return Session(self, session_id or f"session-{uuid.uuid4().hex}", selected_driver_id)
 
     def run(
         self,
         input: str | list[JsonObject],
         *,
         session_id: str | None = None,
+        driver_id: str | None = None,
         on_notification: Callable[[Notification], None] | None = None,
     ) -> RunResult:
-        return self.start_session(session_id).run(input, on_notification=on_notification)
+        return self.start_session(session_id, driver_id).run(input, on_notification=on_notification)
 
 
 class Session:
-    def __init__(self, harness: DeepSeekHarness, session_id: str) -> None:
+    def __init__(
+        self,
+        harness: DeepSeekHarness,
+        session_id: str,
+        driver_id: str | None = None,
+    ) -> None:
         self.harness = harness
         self.id = session_id
+        self.driver_id = driver_id
 
     def run(
         self,
@@ -155,12 +179,27 @@ class Session:
             message_id = self.harness.client.session_prompt(
                 self.id,
                 content_blocks,
+                driver_id=self.driver_id,
                 notification_subscription=subscription,
             )
 
             received = False
             while True:
                 notification = subscription.next()
+                if notification.method == "session.runtime":
+                    status = notification.payload.get("status")
+                    availability = status.get("availability") if isinstance(status, dict) else None
+                    if (
+                        isinstance(status, dict)
+                        and status.get("sessionId") == self.id
+                        and isinstance(availability, dict)
+                        and availability.get("kind") == "unavailable"
+                    ):
+                        collect(notification)
+                        reason = availability.get("reason")
+                        code = reason.get("code") if isinstance(reason, dict) else "unavailable"
+                        message = reason.get("message") if isinstance(reason, dict) else "Session runtime is unavailable."
+                        raise SdkProtocolError(f'session "{self.id}" is unavailable ({code}): {message}')
                 if not received:
                     if not _is_inbox_receipt(notification, self.id, message_id):
                         continue

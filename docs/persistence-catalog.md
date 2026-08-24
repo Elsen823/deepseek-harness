@@ -90,7 +90,7 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 }[T]
 ```
 
-Sources: [`packages/core/session/src/types.ts:340`](../packages/core/session/src/types.ts) · [`packages/core/session/src/types.ts:347`](../packages/core/session/src/types.ts) · [`packages/core/session/src/types.ts:376`](../packages/core/session/src/types.ts) · [`packages/core/session/src/types.ts:408`](../packages/core/session/src/types.ts)
+Sources: [`packages/core/session/src/types.ts:708`](../packages/core/session/src/types.ts) · [`packages/core/session/src/types.ts:715`](../packages/core/session/src/types.ts) · [`packages/core/session/src/types.ts:744`](../packages/core/session/src/types.ts) · [`packages/core/session/src/types.ts:776`](../packages/core/session/src/types.ts)
 
 ## Events
 
@@ -116,6 +116,99 @@ Sources: [`packages/core/session/src/types.ts:340`](../packages/core/session/src
 ```
 
 Source: [`packages/core/agent/src/types.ts:19`](../packages/core/agent/src/types.ts)
+
+### `agent-driver/*`
+
+<a id="agent-driveractivation--log-only"></a>
+
+#### `agent-driver/activation` — log-only
+
+```ts persistence-catalog
+/**
+ * Whole activation snapshot emitted by any Agent Driver. The outer fields
+ * remain readable when its Driver plugin is unloaded; an unknown nested
+ * `driver.kind` falls back to those fields. Log-only.
+ */
+'agent-driver/activation': AgentDriverActivationSnapshot
+```
+
+Source: [`packages/core/session/src/types.ts:582`](../packages/core/session/src/types.ts)
+
+<a id="agent-driveractivity--log-only"></a>
+
+#### `agent-driver/activity` — log-only
+
+```ts persistence-catalog
+/**
+ * Whole semantic activity item or group snapshot. It is not a synthetic DSH
+ * `tool/*` event and contributes no derived model history. Log-only.
+ */
+'agent-driver/activity': AgentDriverActivitySnapshot
+```
+
+Source: [`packages/core/session/src/types.ts:594`](../packages/core/session/src/types.ts)
+
+<a id="agent-drivercheckpoint--log-only"></a>
+
+#### `agent-driver/checkpoint` — log-only
+
+```ts persistence-catalog
+/** Whole checkpoint lifecycle snapshot with provenance and compatibility facts. Log-only. */
+'agent-driver/checkpoint': AgentDriverCheckpointSnapshot
+```
+
+Source: [`packages/core/session/src/types.ts:604`](../packages/core/session/src/types.ts)
+
+<a id="agent-drivermodel-attempt--log-only"></a>
+
+#### `agent-driver/model-attempt` — log-only
+
+```ts persistence-catalog
+/** One execution attempt under a captured model-request policy. Log-only. */
+'agent-driver/model-attempt': AgentDriverModelAttemptSnapshot
+```
+
+Source: [`packages/core/session/src/types.ts:589`](../packages/core/session/src/types.ts)
+
+<a id="agent-drivermodel-request--log-only"></a>
+
+#### `agent-driver/model-request` — log-only
+
+```ts persistence-catalog
+/**
+ * Exact model-visible request plus captured execution policy. It contains no
+ * `AbortSignal`, provider credentials, or other live authority. Log-only.
+ */
+'agent-driver/model-request': AgentDriverModelRequestSnapshot
+```
+
+Source: [`packages/core/session/src/types.ts:587`](../packages/core/session/src/types.ts)
+
+<a id="agent-driverobjective--log-only"></a>
+
+#### `agent-driver/objective` — log-only
+
+```ts persistence-catalog
+/**
+ * Driver-neutral current Objective snapshot, or `null` when the owner reports
+ * no current Objective. DSH `goal/change` remains the authoritative DSH Goal
+ * stream and is adapted by `@deepseek-ai/dsh-objective` without duplication.
+ */
+'agent-driver/objective': { objective: AgentDriverObjectiveSnapshot | null; driver?: AgentDriverDetail }
+```
+
+Source: [`packages/core/session/src/types.ts:600`](../packages/core/session/src/types.ts)
+
+<a id="agent-driverproposed-plan--log-only"></a>
+
+#### `agent-driver/proposed-plan` — log-only
+
+```ts persistence-catalog
+/** Whole durable Proposed Plan document snapshot, or `null` when the owner has no current document. */
+'agent-driver/proposed-plan': { plan: AgentDriverProposedPlanSnapshot | null; driver?: AgentDriverDetail }
+```
+
+Source: [`packages/core/session/src/types.ts:602`](../packages/core/session/src/types.ts)
 
 ### `agent-preset/*`
 
@@ -215,7 +308,7 @@ Source: [`packages/interaction/user-approval/src/index.ts:67`](../packages/inter
 
 Types: [StreamChunk](subsystems/llm-streaming.md)
 
-Source: [`packages/core/session/src/types.ts:266`](../packages/core/session/src/types.ts)
+Source: [`packages/core/session/src/types.ts:634`](../packages/core/session/src/types.ts)
 
 <a id="assistantmessage--surface"></a>
 
@@ -237,7 +330,7 @@ Source: [`packages/core/session/src/types.ts:266`](../packages/core/session/src/
 
 Types: [TokenUsage](subsystems/llm-streaming.md)
 
-Source: [`packages/core/session/src/types.ts:277`](../packages/core/session/src/types.ts)
+Source: [`packages/core/session/src/types.ts:645`](../packages/core/session/src/types.ts)
 
 ### `command/*`
 
@@ -514,7 +607,7 @@ Source: [`packages/llm/llm-retry/src/types.ts:11`](../packages/llm/llm-retry/src
 'permission/preset': { preset: string }
 ```
 
-Source: [`packages/interaction/permission-presets/src/index.ts:50`](../packages/interaction/permission-presets/src/index.ts)
+Source: [`packages/interaction/permission-presets/src/index.ts:51`](../packages/interaction/permission-presets/src/index.ts)
 
 ### `plan/*`
 
@@ -547,7 +640,7 @@ Source: [`packages/plan/plan-mode/src/index.ts:53`](../packages/plan/plan-mode/s
 'request/context': RequestContext
 ```
 
-Source: [`packages/core/session/src/types.ts:313`](../packages/core/session/src/types.ts)
+Source: [`packages/core/session/src/types.ts:681`](../packages/core/session/src/types.ts)
 
 <a id="requestheader--log-only"></a>
 
@@ -561,7 +654,7 @@ Source: [`packages/core/session/src/types.ts:313`](../packages/core/session/src/
 'request/header': { header: EpochHeader; reason: RequestHeaderReason }
 ```
 
-Source: [`packages/core/session/src/types.ts:308`](../packages/core/session/src/types.ts)
+Source: [`packages/core/session/src/types.ts:676`](../packages/core/session/src/types.ts)
 
 ### `sandbox/*`
 
@@ -636,7 +729,7 @@ Source: [`packages/schedule/schedule/src/types.ts:219`](../packages/schedule/sch
 'session/end-seed': Record<string, never>
 ```
 
-Source: [`packages/core/session/src/types.ts:336`](../packages/core/session/src/types.ts)
+Source: [`packages/core/session/src/types.ts:704`](../packages/core/session/src/types.ts)
 
 <a id="sessiontitle--log-only"></a>
 
@@ -678,7 +771,7 @@ Source: [`packages/session/session-title-llm/src/index.ts:43`](../packages/sessi
 'step/end': { turn: number; step: number }
 ```
 
-Source: [`packages/core/session/src/types.ts:256`](../packages/core/session/src/types.ts)
+Source: [`packages/core/session/src/types.ts:624`](../packages/core/session/src/types.ts)
 
 <a id="stepstart--log-only"></a>
 
@@ -689,7 +782,7 @@ Source: [`packages/core/session/src/types.ts:256`](../packages/core/session/src/
 'step/start': { turn: number; step: number }
 ```
 
-Source: [`packages/core/session/src/types.ts:254`](../packages/core/session/src/types.ts)
+Source: [`packages/core/session/src/types.ts:622`](../packages/core/session/src/types.ts)
 
 ### `subagent/*`
 
@@ -782,7 +875,7 @@ Source: [`packages/experimental/agent-team/src/types.ts:208`](../packages/experi
 
 Types: [TodoItem](subsystems/session.md)
 
-Source: [`packages/core/session/src/types.ts:303`](../packages/core/session/src/types.ts)
+Source: [`packages/core/session/src/types.ts:671`](../packages/core/session/src/types.ts)
 
 ### `tool/*`
 
@@ -801,7 +894,7 @@ Source: [`packages/core/session/src/types.ts:303`](../packages/core/session/src/
 
 Types: [CallId](subsystems/core.md)
 
-Source: [`packages/core/session/src/types.ts:283`](../packages/core/session/src/types.ts)
+Source: [`packages/core/session/src/types.ts:651`](../packages/core/session/src/types.ts)
 
 <a id="toolcode-dispatch--log-only"></a>
 
@@ -876,7 +969,7 @@ Source: [`packages/core/tools/src/types.ts:40`](../packages/core/tools/src/types
 }
 ```
 
-Source: [`packages/core/session/src/types.ts:295`](../packages/core/session/src/types.ts)
+Source: [`packages/core/session/src/types.ts:663`](../packages/core/session/src/types.ts)
 
 ### `tool-workflow/*`
 
@@ -956,7 +1049,7 @@ Source: [`packages/workflow/tool-workflow/src/types.ts:47`](../packages/workflow
 
 Types: [TurnEndReason](subsystems/session.md)
 
-Source: [`packages/core/session/src/types.ts:252`](../packages/core/session/src/types.ts)
+Source: [`packages/core/session/src/types.ts:620`](../packages/core/session/src/types.ts)
 
 <a id="turnstart--log-only"></a>
 
@@ -972,7 +1065,7 @@ Source: [`packages/core/session/src/types.ts:252`](../packages/core/session/src/
 'turn/start': { turn: number }
 ```
 
-Source: [`packages/core/session/src/types.ts:243`](../packages/core/session/src/types.ts)
+Source: [`packages/core/session/src/types.ts:611`](../packages/core/session/src/types.ts)
 
 ### `user/*`
 
@@ -991,7 +1084,7 @@ Source: [`packages/core/session/src/types.ts:243`](../packages/core/session/src/
 'user/message': UserMessage
 ```
 
-Source: [`packages/core/session/src/types.ts:264`](../packages/core/session/src/types.ts)
+Source: [`packages/core/session/src/types.ts:632`](../packages/core/session/src/types.ts)
 
 ### `web/*`
 

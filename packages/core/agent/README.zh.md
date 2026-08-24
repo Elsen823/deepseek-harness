@@ -17,7 +17,7 @@ Agent 接口、注册表、进程本地发起方作用域，以及 `agent/*` 事
 `AgentOptions` 提供初始的提供方／模型路由，以及可选的正数 `maxTokens` 输出上限。具体循环会解析确切模型的适配器默认值，把生效上限记录到请求 header，并应用到每次对话模型请求；显式 Agent 选项优先，省略时由适配器或提供方路由默认值控制。
 
 - `ctx.agents.register(agent: Agent): () => void`：记录一个 **已经构造完成** 的 agent。随调用 fiber dispose。
-- 高级有序生命周期：`enter(agent, owner): () => void` 强制 `agent.id === agent.session.id`，执行权威 ID 冲突检查，并在不通知的情况下插入；`owner` 显式记录实时创建方 agent 关系（根 agent 为 `undefined`），与持久会话谱系无关。`announce(agent)` 恰好发出一次 `agent/created`。创建监听器同步请求的 detach 会延后到该次分发结束；每次 detach 都会检查捕获的条目对象，因此陈旧能力无法删除后续使用同一 ID 的替代项。异步工厂使用这一拆分；普通插件使用 `register()`。
+- 高级有序生命周期：`enter(agent, owner): () => void` 强制 `agent.id === agent.session.id`，执行权威 ID 冲突检查，并在不通知的情况下插入；`owner` 显式记录实时创建方 agent 关系（根 agent 为 `undefined`），与持久会话谱系无关。`announce(agent)` 恰好发出一次 `agent/created`。创建监听器同步请求的 detach 会延后到该次分发结束；每次 detach 都会检查捕获的条目对象，因此陈旧能力无法删除后续使用同一 ID 的替代项。受管 Driver 事务使用这一拆分；普通插件使用 `register()`。
 - `ctx.agents.get(id: SessionId): Agent | undefined`
 - `ctx.agents.isOwnedBy(id: SessionId, owner: Agent): boolean`：该确切实时条目是否通过父 agent 的作用域上下文创建；运行时所有权与持久会话谱系无关。
 - `ctx.agents.list(): Agent[]`
@@ -36,15 +36,17 @@ Agent 接口、注册表、进程本地发起方作用域，以及 `agent/*` 事
 
 该作用域携带 `Agent` 本身，并且只在进程内有效。环境中的身份既不是存活证明，也不是授权；在服务、worker、进程、持久化和 wire 边界，显式 Agent 字段仍是权威来源。Teardown 会拒绝新边界，允许注入的依赖方和返回 Promise 的边界 drain，然后禁用底层 `AsyncLocalStorage`；未返回的工作仍归将其分离的子系统所有。如果某个边界继承的异步链开始卸载一个拥有它的 Cordis fiber，该嵌套边界链会从 drain 中释放，使卸载不会等待自身；其 continuation 会在 teardown 后观察到已 dispose 的服务。详细边界与 teardown 约定由[发起方作用域决策](../../../.agents/notes/implemented/architecture/2026-07-15-agent-initiator-scope.zh.md)拥有。
 
-#### 工厂 API（创建）
+#### Agent Driver 注册表与创建
 
-Agent *创建* 由实现 `AgentFactory` 的插件（`dsh-agent-loop`）提供，并通过 `setFactory` 注册。这样，创建功能留在 `dsh-agent` 接口上，消费方（UI、ACP（Agent Client Protocol）桥接层）可以面向 `ctx.agents` 编程，而不依赖具体循环包。注册表会把已经 traced 的 Service 规范化为具体目标，并通过调用方上下文重新 trace 每次调用；这既避免嵌套 Cordis shadow，也会把显式、绑定调用方的 `ownerCtx` 传给普通工厂。
+`AgentDriver` 是 `ctx.agents` 背后的命名执行 seam。每项 effect 作用域注册提供不可变的 `{ id, name }` 发现信息，以及一个 `prepare(session, agentOptions, signal)` 操作。准备操作返回未发布 `Agent`，并只暴露 `start()` 和执行完全停稳 `dispose()` 钩子；Driver 不发布或分离注册表条目。`listDrivers()` 按持久 Driver id 排序，`getDriver()` 返回冻结的发现记录，重复 id 在注册时失败。
 
-- `ctx.agents.setFactory(factory: AgentFactory): () => void`：注册创建工厂（循环在构造时调用）。第二个工厂会导致抛出；dispose 时清空槽位。
-- `ctx.agents.create(options: CreateAgentOptions): Promise<AgentHandle>`：创建会话和 agent，在不发布的情况下等待可选 setup，然后通过最终的 `SessionStore.enter()` 与 `AgentRegistry.enter()` 检查发布。不支持并发创建同一 ID：多个操作可以进行准备，但只有一个能进入；每个失败方都会回滚其私有作用域／会话／驱动器。可选且只用于创建的 `signal` 会取消未发布的 setup，并在返回 handle 前分离；之后的取消使用 `handle.dispose()` 或 `agent.cancel()`。发布包含在回滚范围内，回滚期间每条已交付创建边都会成对处理。未注册工厂时拒绝。
-- `ctx.agents.resume(options: ResumeAgentOptions): Promise<AgentHandle>`：加载持久化会话（[会话持久化](../../../.agents/notes/implemented/architecture/2026-06-14-session-persistence.zh.md)），创建新的未发布 agent 作用域，等待可选 setup，并使用相同的最终进入发布序列。其可选 `signal` 同样只用于创建。未注册工厂或未配置会话持久化时拒绝。
+- `ctx.agents.registerDriver(driver: AgentDriver): () => void`：注册一个 Driver 代际。提供方卸载会中止待完成准备，并在注册 effect 结算前排空该代际创建的全部活跃 Agent。
+- `ctx.agents.create(options: CreateAgentOptions): Promise<AgentHandle>`：解析 `options.driverId` 或配置的 `defaultDriverId`（默认 `dsh`），把解析后的 id 写入新 Session header，在未发布状态准备 Driver 和可选 setup，再通过最终 Session 与 Agent 冲突检查提交并发布。
+- `ctx.agents.resume(options: ResumeAgentOptions): Promise<AgentHandle>`：恰好调用一次持久化准备，从恢复的 Session header 读取不可变 Driver 绑定，要求该 Driver 已注册，再执行相同的未发布 setup 与发布事务。当前默认值不会覆盖已存选择。
 
-`AgentHandle = { agent: Agent; dispose(): Promise<void> }`。Disposer 是一项 **消费方能力**；仅持有裸注册表条目的观察方不能 teardown agent。调用方 fiber 和已注册工厂提供方是结构化共同拥有者：调用方卸载会强制结构化所有权，而工厂卸载必须停止旧实例，因为它们的作用域依赖范围属于该提供方。任意拥有者调用 `dispose()` 都会到达同一个记忆化完全停稳边界：它停止循环，等待循环退出，注销 agent，从存储中移除其会话，最后撤销其作用域世界。`ctx.agents.get(id)` 仍返回裸 `Agent`；ACP 桥接层与进程内 subagent 后端持有消费方 handle，而配置创建的 agent 已由循环 fiber 拥有。
+两条路径都会先进入 Session 和 Agent，再依次通知 `session/created`、`agent/created` 与 `agent/session-start`；setup 或 commit 失败、取消、拥有者卸载、Driver 卸载和同步发布 veto 都汇合到同一回滚。并发同 ID 操作可以同时准备，但最终进入只允许一个发布，其余操作仅回收自己的私有资源。
+
+`AgentHandle = { agent: Agent; dispose(): Promise<void> }`。调用方 fiber、确切 Driver 提供方代际与 handle 共同拥有一个记忆化 teardown。它中止准备，等待 Driver 钩子停止、完全停稳并撤销 `agent.ctx`，再依次分离 Agent 和 Session；只持有裸 Agent 的注册表观察方不能执行 dispose。
 
 ### 实时事件
 
@@ -80,7 +82,7 @@ inbox 的实时通知刻意采用逐消息的最小载荷：`agent/inbox/inserte
 
 - Agent 创建：`AgentLoop.create()` 是具体配置路径实现（位于 `dsh-agent-loop`），程序化消费方则通过 `ctx.agents.create()`/`ctx.agents.resume()` 创建或恢复有所有权的 agent。替换循环时，应实现 `Agent` 并通过 `ctx.agents.register()` 注册。
 - 事件监听器：全部 `agent/*` 事件都在此处声明，不需要依赖循环包。
-- subagent 委派不是 `Agent` 方法；提供方通过工厂 API 创建或驱动普通 handle，因此委派传输留在核心 agent 接口之外。
+- subagent 委派不是 `Agent` 方法；提供方通过 Driver 注册表 API 创建或驱动普通 handle，因此委派传输留在核心 agent 接口之外。
 
 ## 模型体验
 
@@ -117,7 +119,7 @@ inbox 的实时通知刻意采用逐消息的最小载荷：`agent/inbox/inserte
 - **发起方作用域只存在于进程内**：worker、子进程、HTTP、持久队列和重启必须显式传递所需身份。
 - **环境身份可能比存活状态更久**：消费方在生命周期敏感工作前，仍要检查 `agent.status`、取消状态和所属能力约定。
 - **委派以外的 agent 间通道**：共享状态、流式子输出和后台／轮询语义仍在当前同步 `ctx.subagents` seam 之外。
-- **`agent/session-start` 不能为启动设置门禁**：它仍是同步且不可 veto 的通知；必须在发布前完成的异步组合属于工厂的 `setup(agentCtx)` 事务。
+- **`agent/session-start` 不能为启动设置门禁**：它仍是同步且不可 veto 的通知；必须在发布前完成的异步组合属于注册表的 `setup(agentCtx)` 事务。
 - **`cancel()` 默认清空 inbox**：它会中止正在处理的轮次以及排队和 steering 工作；`cancel(cause, { keepInbox: true })` 只中止轮次并保留待处理项。仍不存在只中止步骤、同时让正在处理的轮次继续运行的操作（[停止 API Agent Note](../../../.agents/notes/implemented/simplification/2026-06-20-public-agent-stop-api.zh.md)）。
 - **每条附加 `UserMessage` 恰好携带一个 `MessageSource`**：多个插件合并到一次工具调用上的贡献会归入同一来源，因此该消息无法列出多个生产者。
 - **`SessionStartSource` 预留 `'clear'`/`'compact'`，但还没有发出方**：在驱动子系统落地前，只会出现 `'startup'`/`'resume'`（`TODO(compaction)`）。

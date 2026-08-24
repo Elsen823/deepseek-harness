@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import SessionStore, { SessionId, type Session } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, SessionId, type Session } from '@deepseek-ai/dsh-session'
 import { createUserMessage, ProviderRequestId } from '@deepseek-ai/dsh-llm'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
 import InvariantRegistry from '@deepseek-ai/dsh-invariants'
@@ -17,7 +17,7 @@ async function setup(): Promise<Context> {
 }
 
 function openStep(ctx: Context, id: string, turn = 1, step = 1) {
-  const session = ctx.sessions.create(SessionId(id))
+  const session = ctx.sessions.create(SessionId(id), { meta: { driverId: AgentDriverId('dsh') } })
   session.append('turn/start', { turn })
   session.append('step/start', { turn, step })
   session.append('request/header', {
@@ -156,7 +156,7 @@ describe('llm-retry invariants', () => {
 
   it('rejects records outside the currently open turn and step', async () => {
     const ctx = await setup()
-    const absent = ctx.sessions.create(SessionId('retry-invariant-no-turn'))
+    const absent = ctx.sessions.create(SessionId('retry-invariant-no-turn'), { meta: { driverId: AgentDriverId('dsh') } })
     expect(() => {
       absent.append('llm/retry', { turn: 1, step: 1, ...normal })
     }).toThrow(/inside an open turn/)
@@ -172,7 +172,7 @@ describe('llm-retry invariants', () => {
       closedStep.append('llm/retry', { turn: 1, step: 1, ...normal })
     }).toThrow(/inside an open step/)
 
-    const noStep = ctx.sessions.create(SessionId('retry-invariant-no-step'))
+    const noStep = ctx.sessions.create(SessionId('retry-invariant-no-step'), { meta: { driverId: AgentDriverId('dsh') } })
     noStep.append('turn/start', { turn: 1 })
     expect(() => {
       noStep.append('llm/retry', { turn: 1, step: 1, ...normal })
@@ -279,14 +279,14 @@ describe('llm-retry invariants', () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
 
-    const missingEnd = ctx.sessions.create(SessionId('retry-invariant-missing-end'))
+    const missingEnd = ctx.sessions.create(SessionId('retry-invariant-missing-end'), { meta: { driverId: AgentDriverId('dsh') } })
     missingEnd.append('user/message', createUserMessage({
       content: [{ type: 'text', text: 'idle context' }],
       source: { kind: 'user' },
     }), { surfaceOp: 'append' })
     appendRetryTurn(missingEnd, 2)
 
-    const nonFailureEnd = ctx.sessions.create(SessionId('retry-invariant-non-failure-end'))
+    const nonFailureEnd = ctx.sessions.create(SessionId('retry-invariant-non-failure-end'), { meta: { driverId: AgentDriverId('dsh') } })
     nonFailureEnd.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
     nonFailureEnd.append('user/message', createUserMessage({
       content: [{ type: 'text', text: 'idle context' }],
@@ -294,7 +294,7 @@ describe('llm-retry invariants', () => {
     }), { surfaceOp: 'append' })
     appendRetryTurn(nonFailureEnd, 2)
 
-    const missingStart = ctx.sessions.create(SessionId('retry-invariant-missing-start'))
+    const missingStart = ctx.sessions.create(SessionId('retry-invariant-missing-start'), { meta: { driverId: AgentDriverId('dsh') } })
     missingStart.append('turn/end', { turn: 1, reason: { kind: 'error', error: failure },
     })
     appendRetryTurn(missingStart, 2)
@@ -314,7 +314,7 @@ describe('llm-retry invariants', () => {
   it('validates existing histories on late registration', async () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
-    const session = ctx.sessions.create(SessionId('retry-invariant-late'))
+    const session = ctx.sessions.create(SessionId('retry-invariant-late'), { meta: { driverId: AgentDriverId('dsh') } })
     session.append('step/start', { turn: 1, step: 1 })
     session.append('llm/retry', { turn: 1, step: 1, ...normal })
     await ctx.plugin(InvariantRegistry)

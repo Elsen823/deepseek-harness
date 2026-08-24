@@ -9,8 +9,8 @@
  */
 
 import { join } from 'node:path'
-import { decodeStorageRecord, packChunkRuns, SESSION_FORMAT_VERSION } from '@deepseek-ai/dsh-session'
-import type { SessionEvent, SessionHeader, SessionId, StorageRecord } from '@deepseek-ai/dsh-session'
+import { AgentDriverId, decodeStorageRecord, packChunkRuns, SESSION_FORMAT_VERSION } from '@deepseek-ai/dsh-session'
+import type { AgentDriverId as AgentDriverIdType, SessionEvent, SessionHeader, SessionId, StorageRecord } from '@deepseek-ai/dsh-session'
 import { SessionFormatUnsupportedError, sessionFormatVersionRefusal } from '@deepseek-ai/dsh-session-persistence'
 
 /** Physical encoding selected for JSONL session artifacts. */
@@ -33,6 +33,7 @@ export function logSuffix(compression: JsonlCompression): '.jsonl.zstd' | '.json
 export interface HeaderLine {
   type: 'session'
   version: number
+  driverId: AgentDriverIdType
   id: SessionId
   createdAt: number
   cwd?: string
@@ -52,6 +53,7 @@ export function toHeaderLine(header: SessionHeader): HeaderLine {
   return {
     type: 'session',
     version: header.version,
+    driverId: header.driverId,
     id: header.id,
     createdAt: header.createdAt,
     ...header.cwd !== undefined ? { cwd: header.cwd } : {},
@@ -74,6 +76,7 @@ export function fromHeaderLine(line: HeaderLine): SessionHeader {
   }
   return {
     version: line.version,
+    driverId: AgentDriverId(line.driverId),
     id: line.id,
     createdAt: line.createdAt,
     ...line.cwd !== undefined ? { cwd: line.cwd } : {},
@@ -91,6 +94,8 @@ function isHeaderLine(value: unknown): value is HeaderLine {
     typeof value === 'object' && value !== null
     && (value as { type?: unknown }).type === 'session'
     && typeof (value as { version?: unknown }).version === 'number'
+    && typeof (value as { driverId?: unknown }).driverId === 'string'
+    && (value as { driverId: string }).driverId.length > 0
     && typeof (value as { id?: unknown }).id === 'string'
     && typeof (value as { createdAt?: unknown }).createdAt === 'number'
     && Number.isSafeInteger((value as { createdAt: number }).createdAt)

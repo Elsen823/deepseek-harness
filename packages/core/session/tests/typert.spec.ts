@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, SessionId } from '@deepseek-ai/dsh-session'
 import TypertRegistry from '@deepseek-ai/dsh-typert-registry'
 
 describe('Session Typert provider', () => {
@@ -9,7 +9,7 @@ describe('Session Typert provider', () => {
     const sessionFiber = ctx.plugin(SessionStore)
     await sessionFiber
     await ctx.plugin(TypertRegistry)
-    const session = ctx.sessions.create(SessionId('remote-session'))
+    const session = ctx.sessions.create(SessionId('remote-session'), { meta: { driverId: AgentDriverId('dsh') } })
 
     const lookup = ctx.typert.lookups.get('session')
     expect(lookup).toMatchObject({

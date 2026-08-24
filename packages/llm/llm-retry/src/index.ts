@@ -12,10 +12,17 @@ import type { Agent, RequestErrorAction } from '@deepseek-ai/dsh-agent'
 import type { LlmFailure, ResolvedRetryPolicy } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import { RetryId } from './brand.ts'
+import {
+  capturedRetryPolicyKey,
+  nextCapturedRetry,
+  waitForRetryDelay,
+  type CapturedRetryInternals,
+} from './executor.ts'
 import type { LlmRetryEventData } from './types.ts'
 
 export type { LlmRetryEventData, LlmRetryStartedEventData } from './types.ts'
 export { RetryId } from './brand.ts'
+export * from './executor.ts'
 
 export const name = 'llm-retry'
 export const inject = ['agents']
@@ -36,10 +43,7 @@ function validateConfig(config: Config): void {
 }
 
 /** Non-serializable hooks used to make timing policy deterministic in tests. */
-export interface RetryInternals {
-  /** Random sample in the inclusive zero-to-one range used for jitter. */
-  random?: () => number
-}
+export interface RetryInternals extends CapturedRetryInternals {}
 
 type DownstreamOutcome =
   | { readonly type: 'decision'; readonly decision: RequestErrorAction }
@@ -53,41 +57,6 @@ async function settleDownstream(
   } catch (error: unknown) {
     return { type: 'error', error }
   }
-}
-
-function localDelay(config: ResolvedRetryPolicy, retry: number, random: () => number): number {
-  const exponent = Math.min(retry - 1, 1024)
-  const exponential = Math.min(config.initialDelayMs * 2 ** exponent, config.maxDelayMs)
-  const jitter = 1 - config.jitterRatio + 2 * config.jitterRatio * random()
-  return Math.min(exponential * jitter, config.maxDelayMs)
-}
-
-function retryPolicyKey(policy: ResolvedRetryPolicy): string {
-  return policy.mode === 'always'
-    ? JSON.stringify([policy.mode, policy.initialDelayMs, policy.maxDelayMs, policy.jitterRatio])
-    : JSON.stringify([
-      policy.mode,
-      policy.maxRetries,
-      [...policy.retryableCodes].sort(),
-      policy.initialDelayMs,
-      policy.maxDelayMs,
-      policy.jitterRatio,
-    ])
-}
-
-function cancellableDelay(delayMs: number, signal: AbortSignal): Promise<boolean> {
-  if (signal.aborted) return Promise.resolve(false)
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      signal.removeEventListener('abort', onAbort)
-      resolve(true)
-    }, delayMs)
-    function onAbort(): void {
-      clearTimeout(timer)
-      resolve(false)
-    }
-    signal.addEventListener('abort', onAbort, { once: true })
-  })
 }
 
 /**
@@ -148,7 +117,7 @@ export function apply(ctx: Context, config: Config = {}, internals: RetryInterna
         failure,
       }
     agent.session.append('llm/retry', eventData)
-    if (!await cancellableDelay(delayMs, fusedSignal)) return
+    if (!await waitForRetryDelay(delayMs, fusedSignal)) return
     agent.session.append('llm/retry-started', { retryId, turn, step, retry })
     return { kind: 'retry' }
   }
@@ -178,7 +147,7 @@ export function apply(ctx: Context, config: Config = {}, internals: RetryInterna
       return next()
     }
 
-    const policyKey = retryPolicyKey(policy)
+    const policyKey = capturedRetryPolicyKey(policy)
     const priorPolicyRetry = agent.session.events.findLast((event): event is SessionEvent<'llm/retry'> =>
       event.type === 'llm/retry'
       && event.data.turn === turn
@@ -186,25 +155,22 @@ export function apply(ctx: Context, config: Config = {}, internals: RetryInterna
       && event.data.provider === provider
       && event.data.policyKey === policyKey,
     )
-    const previousRetry = priorPolicyRetry?.data.retry ?? 0
-    if (policy.mode === 'normal' && previousRetry >= policy.maxRetries) return next()
-    const retry = previousRetry + 1
+    const decision = nextCapturedRetry(policy, failure, priorPolicyRetry?.data.retry ?? 0, { random })
+    if (decision === undefined) return next()
     const retryId = priorPolicyRetry?.data.retryId ?? RetryId(randomUUID())
-    let delayMs: number
-    if (failure.providerRetryAfterMs !== undefined
-      && Number.isFinite(failure.providerRetryAfterMs)
-      && failure.providerRetryAfterMs > 0) {
-      if (failure.providerRetryAfterMs > policy.maxDelayMs) {
-        if (policy.mode === 'normal') return next()
-        delayMs = localDelay(policy, retry, random)
-      } else {
-        delayMs = failure.providerRetryAfterMs
-      }
-    } else {
-      delayMs = localDelay(policy, retry, random)
-    }
-
-    return backoff(agent, turn, step, failure, provider, policy, policyKey, retry, retryId, delayMs, signal)
+    return backoff(
+      agent,
+      turn,
+      step,
+      failure,
+      provider,
+      policy,
+      decision.policyKey,
+      decision.retry,
+      retryId,
+      decision.delayMs,
+      signal,
+    )
   }
 
   const disposeListener = ctx.on('agent/request-error', (

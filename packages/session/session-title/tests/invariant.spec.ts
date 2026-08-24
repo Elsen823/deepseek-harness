@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import * as SessionTitleInvariantCompanion from '@deepseek-ai/dsh-session-title/invariant'
 import InvariantRegistry, { InvariantError } from '@deepseek-ai/dsh-invariants'
-import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, SessionId } from '@deepseek-ai/dsh-session'
 
 async function setup(): Promise<Context> {
   const ctx = new Context()
@@ -17,7 +17,7 @@ async function setup(): Promise<Context> {
 describe('session-title source invariant', () => {
   it('accepts cited automatic titles and citation-free user renames', async () => {
     const ctx = await setup()
-    const session = ctx.sessions.create(SessionId('title-invariant-valid'))
+    const session = ctx.sessions.create(SessionId('title-invariant-valid'), { meta: { driverId: AgentDriverId('dsh') } })
     expect(() => {
       session.append('session/title', { title: 'auto', messageSeqs: [1], source: { kind: 'fallback' } })
       session.append('session/title', { title: 'named', messageSeqs: [], source: { kind: 'user' } })
@@ -26,7 +26,7 @@ describe('session-title source invariant', () => {
 
   it('rejects a citation-free automatic title and a user rename that cites messages', async () => {
     const ctx = await setup()
-    const session = ctx.sessions.create(SessionId('title-invariant-invalid'))
+    const session = ctx.sessions.create(SessionId('title-invariant-invalid'), { meta: { driverId: AgentDriverId('dsh') } })
     expect(() => {
       session.append('session/title', { title: 'auto', messageSeqs: [], source: { kind: 'fallback' } })
     }).toThrow(expect.objectContaining<Partial<InvariantError>>({

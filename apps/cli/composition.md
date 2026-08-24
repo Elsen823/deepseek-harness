@@ -30,6 +30,8 @@ flowchart LR
   cfg --> plugin_dsh_base_user_questions
   plugin_dsh_base_agent["agent<br/>@deepseek-ai/dsh-agent"]
   cfg --> plugin_dsh_base_agent
+  plugin_dsh_base_session_runtime["session-runtime<br/>@deepseek-ai/dsh-session-runtime"]
+  cfg --> plugin_dsh_base_session_runtime
   plugin_dsh_base_agent_default_model["agent-default-model<br/>@deepseek-ai/dsh-agent-default-model"]
   cfg --> plugin_dsh_base_agent_default_model
   plugin_dsh_base_jobs["jobs<br/>@deepseek-ai/dsh-jobs-local"]
@@ -50,6 +52,12 @@ flowchart LR
   cfg --> plugin_dsh_base_session_query_sqlite
   plugin_dsh_base_session_projection["session-projection<br/>@deepseek-ai/dsh-session-projection"]
   cfg --> plugin_dsh_base_session_projection
+  plugin_dsh_base_todo["todo<br/>@deepseek-ai/dsh-todo"]
+  cfg --> plugin_dsh_base_todo
+  plugin_dsh_base_objective["objective<br/>@deepseek-ai/dsh-objective"]
+  cfg --> plugin_dsh_base_objective
+  plugin_dsh_base_plan_proposal["plan-proposal<br/>@deepseek-ai/dsh-plan-proposal"]
+  cfg --> plugin_dsh_base_plan_proposal
   plugin_dsh_base_session_telemetry_otel["session-telemetry-otel<br/>@deepseek-ai/dsh-session-telemetry-otel"]
   cfg --> plugin_dsh_base_session_telemetry_otel
   plugin_dsh_base_subprocess["subprocess<br/>@deepseek-ai/dsh-subprocess-local"]
@@ -179,6 +187,7 @@ flowchart LR
 | `session-title-llm` | `@deepseek-ai/dsh-session-title-first-prompt-llm` |
 | `user-questions` | `@deepseek-ai/dsh-user-questions` |
 | `agent` | `@deepseek-ai/dsh-agent` |
+| `session-runtime` | `@deepseek-ai/dsh-session-runtime` |
 | `agent-default-model` | `@deepseek-ai/dsh-agent-default-model` |
 | `jobs` | `@deepseek-ai/dsh-jobs-local` |
 | `llm-retry` | `@deepseek-ai/dsh-llm-retry` |
@@ -189,6 +198,9 @@ flowchart LR
 | `attachment-local` | `@deepseek-ai/dsh-attachment-local` |
 | `session-query-sqlite` | `@deepseek-ai/dsh-session-query-sqlite` |
 | `session-projection` | `@deepseek-ai/dsh-session-projection` |
+| `todo` | `@deepseek-ai/dsh-todo` |
+| `objective` | `@deepseek-ai/dsh-objective` |
+| `plan-proposal` | `@deepseek-ai/dsh-plan-proposal` |
 | `session-telemetry-otel` | `@deepseek-ai/dsh-session-telemetry-otel` |
 | `subprocess` | `@deepseek-ai/dsh-subprocess-local` |
 | `sandbox` | `@deepseek-ai/dsh-sandbox-local` |

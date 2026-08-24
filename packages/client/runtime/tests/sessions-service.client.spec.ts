@@ -8,11 +8,24 @@
  */
 import { Context } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { SessionId } from '@deepseek-ai/dsh-api-remotes/client'
+import type { AgentDriverId, SessionId, SessionRuntimeStatus } from '@deepseek-ai/dsh-api-remotes/client'
 import { SessionCreateError, SessionRuntime, scopeOf } from '../src/client/sessions/service.ts'
-import { FakeApiClient, deferred, err, fakeRemote, ok } from './fake-api.client.ts'
+import { DRIVER_ID, FakeApiClient, deferred, err, fakeRemote, ok } from './fake-api.client.ts'
 
 const sid = (s: string): SessionId => s as SessionId
+
+function runtimeStatus(sessionId: SessionId, revision: number): SessionRuntimeStatus {
+  return {
+    sessionId,
+    driverId: DRIVER_ID,
+    availability: { kind: 'available' },
+    activity: 'running',
+    attention: { approvals: 0, userInputs: 1 },
+    operation: 'conversation',
+    revision,
+    updatedAt: 2_000 + revision,
+  }
+}
 
 interface Bench {
   ctx: Context
@@ -41,7 +54,7 @@ type FeedRow = {
 async function feedList(b: Bench, rows: FeedRow[]): Promise<void> {
   b.api.onList = () => Promise.resolve(ok({
     items: rows.map(r => ({
-      sessionId: sid(r.id), updatedAt: 1, running: r.running ?? false, blank: r.blank ?? false,
+      sessionId: sid(r.id), driverId: DRIVER_ID, updatedAt: 1, running: r.running ?? false, blank: r.blank ?? false,
       ...(r.cwd !== undefined ? { cwd: r.cwd } : {}),
       ...(r.parentId !== undefined ? { parentSessionId: sid(r.parentId) } : {}),
       ...(r.origin !== undefined ? { origin: r.origin } : {}),
@@ -87,10 +100,31 @@ describe('list store projection', () => {
     expect(b.svc.list.getSnapshot().byId[sid('s1')]?.agentPreset).toBe('minimal')
   })
 
+  it('keeps the higher runtime revision and clears the resident snapshot on disconnect', async () => {
+    const b = bench()
+    await feedList(b, [{ id: 's1' }])
+    const session = b.svc.binding(sid('s1'))?.session
+    if (session === undefined) throw new Error('Session binding missing')
+
+    b.svc.handleHostEnvelope({
+      rpcId: 'runtime-4' as never,
+      payload: { type: 'host/session-runtime', status: runtimeStatus(sid('s1'), 4) },
+    })
+    b.svc.handleHostEnvelope({
+      rpcId: 'runtime-3' as never,
+      payload: { type: 'host/session-runtime', status: runtimeStatus(sid('s1'), 3) },
+    })
+    expect(session.getSnapshot().runtime?.revision).toBe(4)
+
+    b.svc.handleDisconnected()
+
+    expect(session.getSnapshot().runtime).toBeUndefined()
+  })
+
   it('reflects live increments (host stream via manager) into the store', async () => {
     const b = bench()
     await feedList(b, [{ id: 's1' }])
-    b.svc.handleHostEnvelope({ rpcId: 'r1' as never, payload: { type: 'host/session-added', blank: true, sessionId: sid('s2') } as never })
+    b.svc.handleHostEnvelope({ rpcId: 'r1' as never, payload: { type: 'host/session-added', driverId: DRIVER_ID, blank: true, sessionId: sid('s2') } as never })
     await Promise.resolve()
     expect(b.svc.list.getSnapshot().ids).toContain('s2')
   })
@@ -464,10 +498,35 @@ describe('catalog-addressed navigation', () => {
   })
 })
 
+describe('Drivers', () => {
+  it('loads the Driver catalog and forwards the selected Driver through create and fork', async () => {
+    const b = bench()
+    const selected = 'codex' as AgentDriverId
+    b.api.onDrivers = () => Promise.resolve(ok({
+      defaultId: DRIVER_ID,
+      items: [{ id: DRIVER_ID, name: 'DSH' }, { id: selected, name: 'Codex' }],
+    }))
+    b.api.onCreate = () => Promise.resolve(ok({ sessionId: sid('source'), driverId: selected }))
+    b.api.onFork = () => Promise.resolve(ok({ sessionId: sid('child'), driverId: selected }))
+
+    await expect(b.svc.drivers()).resolves.toEqual({
+      defaultId: DRIVER_ID,
+      items: [{ id: DRIVER_ID, name: 'DSH' }, { id: selected, name: 'Codex' }],
+    })
+    await expect(b.svc.create({ driverId: selected })).resolves.toBe('source')
+    await expect(b.svc.fork({ sessionId: sid('source'), driverId: selected })).resolves.toBe('child')
+
+    expect(b.api.callsOf('session.drivers')).toEqual([{}])
+    expect(b.api.callsOf('session.create')).toEqual([{ driverId: selected }])
+    expect(b.api.callsOf('session.fork')).toEqual([{ sessionId: 'source', driverId: selected }])
+    expect(b.svc.list.getSnapshot().byId[sid('child')]).toMatchObject({ parentId: 'source' })
+  })
+})
+
 describe('create', () => {
   it('passes a preallocated id and preserves it on ordinary failure', async () => {
     const b = bench()
-    b.api.onCreate = () => Promise.resolve(ok({ sessionId: sid('fresh') }))
+    b.api.onCreate = () => Promise.resolve(ok({ sessionId: sid('fresh'), driverId: DRIVER_ID }))
     await expect(b.svc.create({ cwd: '/w', sessionId: sid('fresh') })).resolves.toBe('fresh')
     expect(b.api.callsOf('session.create')).toEqual([{ cwd: '/w', sessionId: 'fresh' }])
     b.api.onCreate = () => Promise.resolve({
@@ -484,7 +543,7 @@ describe('create', () => {
 
   it('resolves with the session already listed and binding-resolvable (no flush wait)', async () => {
     const b = bench()
-    b.api.onCreate = () => Promise.resolve(ok({ sessionId: sid('born') }))
+    b.api.onCreate = () => Promise.resolve(ok({ sessionId: sid('born'), driverId: DRIVER_ID }))
     const born = await b.svc.create({ workspaceId: 'ws' as never })
     // Synchronously after resolution — the draft hand-off contract: the
     // create echo IS the entity entering the client's view (blank row +
@@ -502,7 +561,7 @@ describe('create', () => {
         ok: false,
         error: {
           code: 'workspace-attach-failed', message: 'ledger unavailable',
-          details: { sessionId: sid('published'), workspaceId: 'ws' },
+          details: { sessionId: sid('published'), workspaceId: 'ws', driverId: DRIVER_ID },
         },
       },
     } as never)
@@ -533,7 +592,7 @@ describe('fork', () => {
       payload: { type: 'session/projection', sessionId: sid('source'), key: 'title', value: sourceTitle, seq: 2 } as never,
     })
     await feedList(b, [{ id: 'source', cwd: '/work' }])
-    b.api.onFork = () => Promise.resolve(ok({ sessionId: sid('child') }))
+    b.api.onFork = () => Promise.resolve(ok({ sessionId: sid('child'), driverId: DRIVER_ID }))
     b.api.onRename = (payload) => {
       const { title } = payload as { title: string }
       return Promise.resolve(ok({ title, seq: 3 }))
@@ -556,7 +615,7 @@ describe('fork', () => {
   it('floors a fractional anchor to the real event seq the wire accepts', async () => {
     const b = bench()
     await feedList(b, [{ id: 'source', cwd: '/work' }])
-    b.api.onFork = () => Promise.resolve(ok({ sessionId: sid('child') }))
+    b.api.onFork = () => Promise.resolve(ok({ sessionId: sid('child'), driverId: DRIVER_ID }))
 
     // The frozen node of an interrupted turn carries turnEnd.seq - 0.9.
     await expect(b.svc.fork({ sessionId: sid('source'), atSeq: 41.1 })).resolves.toBe('child')
@@ -567,11 +626,11 @@ describe('fork', () => {
   it('does not rename without the title policy or a durable source title', async () => {
     const b = bench()
     await feedList(b, [{ id: 'source', cwd: '/work' }])
-    b.api.onFork = () => Promise.resolve(ok({ sessionId: sid('child') }))
+    b.api.onFork = () => Promise.resolve(ok({ sessionId: sid('child'), driverId: DRIVER_ID }))
     await expect(b.svc.fork({ sessionId: sid('source'), increaseTitle: true })).resolves.toBe('child')
     expect(b.api.callsOf('session.rename')).toEqual([])
 
-    b.api.onFork = () => Promise.resolve(ok({ sessionId: sid('child-2') }))
+    b.api.onFork = () => Promise.resolve(ok({ sessionId: sid('child-2'), driverId: DRIVER_ID }))
     await expect(b.svc.fork({ sessionId: sid('source') })).resolves.toBe('child-2')
     expect(b.api.callsOf('session.rename')).toEqual([])
   })
@@ -583,7 +642,7 @@ describe('fork', () => {
       payload: { type: 'session/projection', sessionId: sid('source'), key: 'title', value: 'Roadmap', seq: 2 } as never,
     })
     await feedList(b, [{ id: 'source' }])
-    b.api.onFork = () => Promise.resolve(ok({ sessionId: sid('child') }))
+    b.api.onFork = () => Promise.resolve(ok({ sessionId: sid('child'), driverId: DRIVER_ID }))
     b.api.onRename = () => Promise.resolve(err({
       code: 'title-invalid', message: 'rejected', details: { sessionId: sid('child') },
     }))
@@ -601,7 +660,7 @@ describe('scope lifecycle rides the list mirror (entity parity: no client-side p
     expect(b.svc.scope(sid('s-new'))).toBeUndefined() // not in view: no scope, no exceptions
     b.svc.handleHostEnvelope({
       rpcId: 'add' as never,
-      payload: { type: 'host/session-added', sessionId: sid('s-new'), blank: true, cwd: '/w/a' } as never,
+      payload: { type: 'host/session-added', driverId: DRIVER_ID, sessionId: sid('s-new'), blank: true, cwd: '/w/a' } as never,
     })
     await Promise.resolve()
     const scoped = b.svc.scope(sid('s-new'))
@@ -671,7 +730,7 @@ describe('blank mirror', () => {
     await feedList(b, [])
     b.svc.handleHostEnvelope({
       rpcId: 'add' as never,
-      payload: { type: 'host/session-added', sessionId: sid('s-new'), blank: true, cwd: '/w/a' } as never,
+      payload: { type: 'host/session-added', driverId: DRIVER_ID, sessionId: sid('s-new'), blank: true, cwd: '/w/a' } as never,
     })
     await Promise.resolve()
     expect(b.svc.list.getSnapshot().byId[sid('s-new')]).toMatchObject({ blank: true })

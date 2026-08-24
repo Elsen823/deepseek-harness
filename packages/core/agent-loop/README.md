@@ -2,28 +2,20 @@
 
 English | [中文](README.zh.md)
 
-THE concrete agent plugin and loop driver. Its package-internal implementation satisfies the `Agent` interface and drives the session/turn/step lifecycle.
+The built-in `dsh` Agent Driver adapter. Its package-private `ReactLoopAgent` satisfies the generic `Agent` interface and drives the DSH session/turn/step execution model.
 
-This is the only package in the harness that contains concrete loop logic. Everything else is an abstract service or a plugin against extension points — new behavior goes into plugins, not here.
+This package owns only DSH loop behavior and declarative DSH-agent launching. `AgentRegistry` owns generic Driver selection, Session preparation, unpublished setup, publication, rollback, caller/provider ownership, and ordered teardown, so another registered Driver can coexist without branching this loop.
 
 ## Service: `AgentLoop` (ctx key: `agentLoop`)
 
 ### Public API
 
-Creation and resume are one rollback-covered transaction: construct a private session, concrete agent, and scoped context; await optional setup; enter both registries; announce `session/created` then `agent/created`; emit `agent/session-start`; and only then start the driver. Setup receives the full scoped `Context` as trusted same-process composition code and must not drive the unpublished agent. Ordinary typed identity and option inputs are borrowed under their readonly contract, while seed events and session metadata are validated and snapshotted because they cross the durable session boundary. An optional `AbortSignal` cancels only load/setup/publication and is detached before the returned handle becomes visible.
+A package-private Driver adapter registers on `ctx.agents` with stable id `dsh` and immutable discovery name `DeepSeek Harness`. It constructs unpublished `ReactLoopAgent` instances, validates DSH `AgentOptions`, and owns their execution and scope hooks. `AgentLoop` exposes only declarative launch policy and its public `create()` helper; the unpublished preparation hook is not part of `ctx.agentLoop`.
 
-The caller fiber and the AgentLoop provider are co-owners. `AgentFactory.createAgent(ownerCtx, options)` and `resume(ownerCtx, options)` receive caller ownership explicitly, while the factory keeps its own dependency context for `sessions`/`llm`/`tools`/`systemPrompt`; this lets a caller inject only `agents` without shrinking the new agent's service set. Caller unload, handle disposal, or provider unload converge on one memoized quiescence boundary. Provider shutdown waits both resource teardown and the public create/resume wrapper that observed deactivation, so no continuation can publish after dependencies disappear.
+- `ctx.agentLoop.create(id, options?, meta?): Promise<Agent>` — DSH-specific convenience that delegates fresh creation to `ctx.agents.create({ driverId: 'dsh', ... })` and returns the published Agent.
+- `ctx.agents.create(...)` and `ctx.agents.resume(...)` are the driver-neutral owned lifecycle operations. Resume reads the stored Session Driver binding, so a Session created by another Driver is never interpreted by this adapter merely because `dsh` is the deployment default.
 
-Each agent and its session share one caller-chosen `SessionId`, assumed globally unique; accidental UUID collisions are outside the supported model. Two concurrent operations with the same id may both prepare, but the final `enter()` calls arbitrate publication and every loser rolls its private resources back. Each detach is bound to the exact entered object, so a stale disposer cannot remove a later same-id replacement. A detach requested during a synchronous creation notification waits for that dispatch to unwind, preserving created/disposed pairing. Teardown runs stop and drain → unwind scope → detach agent → detach session; the id becomes reusable after private scope cleanup. Ordinary non-vetoing `agent/*` notifications go through `agentEvents(ctx, agent)`, and per-step assembly goes through `assembleContextFor(agent)`.
-
-- `ctx.agentLoop.create(id: SessionId, options?: AgentOptions, meta?: { cwd?: string }): Agent` — synchronous no-setup create under the exact shared agent/session id, disposed with the calling fiber. Declarative config treats `agents[].id` as a stable label and normally mints `${label}-session-<uuid>` before calling this boundary. An app may instead supply a stable exact `sessionId`: first use creates it, while a remount with persistence already present resumes its materialized history. `resumeSessionId` requires and loads an existing persisted id and is mutually exclusive with `sessionId`. This keeps default fresh restarts collision-free without retaining a second live routing identity.
-
-`AgentLoop` also implements the `AgentFactory` contract and registers itself via `ctx.agents.setFactory(this)`, so plugins create/resume agents through `ctx.agents`:
-
-- `ctx.agents.create({ sessionId, meta?, seed?, agentOptions?, setup?, signal? }): Promise<AgentHandle>` — programmatic create under the caller-supplied shared id. It awaits the unpublished setup transaction before returning; `meta` carries cwd/lineage/seed-boundary metadata and `seed` reconstructs a forked child prefix after the session boundary validates and snapshots the durable values. `signal` applies only until this promise settles. The resolved [`AgentHandle`](../agent/README.md) owns exact teardown.
-- `ctx.agents.resume({ resumeSessionId, agentOptions?, setup?, signal? }): Promise<AgentHandle>` — load a persisted session via `ctx.sessionPersistence` ([session persistence](../../../.agents/notes/implemented/architecture/2026-06-14-session-persistence.md)), register the agent under that same id, reconstruct its history, then await setup against a fresh unpublished agent scope before rollback-covered publication. Turn numbering and derived history continue from the loaded log. Requires a session-persistence backend (NOT hard-injected — non-persistent demos still work; `resume` rejects with a clear error when persistence is absent). `signal` is creation-only. Returns an `AgentHandle`.
-
-The config-driven `ctx.agentLoop.create()` path keeps its agent owned by the loop fiber (it discards the handle). For a programmatic agent, the handle holder is the only consumer-facing teardown capability; AgentLoop provider unload is the independent structural teardown edge, not another handle exposed to application code.
+Configured rows are DSH launch policy. Fresh rows select `dsh` explicitly; a stable `sessionId` attempts resume first when persistence exists and creates only when the artifact is absent. Provider unload is tracked by the registry's exact Driver generation and drains all Agents this adapter prepared before the effect settles.
 
 ### Injected services
 

@@ -2,7 +2,7 @@
 
 English | [中文](README.zh.md)
 
-The durable family around `core/session`'s live in-memory service: the persistence seam with its storage backends and checkpoint policy, the projection seam that serves whole log-derived values, log-backed titles, and outbound session telemetry. All **product** packages. `session-query/` remains a sibling group: the read/tool surface is consumed independently of persistence internals.
+The family around `core/session`'s live in-memory service: the persistence seam with its storage backends and checkpoint policy, the projection seam that serves whole log-derived values, process-local runtime status, log-backed titles, and outbound session telemetry. All **product** packages. `session-query/` remains a sibling group: the read/tool surface is consumed independently of persistence internals.
 
 ## Persistence
 
@@ -26,6 +26,14 @@ Serves current, log-derived per-session state to client carriers.
 | [`session-projection/`](session-projection/README.md) | Defines and drives session projection units | `ctx.sessionProjections` |
 | [`session-projection-cache/`](session-projection-cache/README.md) | Persists and restores projection checkpoints | `ctx.sessionProjectionCache` |
 | [`session-stats/`](session-stats/README.md) | Serves whole-log conversation counts and wall times (`sessionStats` unit) | registers on `ctx.sessionProjections` |
+
+## Runtime status
+
+Reports current process resources without replaying transient connection or attention state from the durable log.
+
+| Package | Role | ctx key |
+|---|---|---|
+| [`session-runtime/`](session-runtime/README.md) | Serves Driver availability, binary Agent activity, attention counts, and operation state | `ctx.sessionRuntimes` |
 
 ## Titles
 

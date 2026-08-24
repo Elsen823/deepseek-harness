@@ -1,7 +1,7 @@
 import { describe, expect, expectTypeOf, it } from 'vitest'
-import { Context, Service, symbols } from '@deepseek-ai/cordis'
+import { Context } from '@deepseek-ai/cordis'
 import { createUserMessage, freezeMessage } from '@deepseek-ai/dsh-llm'
-import { Session, SessionId, type UserMessage } from '@deepseek-ai/dsh-session'
+import { AgentDriverId, Session, SessionId, type UserMessage } from '@deepseek-ai/dsh-session'
 import AgentRegistry, {
   agentEvents,
   Inbox,
@@ -11,10 +11,8 @@ import TypertRegistry from '@deepseek-ai/dsh-typert-registry'
 import type {
   Agent,
   AgentCancelCause,
-  AgentFactory,
+  AgentDriver,
   AgentStatus,
-  CreateAgentOptions,
-  ResumeAgentOptions,
 } from '@deepseek-ai/dsh-agent'
 
 function stubAgent(rawId: string, overrides: Partial<Agent> = {}): Agent {
@@ -355,84 +353,41 @@ describe('explicit cancellation contract', () => {
   })
 })
 
-describe('AgentRegistry factory seam', () => {
-  function stubFactory() {
-    const calls: {
-      create: Array<{ ownerCtx: Context; options: CreateAgentOptions }>
-      resume: Array<{ ownerCtx: Context; options: ResumeAgentOptions }>
-    } = { create: [], resume: [] }
-    const factory: AgentFactory = {
-      async createAgent(ownerCtx, options) {
-        calls.create.push({ ownerCtx, options })
-        return { agent: stubAgent(options.sessionId), dispose: () => Promise.resolve() }
-      },
-      async resume(ownerCtx, options) {
-        calls.resume.push({ ownerCtx, options })
-        return { agent: stubAgent(options.resumeSessionId), dispose: () => Promise.resolve() }
+describe('AgentRegistry Driver catalog', () => {
+  function stubDriver(id: string, name = id): AgentDriver {
+    return {
+      info: { id: AgentDriverId(id), name },
+      prepare() {
+        throw new Error('not used by catalog tests')
       },
     }
-    return { factory, calls }
   }
 
-  it('requires a factory and delegates through the calling context', async () => {
+  it('rejects duplicate ids and lists detached immutable info by id', async () => {
     const ctx = new Context()
     await ctx.plugin(AgentRegistry)
-    await expect(ctx.agents.create({ sessionId: SessionId('s') })).rejects.toThrow(/no agent factory/)
-    const { factory, calls } = stubFactory()
-    ctx.agents.setFactory(factory)
+    const zeta = stubDriver('zeta', 'Zeta')
+    const alpha = stubDriver('alpha', 'Alpha')
+    ctx.agents.registerDriver(zeta)
+    ctx.agents.registerDriver(alpha)
 
-    let callerFiber: Context['fiber'] | undefined
-    await ctx.plugin(Object.assign(async (inner: Context) => {
-      callerFiber = inner.fiber
-      await inner.agents.create({ sessionId: SessionId('create-s') })
-      await inner.agents.resume({ resumeSessionId: SessionId('resume-s') })
-    }, { inject: ['agents'] }))
-    expect(calls.create[0]?.ownerCtx.fiber).toBe(callerFiber)
-    expect(calls.resume[0]?.ownerCtx.fiber).toBe(callerFiber)
+    expect(ctx.agents.listDrivers()).toEqual([
+      { id: AgentDriverId('alpha'), name: 'Alpha' },
+      { id: AgentDriverId('zeta'), name: 'Zeta' },
+    ])
+    expect(Object.isFrozen(ctx.agents.getDriver(AgentDriverId('alpha')))).toBe(true)
+    expect(() => ctx.agents.registerDriver(stubDriver('alpha'))).toThrow(/already registered/)
   })
 
-  it('rejects a second factory and clears the slot with its owner (HMR)', async () => {
+  it('removes an effect-scoped Driver on provider unload', async () => {
     const ctx = new Context()
     await ctx.plugin(AgentRegistry)
     const owner = await ctx.plugin(Object.assign((inner: Context) => {
-      inner.agents.setFactory(stubFactory().factory)
-      expect(() => inner.agents.setFactory(stubFactory().factory)).toThrow(/already registered/)
+      inner.agents.registerDriver(stubDriver('temporary'))
     }, { inject: ['agents'] }))
-    await expect(ctx.agents.create({ sessionId: SessionId('before-s') })).resolves.toBeDefined()
-    await owner.dispose()
-    await expect(ctx.agents.create({ sessionId: SessionId('after-s') })).rejects.toThrow(/no agent factory/)
-  })
 
-  it('canonicalizes an already traced Service before tracing it for the caller', async () => {
-    const ctx = new Context()
-    await ctx.plugin(AgentRegistry)
-    const states = new WeakMap<object, string[]>()
-    class TracedFactory extends Service implements AgentFactory {
-      constructor(inner: Context) {
-        super(inner, 'tracedFactory')
-        states.set(this, [])
-      }
-      private calls(): string[] {
-        const original = (this as unknown as { [symbols.original]?: TracedFactory })[symbols.original] ?? this
-        const calls = states.get(original)
-        if (calls === undefined) throw new Error('factory receiver was not canonicalized')
-        return calls
-      }
-      async createAgent(_ownerCtx: Context, options: CreateAgentOptions) {
-        this.calls().push('create')
-        return { agent: stubAgent(options.sessionId), dispose: () => Promise.resolve() }
-      }
-      async resume(_ownerCtx: Context, options: ResumeAgentOptions) {
-        this.calls().push('resume')
-        return { agent: stubAgent(options.resumeSessionId), dispose: () => Promise.resolve() }
-      }
-    }
-    await ctx.plugin(TracedFactory)
-    const traced = (ctx as Context & { tracedFactory: TracedFactory }).tracedFactory
-    ctx.agents.setFactory(traced)
-    await ctx.agents.create({ sessionId: SessionId('create-s') })
-    await ctx.agents.resume({ resumeSessionId: SessionId('resume-s') })
-    const raw = (traced as unknown as { [symbols.original]?: TracedFactory })[symbols.original]
-    expect(states.get(raw!)).toEqual(['create', 'resume'])
+    expect(ctx.agents.getDriver(AgentDriverId('temporary'))).toBeDefined()
+    await owner.dispose()
+    expect(ctx.agents.getDriver(AgentDriverId('temporary'))).toBeUndefined()
   })
 })

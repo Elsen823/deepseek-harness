@@ -2,7 +2,7 @@
 
 [English](README.md) | 中文
 
-这是围绕 `core/session` 内存中运行的服务构建的持久功能族：包括持久化 seam 及其存储后端和检查点策略、提供日志派生全量值的投影 seam、日志支持的标题，以及外发会话遥测。它们全部都是**产品**包（package）。`session-query/` 仍是同级独立组：读取／工具接口的消费不依赖持久化内部实现。
+这是围绕 `core/session` 内存中运行的服务构建的功能族：包括持久化 seam 及其存储后端和检查点策略、提供日志派生全量值的投影 seam、进程本地运行时状态、日志支持的标题，以及外发会话遥测。它们全部都是**产品**包（package）。`session-query/` 仍是同级独立组：读取／工具接口的消费不依赖持久化内部实现。
 
 ## 持久化
 
@@ -26,6 +26,14 @@
 | [`session-projection/`](session-projection/README.zh.md) | 定义并驱动会话投影单元 | `ctx.sessionProjections` |
 | [`session-projection-cache/`](session-projection-cache/README.zh.md) | 持久化并恢复投影检查点 | `ctx.sessionProjectionCache` |
 | [`session-stats/`](session-stats/README.zh.md) | 提供全日志会话计数与墙钟时间（`sessionStats` 单元） | 注册到 `ctx.sessionProjections` |
+
+## 运行时状态
+
+报告当前进程资源，不从持久日志回放瞬时连接或注意力状态。
+
+| 包 | 职责 | ctx 键 |
+|---|---|---|
+| [`session-runtime/`](session-runtime/README.zh.md) | 提供 Driver 可用性、二值 agent 活动状态、注意力计数和 operation 状态 | `ctx.sessionRuntimes` |
 
 ## 标题
 

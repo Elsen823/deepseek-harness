@@ -35,7 +35,7 @@ with DeepSeekHarness(
     result = harness.run("Make the requested code change.")
 ```
 
-`provider` 选择指定 Cordis 组合所注册的提供方路由；`model` 是该适配器解析出的模型 ID。`max_tokens` 是一个可选的正整数，用于限制根 agent 及其进程内后代在每次请求中输出的 token 数量；省略该参数时，由提供方的默认行为决定输出上限。压缩摘要继续使用压缩插件单独配置的上限。内置默认组合注册 `deepseek-official`。自定义组合可以挂载 `llm-pi-ai`，在其中配置各提供方专属的凭据和端点，并选择 pi-ai 已安装 catalog 中存在的任意提供方/模型组合。
+`provider` 选择指定 Cordis 组合所注册的提供方路由；`model` 是该适配器解析出的模型 ID。`max_tokens` 是一个可选的正整数，用于限制根 agent 及其进程内后代在每次请求中输出的 token 数量；省略该参数时，由提供方默认行为决定输出上限。压缩摘要继续使用压缩插件单独配置的上限。`driver_id` 为 SDK 创建的 Session 选择默认不可变 Agent Driver；`harness.session(session_id, driver_id=...)` 与 `run(..., driver_id=...)` 可以为惰性创建选择 Driver，但已有 Session 会拒绝不同值。`harness.drivers()` 读取活跃目录，`harness.runtime(session_id)` 在不激活 Session 的情况下返回 Host 进程本地的可用性、活动、操作与独立审批/问题计数。内置默认组合注册 `deepseek-official` 与内置 `dsh` Driver。自定义组合可以挂载其他模型适配器与 Agent Driver。
 
 [Python SDK 教程](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/user/guide/python-sdk.md)提供一套无需使用 Web UI、按步骤完成安装和首次运行的流程。该教程所用的完整独立 Cordis 配置文件位于 [`jsonrpc-agent` 示例](https://github.com/deepseek-ai/deepseek-harness/blob/master/examples/jsonrpc-agent/README.md)中。
 

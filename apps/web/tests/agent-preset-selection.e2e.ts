@@ -17,7 +17,7 @@ import type { Browser, Page } from 'playwright'
 import { chromium } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
 import {
-  SESSION_FORMAT_VERSION, SessionId as sessionId, type SessionEvent, type SessionId,
+  AgentDriverId, SESSION_FORMAT_VERSION, SessionId as sessionId, type SessionEvent, type SessionId,
 } from '@deepseek-ai/dsh-session'
 import { snapshotSubagentDescriptor } from '@deepseek-ai/dsh-subagent'
 import {
@@ -70,7 +70,10 @@ function seedLog(): string {
   const at = (index: number, event: Record<string, unknown>): string =>
     JSON.stringify({ ...event, seq: index, time: time + index })
   return [
-    JSON.stringify({ type: 'session', version: 0, id: '{{sessionId}}', createdAt: time, cwd: '{{cwd}}/workspace' }),
+    JSON.stringify({
+      type: 'session', version: 0, driverId: AgentDriverId('dsh'),
+      id: '{{sessionId}}', createdAt: time, cwd: '{{cwd}}/workspace',
+    }),
     at(0, { type: 'turn/start', data: { turn: 1, trigger: { kind: 'message', source: { kind: 'user', rpcId: 'seed' } } } }),
     at(1, {
       type: 'user/message',
@@ -93,6 +96,7 @@ async function seedSubagent(scaffold: WebScaffold, parentId: SessionId): Promise
   const createdAt = 1784974100100
   await scaffold.ctx.sessionPersistence.create({
     version: SESSION_FORMAT_VERSION,
+    driverId: AgentDriverId('dsh'),
     id: childId,
     createdAt,
     cwd: scaffold.workspaceCwd,

@@ -7,7 +7,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import { SessionId, type Session } from '@deepseek-ai/dsh-session'
+import { AgentDriverId, SessionId, type Session } from '@deepseek-ai/dsh-session'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import SubagentService from '@deepseek-ai/dsh-subagent'
 import * as SubagentFork from '@deepseek-ai/dsh-subagent-fork-in-process'
@@ -55,7 +55,7 @@ async function setup(
   const teamFiber = await ctx.plugin(TeamService, config)
   const adapter = new MockAdapter(script)
   ctx.llm.registerAdapter(['mock'], adapter)
-  const lead = ctx.agentLoop.create(SessionId('lead'), { provider: 'mock', model: 'mock' })
+  const lead = await ctx.agentLoop.create(SessionId('lead'), { provider: 'mock', model: 'mock' })
   return { ctx, lead, adapter, storageRoot, teamFiber }
 }
 
@@ -141,7 +141,7 @@ describe('Team identity and provisioning', () => {
     await ctx.plugin(JsonlSessionPersistence, { root: storageRoot })
     await ctx.plugin(AgentLoop, { agents: [] })
     await ctx.plugin(SubagentService)
-    const lead = ctx.agentLoop.create(SessionId('preexisting-lead'), {})
+    const lead = await ctx.agentLoop.create(SessionId('preexisting-lead'), {})
     const service = new TeamService(ctx)
 
     expect(service.listMembers(lead)).toEqual([expect.objectContaining({
@@ -220,7 +220,7 @@ describe('Team identity and provisioning', () => {
     const internal = teamInternals(ctx).roster
     let liveSession: Session | undefined
     const liveFiber = await ctx.plugin(Object.assign(function checkpointFixture(childCtx: Context) {
-      liveSession = childCtx.sessions.create(SessionId('checkpoint-child'))
+      liveSession = childCtx.sessions.create(SessionId('checkpoint-child'), { meta: { driverId: AgentDriverId('dsh') } })
     }, { inject: ['sessions'] }))
     if (liveSession === undefined) throw new Error('checkpoint fixture did not create its Session')
     const initial = createUserMessage({ content: content('checkpoint me'), source: { kind: 'user' } })
@@ -228,7 +228,7 @@ describe('Team identity and provisioning', () => {
     await Promise.resolve()
     lead.inject(createUserMessage({ content: content('unrelated progress'), source: { kind: 'user' } }))
     const unrelatedFiber = await ctx.plugin(Object.assign(function unrelatedCheckpointFixture(childCtx: Context) {
-      childCtx.sessions.create(SessionId('unrelated-checkpoint-child'))
+      childCtx.sessions.create(SessionId('unrelated-checkpoint-child'), { meta: { driverId: AgentDriverId('dsh') } })
     }, { inject: ['sessions'] }))
     await unrelatedFiber.dispose()
     liveSession.append('agent/inbox/spliced', {
@@ -244,7 +244,7 @@ describe('Team identity and provisioning', () => {
 
     let disposedSession: Session | undefined
     const disposedFiber = await ctx.plugin(Object.assign(function disposedCheckpointFixture(childCtx: Context) {
-      disposedSession = childCtx.sessions.create(SessionId('disposed-checkpoint-child'))
+      disposedSession = childCtx.sessions.create(SessionId('disposed-checkpoint-child'), { meta: { driverId: AgentDriverId('dsh') } })
     }, { inject: ['sessions'] }))
     if (disposedSession === undefined) throw new Error('disposed checkpoint fixture did not create its Session')
     const disposed = internal.checkpointInitialPrompt(disposedSession.id, missing.id, SIGNAL)
@@ -255,7 +255,7 @@ describe('Team identity and provisioning', () => {
 
     let abortedSession: Session | undefined
     const abortedFiber = await ctx.plugin(Object.assign(function abortedCheckpointFixture(childCtx: Context) {
-      abortedSession = childCtx.sessions.create(SessionId('aborted-checkpoint-child'))
+      abortedSession = childCtx.sessions.create(SessionId('aborted-checkpoint-child'), { meta: { driverId: AgentDriverId('dsh') } })
     }, { inject: ['sessions'] }))
     if (abortedSession === undefined) throw new Error('aborted checkpoint fixture did not create its Session')
     const controller = new AbortController()
@@ -1253,7 +1253,7 @@ describe('Team mailbox and waiting', () => {
     await ctx.plugin(SubagentService)
     const fiber = await ctx.plugin(TeamService)
     const service = ctx.agentTeams
-    const lead = ctx.agentLoop.create(SessionId('wait-lead'), {})
+    const lead = await ctx.agentLoop.create(SessionId('wait-lead'), {})
 
     await expect(service.waitForChange(lead, 9_999, SIGNAL))
       .rejects.toMatchObject({ code: 'TEAM_INVALID_TIMEOUT' })

@@ -10,7 +10,17 @@
 import { describe, expect, it } from 'vitest'
 import fc from 'fast-check'
 import { createUserMessage, CallId , createMessage, createToolResultMessage } from '@deepseek-ai/dsh-llm'
-import { Session, SessionId } from '@deepseek-ai/dsh-session'
+import {
+  AgentDriverActivationId,
+  AgentDriverActivityId,
+  AgentDriverCheckpointId,
+  AgentDriverId,
+  AgentDriverModelAttemptId,
+  AgentDriverModelRequestId,
+  AgentDriverProposedPlanId,
+  Session,
+  SessionId,
+} from '@deepseek-ai/dsh-session'
 import type { SessionEventMap, SessionEventType, SurfaceIntent } from '@deepseek-ai/dsh-session'
 
 // Each arbitrary supplies its own surface intent; `build` must not synthesize
@@ -75,6 +85,83 @@ const nonMessageEventArb: fc.Arbitrary<Appendable> = fc.oneof(
   fc.constant<Appendable>({ type: 'step/start', data: { turn: 1, step: 1 } }),
   fc.constant<Appendable>({ type: 'step/end', data: { turn: 1, step: 1 } }),
   fc.string().map((text): Appendable => ({ type: 'assistant/chunk', data: { turn: 1, step: 1, chunk: { type: 'text-delta', index: 0, text } } })),
+  fc.constant<Appendable>({
+    type: 'agent-driver/activation',
+    data: {
+      owner: AgentDriverId('driver'),
+      activationId: AgentDriverActivationId('activation'),
+      phase: 'active',
+      driver: { kind: 'test/activation', payload: null },
+    },
+  }),
+  fc.constant<Appendable>({
+    type: 'agent-driver/model-request',
+    data: {
+      owner: AgentDriverId('driver'),
+      activationId: AgentDriverActivationId('activation'),
+      requestId: AgentDriverModelRequestId('request'),
+      turn: 1,
+      step: 1,
+      messages: [],
+      config: { provider: 'mock', model: 'mock' },
+      retryPolicy: {
+        mode: 'normal',
+        maxRetries: 0,
+        retryableCodes: [],
+        initialDelayMs: 1,
+        maxDelayMs: 1,
+        jitterRatio: 0,
+      },
+    },
+  }),
+  fc.constant<Appendable>({
+    type: 'agent-driver/model-attempt',
+    data: {
+      owner: AgentDriverId('driver'),
+      activationId: AgentDriverActivationId('activation'),
+      requestId: AgentDriverModelRequestId('request'),
+      attemptId: AgentDriverModelAttemptId('attempt'),
+      attempt: 0,
+      outcome: 'succeeded',
+    },
+  }),
+  fc.constant<Appendable>({
+    type: 'agent-driver/activity',
+    data: {
+      owner: AgentDriverId('driver'),
+      activationId: AgentDriverActivationId('activation'),
+      activityId: AgentDriverActivityId('activity'),
+      kind: 'test',
+      phase: 'complete',
+    },
+  }),
+  fc.constant<Appendable>({
+    type: 'agent-driver/objective',
+    data: {
+      objective: { owner: AgentDriverId('driver'), objective: 'test', phase: 'active' },
+    },
+  }),
+  fc.constant<Appendable>({
+    type: 'agent-driver/proposed-plan',
+    data: {
+      plan: {
+        id: AgentDriverProposedPlanId('plan'),
+        owner: AgentDriverId('driver'),
+        title: 'Test',
+        content: '# Test',
+        lifecycle: 'proposed',
+      },
+    },
+  }),
+  fc.constant<Appendable>({
+    type: 'agent-driver/checkpoint',
+    data: {
+      owner: AgentDriverId('driver'),
+      activationId: AgentDriverActivationId('activation'),
+      checkpointId: AgentDriverCheckpointId('checkpoint'),
+      phase: 'captured',
+    },
+  }),
 )
 
 const anyEventArb = fc.oneof(messageEventArb, nonMessageEventArb)

@@ -9,9 +9,9 @@
 
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import SessionStore from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId } from '@deepseek-ai/dsh-session'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
-import type { Agent, AgentHandle, CreateAgentOptions } from '@deepseek-ai/dsh-agent'
+import type { Agent } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import SessionTitleService from '@deepseek-ai/dsh-session-title'
 import UserQuestionService from '@deepseek-ai/dsh-user-questions'
@@ -19,6 +19,7 @@ import type { Session, SessionId } from '@deepseek-ai/dsh-session'
 import type { RpcRequest } from '@deepseek-ai/dsh-host-apiproxy/api/rpc'
 import { RpcId } from '@deepseek-ai/dsh-host-apiproxy/api/rpc'
 import { createApiProxy } from '@deepseek-ai/dsh-host-apiproxy'
+import { registerFakeAgentDriver } from './fake-agent-driver.ts'
 
 const sid = (id: string): SessionId => id as SessionId
 
@@ -35,27 +36,17 @@ async function composed(withTitles = true): Promise<Context> {
   if (withTitles) {
     await ctx.plugin(SessionTitleService, { fallbackMaxWords: 5, fallbackMaxBytes: 40, maxTitleBytes: 40 })
   }
-  // Store-backed structural factory: create builds the session with the
-  // forwarded seed/meta (the store validates the balanced prefix) and
-  // registers an idle agent stub over it.
-  ctx.agents.setFactory({
-    createAgent: (ownerCtx: Context, options: CreateAgentOptions): Promise<AgentHandle> => {
-      const session = ctx.sessions.create(options.sessionId, {
-        ...options.seed === undefined ? {} : { seed: [...options.seed] },
-        ...options.meta === undefined ? {} : { meta: options.meta },
-      })
-      const agent = { id: session.id, session, status: 'idle', ctx: ownerCtx } as Agent
-      ctx.agents.register(agent)
-      return Promise.resolve({ agent, dispose: () => Promise.resolve() })
-    },
-    resume: () => Promise.reject(new Error('resume must not run: every source is attached')),
-  })
+  registerFakeAgentDriver(ctx, session => ({
+    id: session.id,
+    session,
+    status: 'idle',
+  } as Agent))
   return ctx
 }
 
 /** Register one live agent whose log holds `turns` completed turns. */
 function liveAgent(ctx: Context, id: string, turns: number): Session {
-  const session = ctx.sessions.create(sid(id), { meta: { cwd: '/proj' } })
+  const session = ctx.sessions.create(sid(id), { meta: { driverId: AgentDriverId('dsh'), cwd: '/proj' } })
   for (let turn = 1; turn <= turns; turn++) {
     session.append('turn/start', { turn })
     session.append('user/message', createUserMessage({

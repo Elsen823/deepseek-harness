@@ -9,8 +9,21 @@
  */
 
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
-import type { SessionEvent } from '@deepseek-ai/dsh-session'
+import type { SessionEvent } from '@deepseek-ai/dsh-session/types'
+import type { SessionRuntimeStatus } from '@deepseek-ai/dsh-session-runtime/types'
 import type { SubagentStopReason } from '@deepseek-ai/dsh-subagent'
+
+/** One active Agent Driver advertised by the SDK runtime. */
+export interface AgentDriverCatalogItem {
+  id: string
+  name: string
+}
+
+/** Current Driver catalog and fresh-Session default. */
+export interface AgentDriverCatalogResult {
+  defaultId: string
+  items: AgentDriverCatalogItem[]
+}
 
 /** Parameters for the process-wide SDK handshake. */
 export interface InitializeParams {
@@ -22,12 +35,16 @@ export interface InitializeParams {
   model: string
   /** Optional positive output-token cap inherited by SDK-created agents and their in-process descendants. */
   maxTokens?: number
+  /** Default immutable Agent Driver binding for SDK-created Sessions. */
+  driverId?: string
 }
 
 /** Wire-stable server identity returned by initialization. */
 export interface InitializeResult {
   /** Wire-stable server identity (`deepseek-harness-sdk-runtime`) and version. */
   serverInfo: { name: string; version: string }
+  /** Active Driver catalog after initialization. */
+  drivers: AgentDriverCatalogResult
 }
 
 /** One user turn on one SDK session. */
@@ -36,6 +53,8 @@ export interface SessionPromptParams {
   sessionId: string
   /** The prompt content blocks, sent verbatim as the user message. */
   contentBlocks: ContentBlock[]
+  /** Driver for lazy creation; a different value on an existing Session fails. */
+  driverId?: string
 }
 
 /** Durable enqueue receipt for one prompt. */
@@ -53,6 +72,18 @@ export interface SessionEventNotification {
   sessionId: string
   /** The full session-log event envelope. */
   event: SessionEvent
+}
+
+/** `session.created` payload with the immutable Driver binding. */
+export interface SessionCreatedNotification {
+  sessionId: string
+  driverId: string
+  parentSessionId?: string
+}
+
+/** `session.runtime` payload with one process-local whole current value. */
+export interface SessionRuntimeNotification {
+  status: SessionRuntimeStatus
 }
 
 /** Whole-agent lifecycle state for one session. */
@@ -89,9 +120,21 @@ export interface SubagentFinishedNotification {
   lastAssistantMessage?: ContentBlock[]
 }
 
+/** Current runtime lookup for one Session id. */
+export interface SessionRuntimeParams {
+  sessionId: string
+}
+
+/** Runtime lookup result; `null` means this Host has not observed the Session. */
+export interface SessionRuntimeResult {
+  status: SessionRuntimeStatus | null
+}
+
 /** Server-to-client notifications by JSON-RPC method name. */
 export interface HarnessSdkNotificationMap {
   'session.event': SessionEventNotification
+  'session.created': SessionCreatedNotification
+  'session.runtime': SessionRuntimeNotification
   'session.status': SessionStatusNotification
   'subagent.started': SubagentStartedNotification
   'subagent.finished': SubagentFinishedNotification
@@ -100,6 +143,8 @@ export interface HarnessSdkNotificationMap {
 /** Client-to-server request methods with their param and result shapes. */
 export interface HarnessSdkRequestMap {
   'initialize': { params: InitializeParams; result: InitializeResult }
+  'agent/drivers': { params: undefined; result: AgentDriverCatalogResult }
+  'session/runtime': { params: SessionRuntimeParams; result: SessionRuntimeResult }
   'session/prompt': { params: SessionPromptParams; result: SessionPromptResult }
   'shutdown': { params: undefined; result: Record<string, never> }
 }

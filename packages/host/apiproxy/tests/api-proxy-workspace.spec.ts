@@ -4,8 +4,8 @@ import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry, { Inbox } from '@deepseek-ai/dsh-agent'
-import type { Agent, AgentFactory } from '@deepseek-ai/dsh-agent'
-import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
+import type { Agent } from '@deepseek-ai/dsh-agent'
+import SessionStore, { AgentDriverId, SessionId } from '@deepseek-ai/dsh-session'
 import type { Session } from '@deepseek-ai/dsh-session'
 import Storage from '@deepseek-ai/dsh-storage'
 import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
@@ -18,6 +18,7 @@ import type { RpcRequest, RpcResponse } from '@deepseek-ai/dsh-host-apiproxy/api
 import { RpcId } from '@deepseek-ai/dsh-host-apiproxy/api/rpc'
 import { createApiProxy } from '@deepseek-ai/dsh-host-apiproxy'
 import { MemoryStorageBackend } from '../../../storage/storage-domain/tests/helpers/memory-backend.ts'
+import { registerFakeAgentDriver } from './fake-agent-driver.ts'
 
 let nextRpc = 1
 
@@ -78,27 +79,7 @@ async function harness(
   ctx.provide('sessionPersistence', { list: () => Promise.resolve([]) } as never)
   await ctx.plugin(WorkspaceRegistry)
 
-  const factory: AgentFactory = {
-    async createAgent(_ownerCtx, options) {
-      const session = ctx.sessions.create(
-        options.sessionId,
-        options.meta === undefined ? {} : { meta: options.meta },
-      )
-      const agent = stubAgent(session)
-      const unregister = ctx.agents.register(agent)
-      return {
-        agent,
-        dispose: () => {
-          unregister()
-          return Promise.resolve()
-        },
-      }
-    },
-    async resume() {
-      throw new Error('test harness has no persisted sessions')
-    },
-  }
-  ctx.agents.setFactory(factory)
+  registerFakeAgentDriver(ctx, stubAgent)
   // Structural picker fake: the gateway only reads capability(); a stable
   // object per harness mirrors the seam's stability contract.
   ctx.provide('directoryPicker', { capability: () => picker } as never)
@@ -365,6 +346,36 @@ describe('workspace.insertBefore', () => {
 })
 
 describe('session creation and Workspace membership', () => {
+  it('reports the Driver catalog/default, binds explicit creation, and rejects cross-Driver adoption', async () => {
+    const { api, ctx } = await harness()
+    const codex = AgentDriverId('codex')
+    registerFakeAgentDriver(ctx, stubAgent, codex, 'Codex')
+
+    expect(expectOk(await api.sessions.drivers(request({})))).toEqual({
+      defaultId: AgentDriverId('dsh'),
+      items: [
+        { id: codex, name: 'Codex' },
+        { id: AgentDriverId('dsh'), name: 'Test Driver' },
+      ],
+    })
+
+    const sessionId = SessionId('session-explicit-driver')
+    expect(expectOk(await api.sessions.create(request({ sessionId, driverId: codex })))).toEqual({
+      sessionId,
+      driverId: codex,
+    })
+    expect(ctx.sessions.get(sessionId)?.header.driverId).toBe(codex)
+
+    const conflict = await api.sessions.create(request({ sessionId, driverId: AgentDriverId('dsh') }))
+    expect(conflict.result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'agent-driver-conflict',
+        details: { sessionId, requestedDriverId: AgentDriverId('dsh'), existingDriverId: codex },
+      },
+    })
+  })
+
   it('attaches a preallocated idempotent session while cwd-only sessions stay ungrouped', async () => {
     const { api, ctx, root } = await harness()
     const workspace = expectOk(await api.workspace.create(request({ path: stageDir(root, 'project') }))).workspace
@@ -403,7 +414,7 @@ describe('session creation and Workspace membership', () => {
     const failed = await api.sessions.create(request({ workspaceId: created.workspaceId, sessionId }))
     expect(failed.result).toMatchObject({
       ok: false,
-      error: { code: 'workspace-attach-failed', details: { sessionId, workspaceId: created.workspaceId } },
+      error: { code: 'workspace-attach-failed', details: { sessionId, workspaceId: created.workspaceId, driverId: AgentDriverId('dsh') } },
     })
     expect(ctx.agents.get(sessionId)).toBeDefined()
 
@@ -423,6 +434,7 @@ describe('Host Workspace increments', () => {
 
     ctx.sessions.create(childId, {
       meta: {
+        driverId: AgentDriverId('dsh'),
         cwd: '/tmp',
         parentSession: SessionId('session-parent'),
         origin: 'subagent',
@@ -433,6 +445,7 @@ describe('Host Workspace increments', () => {
       payload: {
         type: 'host/session-added',
         sessionId: childId,
+        driverId: AgentDriverId('dsh'),
         parentSessionId: 'session-parent',
         origin: 'subagent',
       },
@@ -469,7 +482,7 @@ describe('Host Workspace increments', () => {
     }
     expect(increments.find(increment => increment.type === 'host/session-added')).toMatchObject({
       // A just-created session has no events: the frame constantly carries blank:true.
-      type: 'host/session-added', sessionId, blank: true, cwd: workspace.path,
+      type: 'host/session-added', sessionId, driverId: AgentDriverId('dsh'), blank: true, cwd: workspace.path,
     })
     const workspaceChanged = increments.find(
       (increment): increment is Extract<HostFrame, { type: 'host/workspace-changed' }> =>

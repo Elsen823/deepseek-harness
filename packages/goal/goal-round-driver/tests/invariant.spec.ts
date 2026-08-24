@@ -9,7 +9,7 @@ import {
 import * as GoalSessionInvariant from '@deepseek-ai/dsh-goal-round-driver/invariant'
 import { renderGoalRoundPrompt } from '@deepseek-ai/dsh-goal-round-driver'
 import InvariantRegistry, { InvariantError } from '@deepseek-ai/dsh-invariants'
-import SessionStore, { SessionId, type Session } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, SessionId, type Session } from '@deepseek-ai/dsh-session'
 
 const change: GoalSnapshotChangeMeta = {
   kind: 'goal/change',
@@ -47,7 +47,7 @@ function appendRound(session: Session, turn: number, content = renderGoalRoundPr
 async function mount(sessionFirst = false): Promise<{ ctx: Context; session: Session }> {
   const ctx = new Context()
   await ctx.plugin(SessionStore)
-  const session = ctx.sessions.create(SessionId('goal-round-driver-invariant'))
+  const session = ctx.sessions.create(SessionId('goal-round-driver-invariant'), { meta: { driverId: AgentDriverId('dsh') } })
   if (!sessionFirst) {
     await ctx.plugin(InvariantRegistry, { enabled: true })
     await ctx.plugin(GoalSessionInvariant)
@@ -65,7 +65,7 @@ describe('goal-round-driver prompt invariants', () => {
     await ctx.plugin(GoalSessionInvariant)
 
     expect(() => { appendRound(session, 3) }).not.toThrow()
-    ctx.sessions.create(SessionId('goal-session-invariant-dispatch'))
+    ctx.sessions.create(SessionId('goal-session-invariant-dispatch'), { meta: { driverId: AgentDriverId('dsh') } })
 
     const userSource = { kind: 'user' } as const
     session.append('turn/start', { turn: 4 })

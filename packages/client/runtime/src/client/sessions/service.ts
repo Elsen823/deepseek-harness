@@ -16,7 +16,8 @@
  */
 import type { Context, Fiber } from '@deepseek-ai/cordis'
 import type {
-  IApiClient, RpcError, RpcResult, SessionId, SubagentAddress, JobView, WorkspaceId,
+  AgentDriverCatalog, AgentDriverId, IApiClient, RpcError, RpcResult, SessionId,
+  SubagentAddress, JobView, WorkspaceId,
 } from '@deepseek-ai/dsh-api-remotes/client'
 // Value import from the inline-safe wire layer (not the connection plugin):
 // plugin-to-plugin value imports are a bundle purity error.
@@ -41,6 +42,10 @@ import type { Session } from './session.ts'
 /** Session list row projected from the host list RPC plus live stream increments. */
 export interface SessionSummary {
   id: SessionId
+  /** Immutable Agent Driver bound in the Session header; absent only for a catalog-only child address. */
+  driverId?: AgentDriverId
+  /** Latest process-local runtime state reported by the connected Host. */
+  runtime?: import('@deepseek-ai/dsh-api-remotes/client').SessionRuntimeStatus
   /** Latest durable log-backed title, absent until the host projects one. */
   title?: string
   /** Human-facing label: durable title, project basename, then session id. */
@@ -277,7 +282,7 @@ export class SessionRuntime implements ISessions {
    */
   constructor(
     private readonly rootCtx: Context,
-    api: IApiClient,
+    private readonly api: IApiClient,
     remote: SessionRemotes,
     conversationRuntime?: ConversationRuntime,
   ) {
@@ -471,6 +476,13 @@ export class SessionRuntime implements ISessions {
     this.manager.handleDisconnected()
   }
 
+  /** Read the active Driver catalog and Host-resolved fresh-Session default. */
+  async drivers(): Promise<AgentDriverCatalog> {
+    const { result } = await this.api.sessions.drivers({})
+    if (!result.ok) throw new Error(`Agent Driver catalog failed: ${result.error.code}: ${result.error.message}`)
+    return result.value
+  }
+
   /**
    * Create a session on the host. Resolution guarantee: by the time the
    * promise resolves, the created session is in the list store and
@@ -482,7 +494,12 @@ export class SessionRuntime implements ISessions {
    * @returns the new session id.
    * @throws {SessionCreateError} with the requested id.
    */
-  async create(opts: { workspaceId?: WorkspaceId; cwd?: string; sessionId?: SessionId } = {}): Promise<SessionId> {
+  async create(opts: {
+    workspaceId?: WorkspaceId
+    cwd?: string
+    sessionId?: SessionId
+    driverId?: AgentDriverId
+  } = {}): Promise<SessionId> {
     const result = await this.manager.create(opts)
     if (!result.ok) throw new SessionCreateError(result.error, opts.sessionId)
     this.projectList()
@@ -507,6 +524,7 @@ export class SessionRuntime implements ISessions {
   async fork(opts: {
     sessionId: SessionId
     atSeq?: number
+    driverId?: AgentDriverId
     increaseTitle?: boolean
   }): Promise<SessionId> {
     const sourceTitle = opts.increaseTitle
@@ -518,6 +536,7 @@ export class SessionRuntime implements ISessions {
       // turn/start), so the host's first-turn/end-at-or-after cut still ends
       // on that turn — never clipped back to the previous one.
       ...(opts.atSeq === undefined ? {} : { atSeq: Math.floor(opts.atSeq) }),
+      ...(opts.driverId === undefined ? {} : { driverId: opts.driverId }),
     })
     if (!result.ok) throw new SessionForkError(result.error, opts.sessionId)
     this.projectList()
@@ -667,6 +686,8 @@ export class SessionRuntime implements ISessions {
       ids.push(entry.sessionId)
       byId[entry.sessionId] = {
         id: entry.sessionId,
+        driverId: entry.driverId,
+        ...(entry.runtime === undefined ? {} : { runtime: entry.runtime }),
         displayTitle: displayTitleOf(entry.title, entry.cwd, entry.sessionId),
         running: entry.running,
         ...(entry.completed ? { completed: true } : {}),

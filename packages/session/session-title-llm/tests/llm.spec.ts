@@ -2,7 +2,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { describe, expect, it, vi } from 'vitest'
 import LlmRuntime, { createUserMessage, CallId, isAgentLoopRequest, LlmAdapter  } from '@deepseek-ai/dsh-llm'
 import type { FinishReason, GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
-import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, SessionId } from '@deepseek-ai/dsh-session'
 import { SessionTitleProviderId } from '@deepseek-ai/dsh-session-title'
 import type { SessionTitleProviderRequest } from '@deepseek-ai/dsh-session-title'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
@@ -77,7 +77,7 @@ const TITLE_PROVIDER = SessionTitleProviderId('test-title-provider')
 let nextSession = 0
 
 function request(ctx: Context, signal = new AbortController().signal): SessionTitleProviderRequest {
-  const session = ctx.sessions.create(SessionId(`title-call-${++nextSession}`))
+  const session = ctx.sessions.create(SessionId(`title-call-${++nextSession}`), { meta: { driverId: AgentDriverId('dsh') } })
   session.append('turn/start', {
     turn: 1,
   })

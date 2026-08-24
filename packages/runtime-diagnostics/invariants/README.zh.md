@@ -42,7 +42,7 @@ interface Config {
 | `dsh-fs`、`dsh-subagent`、`dsh-workflow` | 文件系统事件身份、提供方/子级配对和工作流/agent 生命周期身份。 |
 | `dsh-goal`、`dsh-goal-round-driver` | 持久 goal 来源/内容一致性、修订和生命周期转换、时间戳、依次获准的 Round 和重建的继续提示词。 |
 | `dsh-permission-presets`、`dsh-user-approval` | 活动 preset 引用和审批询问/决定审计配对。 |
-| `dsh-jobs`、`dsh-tool-todo` | 任务快照生命周期/归属字段和持久整表 todo 结构。 |
+| `dsh-jobs`、`dsh-todo`、`dsh-tool-todo` | 任务快照生命周期/归属字段、经 schema 校验的 Checklist 投影值和持久整表 todo 结构。 |
 | `dsh-time-context` | 持久化时钟读数与会话中正在进行的轮次、下一步骤开始前的位置及已用时间 baseline 一致；渲染时间可解析，且不晚于其事件。 |
 
 每个 owner 的根入口仍独立于诊断。单独加载服务不会安装产品检查；在没有服务时加载配套入口，会等待其声明的 `invariants` 注入。

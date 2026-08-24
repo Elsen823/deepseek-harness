@@ -12,6 +12,7 @@ import { normalizeSessionSnapshot, type NormalizeContext } from '@deepseek-ai/ds
 import { LOADER_SMOKE_TEST_TIMEOUT_MS, runLoaderSmoke } from '@deepseek-ai/dsh-loader-smoke'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import SessionStore, {
+  AgentDriverId,
   SESSION_FORMAT_VERSION,
   SessionId,
   type SessionEvent,
@@ -50,6 +51,7 @@ async function seedVisibleBaseline(
   await ctx.plugin(JsonlSessionPersistence, { root, compression: 'none' })
   const meta: SessionHeader = {
     version: SESSION_FORMAT_VERSION,
+    driverId: AgentDriverId('dsh'),
     id: sessionId,
     createdAt: 1,
     cwd,

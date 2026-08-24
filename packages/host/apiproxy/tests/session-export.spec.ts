@@ -11,6 +11,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { unzipSync, strFromU8 } from 'fflate'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import UserQuestionService from '@deepseek-ai/dsh-user-questions'
+import { AgentDriverId } from '@deepseek-ai/dsh-session'
 import type { SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionLineageNode } from '@deepseek-ai/dsh-session-query'
 import type { SessionRawArtifact } from '@deepseek-ai/dsh-session-persistence'
@@ -21,6 +22,7 @@ const sid = (id: string): SessionId => id as SessionId
 function header(id: string, parentSession?: SessionId): SessionHeader {
   return {
     version: 0,
+    driverId: AgentDriverId('dsh'),
     id: sid(id),
     createdAt: 1000,
     cwd: '/proj',

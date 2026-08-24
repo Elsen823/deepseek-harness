@@ -6,6 +6,7 @@ CREATE TABLE persistence_state (
 CREATE TABLE sessions (
   id               TEXT PRIMARY KEY,
   version          INTEGER NOT NULL,
+  driver_id        TEXT NOT NULL,
   created_at       INTEGER NOT NULL,
   cwd              TEXT,
   parent_session   TEXT,

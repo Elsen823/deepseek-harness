@@ -16,9 +16,11 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import {
   JsonRpcLineTransport,
   JsonRpcResponseError,
+  type AgentDriverCatalogResult,
   type InitializeParams,
   type InitializeResult,
   type SessionPromptParams,
+  type SessionRuntimeResult,
 } from '@deepseek-ai/dsh-sdk-protocol'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import { disposeRuntimeProcess } from './dispose.ts'
@@ -271,17 +273,48 @@ export class HarnessClient {
       || typeof result.serverInfo.name !== 'string' || typeof result.serverInfo.version !== 'string') {
       throw new SdkProtocolError(`initialize returned no server identity: ${JSON.stringify(result)}`)
     }
-    return { serverInfo: { name: result.serverInfo.name, version: result.serverInfo.version } }
+    return {
+      serverInfo: { name: result.serverInfo.name, version: result.serverInfo.version },
+      drivers: validatedDriverCatalog(result.drivers, 'initialize'),
+    }
+  }
+
+  /**
+   * Read the active Agent Driver catalog.
+   * @returns the Host-resolved default and active Driver registrations.
+   */
+  async drivers(): Promise<AgentDriverCatalogResult> {
+    return validatedDriverCatalog(await this.request('agent/drivers'), 'agent/drivers')
+  }
+
+  /**
+   * Read one process-local Session runtime value without activating it.
+   * @param sessionId - durable Session identity.
+   * @returns the current runtime value, or `null` when this process has none.
+   */
+  async runtime(sessionId: string): Promise<SessionRuntimeResult> {
+    const result = await this.request('session/runtime', { sessionId })
+    if (!isRecord(result) || !('status' in result)) {
+      throw new SdkProtocolError(`session/runtime returned no status: ${JSON.stringify(result)}`)
+    }
+    const status = result.status
+    if (status === null) return { status: null }
+    return { status: validatedRuntimeStatus(status) }
   }
 
   /**
    * Queue one prompt and return its durable inbox identity.
    * @param sessionId - target session; an unknown id creates it.
    * @param contentBlocks - the user message, sent verbatim.
+   * @param driverId - lazy-creation Driver; must match an existing Session's binding.
    * @returns the queued message id.
    */
-  async prompt(sessionId: string, contentBlocks: ContentBlock[]): Promise<string> {
-    const params: SessionPromptParams = { sessionId, contentBlocks }
+  async prompt(sessionId: string, contentBlocks: ContentBlock[], driverId?: string): Promise<string> {
+    const params: SessionPromptParams = {
+      sessionId,
+      contentBlocks,
+      ...driverId === undefined ? {} : { driverId },
+    }
     const result = await this.request('session/prompt', { ...params })
     if (!isRecord(result) || typeof result.messageId !== 'string') {
       throw new SdkProtocolError(`session/prompt returned no message id: ${JSON.stringify(result)}`)
@@ -366,7 +399,10 @@ export class HarnessClient {
         if (typeof parentId === 'string' && this.isDescendantOf(parentId, sessionId)) return true
         return params.childSessionId === sessionId
       }
-      const relatedId = params.sessionId
+      const runtimeStatus = notification.method === 'session.runtime' && isRecord(params.status)
+        ? params.status
+        : undefined
+      const relatedId = runtimeStatus?.sessionId ?? params.sessionId
       return typeof relatedId === 'string' && this.isDescendantOf(relatedId, sessionId)
     })
   }
@@ -455,6 +491,68 @@ export class HarnessClient {
     if (this.stderrTail.length > 0) parts.push(`stderr tail:\n${this.stderrTail.join('\n')}`)
     return new TransportClosedError(parts.join('\n'))
   }
+}
+
+/** Validate one runtime status returned by the JSON-RPC wire. */
+function validatedRuntimeStatus(value: unknown): NonNullable<SessionRuntimeResult['status']> {
+  if (!isRecord(value)) throwMalformedRuntimeStatus(value)
+  if (typeof value.sessionId !== 'string' || value.sessionId.length === 0
+    || typeof value.driverId !== 'string' || value.driverId.length === 0
+    || !validAvailability(value.availability)
+    || !isRecord(value.attention)
+    || !nonnegativeInteger(value.attention.approvals)
+    || !nonnegativeInteger(value.attention.userInputs)
+    || typeof value.operation !== 'string' || value.operation.length === 0
+    || !nonnegativeInteger(value.revision)
+    || typeof value.updatedAt !== 'number' || !Number.isFinite(value.updatedAt)) throwMalformedRuntimeStatus(value)
+  if (value.activity !== undefined && value.activity !== 'idle' && value.activity !== 'running') throwMalformedRuntimeStatus(value)
+  if (value.detail !== undefined
+    && (!isRecord(value.detail) || typeof value.detail.kind !== 'string' || value.detail.kind.length === 0
+      || !('data' in value.detail))) throwMalformedRuntimeStatus(value)
+  return value as unknown as NonNullable<SessionRuntimeResult['status']>
+}
+
+/** Throw the malformed-status error for `validatedRuntimeStatus`. */
+function throwMalformedRuntimeStatus(value: unknown): never {
+  throw new SdkProtocolError(`session/runtime returned a malformed status: ${JSON.stringify(value)}`)
+}
+
+/** Validate the closed availability vocabulary and its variant fields. */
+function validAvailability(value: unknown): boolean {
+  if (!isRecord(value)) return false
+  switch (value.kind) {
+    case 'cold':
+    case 'available':
+      return true
+    case 'activating':
+      return typeof value.phase === 'string' && value.phase.length > 0
+    case 'unavailable':
+      return isRecord(value.reason)
+        && typeof value.reason.code === 'string' && value.reason.code.length > 0
+        && typeof value.reason.message === 'string'
+        && typeof value.reason.retryable === 'boolean'
+    default:
+      return false
+  }
+}
+
+/** Whether a wire counter is an exact non-negative integer. */
+function nonnegativeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+}
+
+/** Validate an Agent Driver catalog returned by one wire method. */
+function validatedDriverCatalog(value: unknown, method: string): AgentDriverCatalogResult {
+  if (!isRecord(value) || typeof value.defaultId !== 'string' || !Array.isArray(value.items)) {
+    throw new SdkProtocolError(`${method} returned no Agent Driver catalog: ${JSON.stringify(value)}`)
+  }
+  const items = value.items.map((item) => {
+    if (!isRecord(item) || typeof item.id !== 'string' || typeof item.name !== 'string') {
+      throw new SdkProtocolError(`${method} returned a malformed Agent Driver: ${JSON.stringify(item)}`)
+    }
+    return { id: item.id, name: item.name }
+  })
+  return { defaultId: value.defaultId, items }
 }
 
 /**

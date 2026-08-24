@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import SessionStore, { Session, SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, Session, SessionId } from '@deepseek-ai/dsh-session'
 import { ApprovalRequestId } from '@deepseek-ai/dsh-user-approval'
 import * as ApprovalInvariant from '@deepseek-ai/dsh-user-approval/invariant'
 import InvariantRegistry from '@deepseek-ai/dsh-invariants'
@@ -20,7 +20,7 @@ function startTurn(session: Session): void {
 describe('approval invariants', () => {
   it('accepts paired audit events and closed policy values', async () => {
     const ctx = await setup()
-    const session = ctx.sessions.create()
+    const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     startTurn(session)
     const id = ApprovalRequestId('ask-1')
     session.append('approval/asked', { id, toolName: 'bash' })
@@ -31,7 +31,7 @@ describe('approval invariants', () => {
   it('rebuilds an unmatched question from an existing session', async () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
-    const session = ctx.sessions.create()
+    const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', { turn: 1 })
     const id = ApprovalRequestId('ask-resume')
     session.append('approval/asked', { id, toolName: 'bash' })
@@ -63,7 +63,7 @@ describe('approval invariants', () => {
 
   it('rejects audit events outside any open turn', async () => {
     const ctx = await setup()
-    const session = ctx.sessions.create()
+    const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     expect(() => session.append('approval/asked', {
       id: ApprovalRequestId('ask-1'), toolName: 'bash',
     })).toThrow(/outside any open turn/)
@@ -75,7 +75,7 @@ describe('approval invariants', () => {
   it('rejects an unenclosed audit event when replaying an existing session', async () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
-    const session = ctx.sessions.create()
+    const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     startTurn(session)
     session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
     session.append('approval/asked', {
@@ -87,7 +87,7 @@ describe('approval invariants', () => {
 
   it('rejects malformed and unpaired audit events', async () => {
     const ctx = await setup()
-    const session = ctx.sessions.create()
+    const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     startTurn(session)
     const id = ApprovalRequestId('ask-1')
     expect(() => session.append('approval/asked', { id, toolName: '' }))

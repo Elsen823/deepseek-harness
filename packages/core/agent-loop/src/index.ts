@@ -8,20 +8,17 @@
 import { Context, FiberState, Service } from '@deepseek-ai/cordis'
 import { randomUUID } from 'node:crypto'
 import z from '@deepseek-ai/schemastery'
-import { emitAgentEvent } from '@deepseek-ai/dsh-agent'
+import { DSH_AGENT_DRIVER_ID } from '@deepseek-ai/dsh-agent'
 import type {
   Agent,
-  AgentFactory,
-  AgentHandle,
+  AgentDriver,
+  AgentDriverInfo,
   AgentOptions,
-  AgentSetup,
-  CreateAgentOptions,
-  ResumeAgentOptions,
-  SessionStartSource,
+  PreparedAgentDriver,
 } from '@deepseek-ai/dsh-agent'
 import { errorChain } from '@deepseek-ai/dsh-llm'
 import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
-import { SessionId, SessionPreparation } from '@deepseek-ai/dsh-session'
+import { SessionId } from '@deepseek-ai/dsh-session'
 import type { Session, SessionHeader } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import type {} from '@deepseek-ai/dsh-tools'
@@ -35,99 +32,6 @@ const INACTIVE_STATES: ReadonlySet<FiberState> = new Set([
   FiberState.DISPOSED,
   FiberState.FAILED,
 ])
-
-/** Factory-level ownership: live agent teardowns plus config startup work. */
-class FactoryOwnership {
-  private accepting = true
-  private readonly teardown = new AbortController()
-  private readonly inactive = Promise.withResolvers<void>()
-  private readonly liveAgents = new Set<() => Promise<void>>()
-  private startupTasks = new Set<Promise<void>>()
-
-  constructor(private readonly fiber: Context['fiber']) {}
-
-  /** Aborts (reason: `agent loop is not active` error) when factory teardown begins. */
-  get signal(): AbortSignal {
-    return this.teardown.signal
-  }
-
-  isActive(): boolean {
-    return this.accepting && !INACTIVE_STATES.has(this.fiber.state)
-  }
-
-  /** Track one live agent's shared teardown until it has run. */
-  track(dispose: () => Promise<void>): () => void {
-    this.liveAgents.add(dispose)
-    return () => { this.liveAgents.delete(dispose) }
-  }
-
-  /** Join config startup work that begins before an agent exists. */
-  trackStartup(job: Promise<void>): void {
-    this.startupTasks.add(job)
-    const forget = () => { this.startupTasks.delete(job) }
-    void job.then(forget, forget)
-  }
-
-  /** Join one public create/resume continuation; factory dispose awaits its settlement. */
-  trackWrapper(job: Promise<unknown>): void {
-    this.trackStartup(job.then(() => undefined, () => undefined))
-  }
-
-  /** Resolve `task`, or stop waiting when factory teardown begins. */
-  async waitWhileActive(job: Promise<void>): Promise<void> {
-    await Promise.race([job, this.inactive.promise])
-  }
-
-  async dispose(): Promise<void> {
-    this.accepting = false
-    this.teardown.abort(new Error('agent loop is not active'))
-    this.inactive.resolve()
-    await Promise.all([
-      ...[...this.liveAgents].map(dispose => dispose()),
-      ...this.startupTasks,
-    ])
-  }
-}
-
-/** Await `operation`, or throw the signal's reason as soon as it aborts. */
-async function raceAbort<T>(operation: PromiseLike<T> | T, signal: AbortSignal, id: SessionId): Promise<T> {
-  const toAbortError = (): Error => signal.reason instanceof Error
-    ? signal.reason
-    : new Error(`agent "${id}" creation aborted`, { cause: signal.reason })
-  if (signal.aborted) throw toAbortError()
-  const aborted = Promise.withResolvers<never>()
-  const listener = (): void => { aborted.reject(toAbortError()) }
-  signal.addEventListener('abort', listener, { once: true })
-  try {
-    return await Promise.race([Promise.resolve(operation), aborted.promise])
-  } finally {
-    signal.removeEventListener('abort', listener)
-  }
-}
-
-/** Start an abortable operation and release a value that arrives after cancellation. */
-async function raceAbortCall<T>(
-  operation: () => PromiseLike<T> | T,
-  signal: AbortSignal,
-  id: SessionId,
-  releaseAbandoned?: (value: T) => void,
-): Promise<T> {
-  if (signal.aborted) {
-    throw signal.reason instanceof Error
-      ? signal.reason
-      : new Error(`agent "${id}" creation aborted`, { cause: signal.reason })
-  }
-  const pending = Promise.resolve().then(operation)
-  try {
-    return await raceAbort(pending, signal, id)
-  } catch (error: unknown) {
-    // oxlint-disable-next-line typescript/no-unnecessary-condition -- the signal can abort while the operation is awaited.
-    if (signal.aborted && releaseAbandoned !== undefined) {
-      void pending.then(releaseAbandoned, () => undefined)
-    }
-    throw error
-  }
-}
 
 /** Resolve the deployment-wide scheduler cap at the owning config boundary. */
 function resolveMaxParallelToolCalls(value: number | undefined): number {
@@ -144,17 +48,6 @@ function assertAgentOptions(options: AgentOptions): void {
     && (!Number.isSafeInteger(options.maxTokens) || options.maxTokens <= 0)) {
     throw new TypeError('agent maxTokens must be a positive safe integer')
   }
-}
-
-/** Prepared-but-unpublished agent resources sharing one memoized teardown. */
-interface PreparedAgent {
-  agent: ReactLoopAgent
-  /** Aborts when the factory unloads, the caller cancels, or teardown begins — ends any setup await. */
-  signal: AbortSignal
-  /** Enter registries, announce, notify session-start, and start the machine. */
-  publish(source: SessionStartSource): AgentHandle
-  /** Reverse teardown: stop the machine, unregister, unwind the scope. Memoized. */
-  dispose(): Promise<void>
 }
 
 declare module '@deepseek-ai/cordis' {
@@ -175,7 +68,7 @@ declare module '@deepseek-ai/cordis' {
      * A declarative agent entry failed before it could publish a live agent.
      * Consumers that buffer work for the configured identity use this
      * transient signal to reject that work instead of waiting forever. Normal
-     * factory teardown suppresses failures from the cancelled startup attempt.
+     * Driver teardown suppresses failures from the cancelled startup attempt.
      * @param payload.sessionId - exact shared agent/session identity that failed startup.
      * @param payload.error - persistence, setup, or publication failure.
      * @mode emit
@@ -292,8 +185,37 @@ function validateConfiguredAgents(agents: Config['agents']): void {
   }
 }
 
-/** Concrete agent factory and driver service. */
-export class AgentLoop extends Service implements AgentFactory {
+/** Package-private built-in Driver adapter over ReactLoopAgent. */
+class DshAgentDriver implements AgentDriver {
+  readonly info: AgentDriverInfo = Object.freeze({
+    id: DSH_AGENT_DRIVER_ID,
+    name: 'DeepSeek Harness',
+  })
+
+  constructor(private readonly ctx: Context) {}
+
+  prepare(session: Session, options: AgentOptions, signal: AbortSignal): PreparedAgentDriver {
+    assertAgentOptions(options)
+    if (signal.aborted) {
+      throw signal.reason instanceof Error
+        ? signal.reason
+        : new Error(`agent "${session.id}" creation aborted`, { cause: signal.reason })
+    }
+    const agent = new ReactLoopAgent(this.ctx, session.id, options, session)
+    return {
+      agent,
+      start: () => {},
+      dispose: async () => {
+        agent.cancel({ kind: 'disposed' })
+        await agent.whenIdle()
+        await agent.scope.dispose()
+      },
+    }
+  }
+}
+
+/** Declarative launcher and public helper for the built-in DSH Agent Driver. */
+export class AgentLoop extends Service {
   static inject = ['agents', 'sessions', 'llm', 'tools', 'systemPrompt']
 
   /** Runtime schema for declarative agents. */
@@ -312,9 +234,6 @@ export class AgentLoop extends Service implements AgentFactory {
 
   /** Validated configuration owned by the agent-loop service. */
   readonly config: ResolvedConfig
-  private readonly ownership: FactoryOwnership
-  /** Plain holder prevents Cordis from re-tracing the factory's dependency context through a caller shadow. */
-  private readonly runtime: { ctx: Context }
 
   constructor(ctx: Context, config: Config) {
     super(ctx, 'agentLoop')
@@ -344,10 +263,8 @@ export class AgentLoop extends Service implements AgentFactory {
       onChange: () => {},
     })
     validateConfiguredAgents(this.config.agents)
-    this.ownership = new FactoryOwnership(ctx.fiber)
-    this.runtime = { ctx }
-    ctx.effect(() => () => this.ownership.dispose(), 'agentLoop.transactions()')
-    ctx.effect(() => ctx.agents.setFactory(this), 'agentLoop.setFactory()')
+    const driver = new DshAgentDriver(ctx)
+    ctx.effect(() => ctx.agents.registerDriver(driver), 'agentLoop.registerDriver()')
     ctx.systemPrompt.variable('provider', context => context.agent?.options.provider)
     ctx.systemPrompt.variable('model', context => context.agent?.options.model)
     ctx.systemPrompt.variable('cwd', context => context.agent?.session.header.cwd)
@@ -357,19 +274,22 @@ export class AgentLoop extends Service implements AgentFactory {
       if (resumeSessionId === undefined || resumeSessionId === '') {
         const configuredId = sessionId ?? SessionId(`${id}-session-${randomUUID()}`)
         const persistence = sessionId === undefined ? undefined : ctx.get('sessionPersistence')
-        if (persistence === undefined) {
-          this.create(configuredId, options, meta)
-        } else {
-          const startup = this.restoreOrCreateConfigured(ctx, persistence, configuredId, options, meta).catch((error: unknown) => {
-            this.reportConfiguredStartupFailure(id, 'restore', configuredId, error)
-          })
-          this.ownership.trackStartup(startup)
-        }
+        const startup = persistence === undefined
+          ? ctx.agents.create({
+            sessionId: configuredId,
+            driverId: DSH_AGENT_DRIVER_ID,
+            agentOptions: options,
+            meta,
+          }).then(() => undefined)
+          : this.restoreOrCreateConfigured(ctx, persistence, configuredId, options, meta)
+        void startup.catch((error: unknown) => {
+          this.reportConfiguredStartupFailure(id, 'restore', configuredId, error)
+        })
         continue
       }
       ctx.effect(() => {
         const fiber = ctx.inject(['sessionPersistence'], (childCtx: Context) => {
-          void this.resumeWith(ctx, childCtx.sessionPersistence, {
+          void childCtx.agents.resume({
             resumeSessionId,
             agentOptions: options,
           }).catch((error: unknown) => {
@@ -388,7 +308,7 @@ export class AgentLoop extends Service implements AgentFactory {
     sessionId: SessionId,
     error: unknown,
   ): void {
-    if (!this.ownership.isActive()) return
+    if (INACTIVE_STATES.has(this.ctx.fiber.state)) return
     this.ctx.logger.warn(`agent "${configId}": config-driven ${action} of "${sessionId}" failed: ${errorChain(error)}`)
     const args: unknown[] = ['agent-loop/config-start-failed', { sessionId, error }]
     for (const callback of this.ctx.events.dispatch('emit', args)) {
@@ -411,302 +331,36 @@ export class AgentLoop extends Service implements AgentFactory {
     agentOptions: AgentOptions,
     meta: Pick<SessionHeader, 'cwd'>,
   ): Promise<void> {
-    await this.waitForDrainingConfiguredIdentity(ownerCtx, sessionId)
-    if (!this.ownership.isActive()) return
     try {
-      await this.resumeWith(ownerCtx, persistence, { resumeSessionId: sessionId, agentOptions })
+      await ownerCtx.agents.resume({ resumeSessionId: sessionId, agentOptions })
       return
     } catch (error: unknown) {
-      if (!this.ownership.isActive()) return
-      // A load is the per-id serialization barrier for eager write-behind and
-      // lifecycle retirement. Only a genuinely absent artifact falls back to
-      // first creation; corruption and backend failures stay loud.
+      if (INACTIVE_STATES.has(this.ctx.fiber.state)) return
       const exists = (await persistence.list()).some(header => header.id === sessionId)
       if (exists) throw error
     }
-    this.create(sessionId, agentOptions, meta)
-  }
-
-  /** Wait for a draining same-id lifecycle to finish registry teardown. */
-  private async waitForDrainingConfiguredIdentity(ownerCtx: Context, sessionId: SessionId): Promise<void> {
-    // Only an id still occupying a registry needs waiting for; a live healthy
-    // occupant is a collision the create/resume below will surface itself.
-    if (ownerCtx.agents.get(sessionId) === undefined && ownerCtx.sessions.get(sessionId) === undefined) return
-
-    const released = Promise.withResolvers<void>()
-    const checkReleased = (): void => {
-      if (ownerCtx.agents.get(sessionId) === undefined && ownerCtx.sessions.get(sessionId) === undefined) {
-        released.resolve()
-      }
-    }
-    const disposeAgentListener = ownerCtx.on('agent/disposed', () => { checkReleased() })
-    const disposeSessionListener = ownerCtx.on('session/disposed', checkReleased)
-    try {
-      checkReleased()
-      await this.ownership.waitWhileActive(released.promise)
-    } finally {
-      disposeAgentListener()
-      disposeSessionListener()
-    }
+    await ownerCtx.agents.create({
+      sessionId,
+      driverId: DSH_AGENT_DRIVER_ID,
+      agentOptions,
+      meta,
+    })
   }
 
   /**
-   * Construct the driver, scope, and one memoized reverse teardown for a new
-   * agent. The teardown is registered with the factory and the owner fiber
-   * BEFORE publication, so a mid-setup unload rolls everything back; `signal`
-   * fuses caller cancellation with lifecycle teardown for setup awaits.
+   * Create one DSH-driven Agent through the generic registry.
+   * @param id - shared Agent and Session identity.
+   * @param options - initial loop options.
+   * @param meta - optional fresh Session workspace metadata.
+   * @returns the published Agent.
    */
-  private prepare(ownerCtx: Context, id: SessionId, options: AgentOptions, session: Session, callerSignal?: AbortSignal): PreparedAgent {
-    assertAgentOptions(options)
-    ownerCtx.fiber.assertActive()
-    // Every caller reaches prepare() synchronously from a service method
-    // whose Cordis dispatch already requires the live factory fiber, or
-    // re-checks ownership itself after its awaits (resume's load barrier).
-    /* v8 ignore next -- unreachable backstop, see above */
-    if (!this.ownership.isActive()) throw new Error('agent loop is not active')
-    if (callerSignal?.aborted) {
-      throw callerSignal.reason instanceof Error
-        ? callerSignal.reason
-        : new Error(`agent "${id}" creation aborted`, { cause: callerSignal.reason })
-    }
-    const loopCtx = this.runtime.ctx
-
-    // Deactivation fuses three owners, each with its own reason: the caller's
-    // cancellation signal, the owner fiber's unload, and factory teardown.
-    // It is registered BEFORE any resource exists, over mutable slots, so an
-    // unload arriving while the scope is still minting finds a working
-    // disposer instead of a leak.
-    const abort = new AbortController()
-    const onCallerAbort = (): void => {
-      abort.abort(callerSignal?.reason instanceof Error
-        ? callerSignal.reason
-        : new Error(`agent "${id}" creation aborted`, { cause: callerSignal?.reason }))
-    }
-    const onFactoryTeardown = (): void => { abort.abort(this.ownership.signal.reason) }
-    callerSignal?.addEventListener('abort', onCallerAbort, { once: true })
-    this.ownership.signal.addEventListener('abort', onFactoryTeardown, { once: true })
-
-    let machine: ReactLoopAgent | undefined
-    let detachSession: (() => void) | undefined
-    let detachAgent: (() => void) | undefined
-    let disposing: Promise<void> | undefined
-    const machineReady = Promise.withResolvers<void>()
-    // Reverse teardown, memoized so every racing owner awaits one quiescence:
-    // stop the machine, leave the registries, unwind the scope, release
-    // bookkeeping.
-    const dispose = (ownerTriggered = false): Promise<void> => (disposing ??= (async () => {
-      abort.abort(new Error(`agent "${id}" lifecycle disposed`))
-      callerSignal?.removeEventListener('abort', onCallerAbort)
-      this.ownership.signal.removeEventListener('abort', onFactoryTeardown)
-      try {
-        // Disposal IS a disposed-cause cancel followed by quiescence. New work
-        // sent after this point is the sender's bug — the registries are about
-        // to drop the agent, so nothing should still hold it.
-        if (machine === undefined) await machineReady.promise
-        if (machine !== undefined) {
-          machine.cancel({ kind: 'disposed' })
-          await machine.whenIdle()
-          await machine.scope.dispose()
-        }
-      } finally {
-        try {
-          detachAgent?.()
-          detachSession?.()
-        } finally {
-          untrack()
-          if (!ownerTriggered) await unfollowOwner()
-        }
-      }
-    })())
-    const untrack = this.ownership.track(dispose)
-    let unfollowOwner: () => Promise<void> | void
-    try {
-      unfollowOwner = ownerCtx.effect(() => () => {
-        // Owner disposal owns the same quiescence boundary. Its teardown skips
-        // unregistering this already-running owner effect from inside itself.
-        if (disposing !== undefined) return
-        abort.abort(new Error(`agent "${id}" setup aborted: owner disposed during setup`))
-        return dispose(true)
-      }, `agentLoop.lifecycle(${id})`)
-      /* v8 ignore start -- ctx.effect throws only on an inactive fiber, which assertActive() above already rejected */
-    } catch (error: unknown) {
-      untrack()
-      callerSignal?.removeEventListener('abort', onCallerAbort)
-      this.ownership.signal.removeEventListener('abort', onFactoryTeardown)
-      throw error
-    }
-    /* v8 ignore stop */
-
-    const assertLive = (): void => {
-      if (!abort.signal.aborted) return
-      // Every fused abort source carries an Error reason: onCallerAbort and
-      // raceAbort wrap non-Error caller reasons, and the factory/lifecycle
-      // owners abort with constructed Errors.
-      /* v8 ignore next -- unreachable String() arm, see above */
-      throw abort.signal.reason instanceof Error ? abort.signal.reason : new Error(String(abort.signal.reason))
-    }
-    try {
-      const agent = machine = new ReactLoopAgent(loopCtx, id, options, session)
-      machineReady.resolve()
-      assertLive()
-
-      return {
-        agent,
-        signal: abort.signal,
-        publish: (source) => {
-          assertLive()
-          detachSession = agent.ctx.sessions.enter(session)
-          detachAgent = loopCtx.agents.enter(agent, ownerCtx.agent)
-          agent.ctx.sessions.announce(session)
-          assertLive()
-          loopCtx.agents.announce(agent)
-          assertLive()
-          // A synchronous announce/session-start listener may have started
-          // teardown; the machine is already live (delivery works from the
-          // session-start extension point), so only the liveness recheck is owed.
-          emitAgentEvent(loopCtx, agent, 'agent/session-start', { source })
-          assertLive()
-          return { agent, dispose }
-        },
-        dispose,
-      }
-    } catch (error: unknown) {
-      machineReady.resolve()
-      void dispose()
-      throw error
-    }
-  }
-
-  /**
-   * Create an agent and session under one caller-supplied identity, owned by
-   * the accessing fiber. Constructor-driven config calls mint a fresh combined
-   * id before entering this boundary.
-   * @param id - shared agent/session identity.
-   * @param options - concrete loop options.
-   * @param meta - optional fresh-session workspace metadata.
-   * @returns the published running agent.
-   */
-  create(id: SessionId, options: AgentOptions = {}, meta: Pick<SessionHeader, 'cwd'> = {}): Agent {
-    using preparation = SessionPreparation.create(this.runtime.ctx.sessions.prepare(id, { meta }))
-    const prepared = this.prepare(this.ctx, id, options, preparation.session)
-    try {
-      return prepared.publish('startup').agent
-    } catch (error: unknown) {
-      void prepared.dispose()
-      throw error
-    }
-  }
-
-  /**
-   * Create an owned agent on a caller-supplied session id.
-   * @param ownerCtx - caller context that structurally owns the lifecycle.
-   * @param options - identities, session seed/metadata, loop options, setup, and cancellation.
-   * @returns the published handle.
-   */
-  async createAgent(ownerCtx: Context, options: CreateAgentOptions): Promise<AgentHandle> {
-    const preparation = SessionPreparation.create(this.runtime.ctx.sessions.prepare(options.sessionId, {
-      ...options.seed === undefined ? {} : { seed: options.seed },
-      ...options.meta === undefined ? {} : { meta: options.meta },
-    }))
-    const published = this.setupAndPublish(
-      ownerCtx,
-      options.sessionId,
-      preparation,
-      options.agentOptions ?? {},
-      options.setup,
-      options.signal,
-      'startup',
-    )
-    this.ownership.trackWrapper(published)
-    return published
-  }
-
-  /** Prepare one Agent around an acquired Session, run setup, and publish it. */
-  private async setupAndPublish(
-    ownerCtx: Context,
-    id: SessionId,
-    preparation: SessionPreparation,
-    agentOptions: AgentOptions,
-    setup: AgentSetup | undefined,
-    signal: AbortSignal | undefined,
-    source: SessionStartSource,
-  ): Promise<AgentHandle> {
-    using ownedPreparation = preparation
-    const session = ownedPreparation.session
-    const prepared = this.prepare(ownerCtx, id, agentOptions, session, signal)
-    try {
-      const setupCommit = await raceAbort(setup?.(prepared.agent.ctx), prepared.signal, id)
-      setupCommit?.commit()
-      return prepared.publish(source)
-    } catch (error: unknown) {
-      await prepared.dispose()
-      throw error
-    }
-  }
-
-  /**
-   * Resume an owned agent from the configured persistence service.
-   * @param ownerCtx - caller context that owns load, setup, and the live lifecycle.
-   * @param options - persisted identity, loop options, setup, and cancellation.
-   * @returns the published handle.
-   */
-  async resume(ownerCtx: Context, options: ResumeAgentOptions): Promise<AgentHandle> {
-    const persistence = this.runtime.ctx.get('sessionPersistence')
-    if (persistence === undefined) {
-      throw new Error('cannot resume: session persistence is not configured (load a dsh-session-persistence backend)')
-    }
-    return this.resumeWith(ownerCtx, persistence, options)
-  }
-
-  /** Resume through an explicit persistence handle used by the deferred config path. */
-  private resumeWith(
-    ownerCtx: Context,
-    persistence: SessionPersistence,
-    options: ResumeAgentOptions,
-  ): Promise<AgentHandle> {
-    const id = options.resumeSessionId
-    const published = (async () => {
-      // The load may outlive its owner: race it against caller cancellation,
-      // owner-fiber unload, and factory teardown so a never-settling backend
-      // cannot pin the identity.
-      const ownerAbort = new AbortController()
-      const unfollowOwner = ownerCtx.effect(() => () => {
-        ownerAbort.abort(new Error(`agent "${id}" setup aborted: owner disposed during setup`))
-      }, `agentLoop.resume-load(${id})`)
-      const fused = AbortSignal.any([
-        ...options.signal === undefined ? [] : [options.signal],
-        ownerAbort.signal,
-        this.ownership.signal,
-      ])
-      let preparation: SessionPreparation | undefined
-      try {
-        try {
-          preparation = await raceAbortCall(
-            () => persistence.prepare(id, fused),
-            fused,
-            id,
-            (abandoned) => { abandoned[Symbol.dispose]() },
-          )
-        } finally {
-          await unfollowOwner()
-        }
-        ownerCtx.fiber.assertActive()
-        if (!this.ownership.isActive()) throw new Error('agent loop is not active')
-        return await this.setupAndPublish(
-          ownerCtx,
-          id,
-          preparation,
-          options.agentOptions ?? {},
-          options.setup,
-          options.signal,
-          'resume',
-        )
-      } finally {
-        preparation?.[Symbol.dispose]()
-      }
-    })()
-    this.ownership.trackWrapper(published)
-    return published
+  async create(id: SessionId, options: AgentOptions = {}, meta: Pick<SessionHeader, 'cwd'> = {}): Promise<Agent> {
+    return (await this.ctx.agents.create({
+      sessionId: id,
+      driverId: DSH_AGENT_DRIVER_ID,
+      agentOptions: options,
+      meta,
+    })).agent
   }
 }
 

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import SessionStore, { Session, SessionId, isJsonValue } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, Session, SessionId, isJsonValue } from '@deepseek-ai/dsh-session'
 import type { SessionEvent, SessionHeader } from '@deepseek-ai/dsh-session'
 import {
   DEFAULT_PREPARED_SESSION_CACHE_SIZE, DEFAULT_WRITE_BATCH_MAX_DELAY_MS, MAX_WRITE_BATCH_DELAY_MS,
@@ -291,7 +291,7 @@ describe('PersistenceCoordinator seed ownership', () => {
     }, { inject: ['sessions'] }))
 
     try {
-      const session = ctx.sessions.create(SessionId('shared-seed'), { seed: oneTurnLog() })
+      const session = ctx.sessions.create(SessionId('shared-seed'), { seed: oneTurnLog(), meta: { driverId: AgentDriverId('dsh') } })
       const seed = session.events
       await ctx.sessions.flush(session)
 
@@ -319,7 +319,7 @@ describe('PersistenceCoordinator bounded writes', () => {
     }, { inject: ['sessions'] }))
 
     try {
-      const session = ctx.sessions.create(SessionId('bounded-init-failure'))
+      const session = ctx.sessions.create(SessionId('bounded-init-failure'), { meta: { driverId: AgentDriverId('dsh') } })
       session.append('turn/start', { turn: 1 })
 
       await expect(ctx.sessions.flush(session)).rejects.toBe(failure)
@@ -362,7 +362,7 @@ describe('PersistenceCoordinator bounded writes', () => {
     }, { inject: ['sessions'] }))
 
     try {
-      const session = ctx.sessions.create(SessionId('bounded-follow-up'))
+      const session = ctx.sessions.create(SessionId('bounded-follow-up'), { meta: { driverId: AgentDriverId('dsh') } })
       await ctx.sessions.flush(session)
       session.append('turn/start', { turn: 1 })
       await vi.waitFor(() => { expect(backend.appendAttempts).toBe(1) })
@@ -400,7 +400,7 @@ describe('PersistenceCoordinator bounded writes', () => {
     }, { inject: ['sessions'] }))
 
     try {
-      const session = ctx.sessions.create(SessionId('bounded-flush-retry'))
+      const session = ctx.sessions.create(SessionId('bounded-flush-retry'), { meta: { driverId: AgentDriverId('dsh') } })
       await ctx.sessions.flush(session)
       session.append('turn/start', { turn: 1 })
       session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
@@ -970,7 +970,7 @@ describe('PersistenceCoordinator session preparations', () => {
     }, { inject: ['sessions'] }))
 
     try {
-      const session = ctx.sessions.create(SessionId('inspect-live-open-turn'))
+      const session = ctx.sessions.create(SessionId('inspect-live-open-turn'), { meta: { driverId: AgentDriverId('dsh') } })
       session.append('turn/start', { turn: 1 })
 
       const inspected = await coordinator.inspect(session.id)
@@ -1373,7 +1373,7 @@ describe('PersistenceCoordinator observation cancellation', () => {
       const id = SessionId('retiring-inspect')
       let session!: Session
       const sessionFiber = await ctx.plugin(Object.assign((inner: Context) => {
-        session = inner.sessions.create(id)
+        session = inner.sessions.create(id, { meta: { driverId: AgentDriverId('dsh') } })
       }, { inject: ['sessions'] }))
       session.append('turn/start', { turn: 1 })
       session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
@@ -1422,14 +1422,14 @@ describe('PersistenceCoordinator retirement', () => {
     try {
       const id = SessionId('retiring-lazy-owner')
       const firstFiber = await ctx.plugin(Object.assign((inner: Context) => {
-        inner.sessions.create(id)
+        inner.sessions.create(id, { meta: { driverId: AgentDriverId('dsh') } })
       }, { inject: ['sessions'] }))
       await vi.waitFor(() => { expect(backend.loadAttempts).toBe(1) })
       await firstFiber.dispose()
 
       let reuse!: Session
       await ctx.plugin(Object.assign((inner: Context) => {
-        reuse = inner.sessions.create(id)
+        reuse = inner.sessions.create(id, { meta: { driverId: AgentDriverId('dsh') } })
       }, { inject: ['sessions'] }))
       const reuseFlush = ctx.sessions.flush(reuse)
 
@@ -1459,7 +1459,7 @@ describe('PersistenceCoordinator retirement', () => {
       // may legally reclaim the abandoned id later.
       let first!: Session
       const firstFiber = await ctx.plugin(Object.assign((inner: Context) => {
-        first = inner.sessions.create(id)
+        first = inner.sessions.create(id, { meta: { driverId: AgentDriverId('dsh') } })
       }, { inject: ['sessions'] }))
       await ctx.sessions.flush(first)
 
@@ -1483,7 +1483,7 @@ describe('PersistenceCoordinator retirement', () => {
       // Successor lifecycle retires while the first drain is still in flight:
       // retire() replaces the map entry synchronously.
       const secondFiber = await ctx.plugin(Object.assign((inner: Context) => {
-        inner.sessions.create(id)
+        inner.sessions.create(id, { meta: { driverId: AgentDriverId('dsh') } })
       }, { inject: ['sessions'] }))
       await secondFiber.dispose()
       await vi.waitFor(() => {
@@ -1517,7 +1517,7 @@ describe('PersistenceCoordinator retirement', () => {
       const id = SessionId('retiring-live-owner')
       let first!: Session
       const firstFiber = await ctx.plugin(Object.assign((inner: Context) => {
-        first = inner.sessions.create(id)
+        first = inner.sessions.create(id, { meta: { driverId: AgentDriverId('dsh') } })
       }, { inject: ['sessions'] }))
       await ctx.sessions.flush(first)
       backend.beforeAppend = async () => { await appendGate.promise }
@@ -1528,7 +1528,7 @@ describe('PersistenceCoordinator retirement', () => {
 
       let reuse!: Session
       await ctx.plugin(Object.assign((inner: Context) => {
-        reuse = inner.sessions.create(id)
+        reuse = inner.sessions.create(id, { meta: { driverId: AgentDriverId('dsh') } })
       }, { inject: ['sessions'] }))
       const reuseFlush = ctx.sessions.flush(reuse)
 
@@ -1557,7 +1557,7 @@ describe('PersistenceCoordinator retirement', () => {
       const id = SessionId('retiring-buffered-owner')
       let first!: Session
       const firstFiber = await ctx.plugin(Object.assign((inner: Context) => {
-        first = inner.sessions.create(id)
+        first = inner.sessions.create(id, { meta: { driverId: AgentDriverId('dsh') } })
       }, { inject: ['sessions'] }))
       await ctx.sessions.flush(first)
       backend.beforeAppend = async () => { await appendGate.promise }
@@ -1573,7 +1573,7 @@ describe('PersistenceCoordinator retirement', () => {
       await vi.waitFor(() => { expect(backend.loadAttempts).toBe(baselineLoads + 1) })
 
       await expect(ctx.plugin(Object.assign((inner: Context) => {
-        inner.sessions.create(id)
+        inner.sessions.create(id, { meta: { driverId: AgentDriverId('dsh') } })
       }, { inject: ['sessions'] }))).rejects.toThrow(/persisted state already owns this identity/)
 
       loadGate.resolve(true)
@@ -1583,7 +1583,7 @@ describe('PersistenceCoordinator retirement', () => {
 
       let reuse!: Session
       await ctx.plugin(Object.assign((inner: Context) => {
-        reuse = inner.sessions.create(id)
+        reuse = inner.sessions.create(id, { meta: { driverId: AgentDriverId('dsh') } })
       }, { inject: ['sessions'] }))
       await expect(ctx.sessions.flush(reuse)).rejects.toThrow(/id collision/)
       await vi.waitFor(() => {
@@ -1666,7 +1666,7 @@ describe('PersistenceCoordinator retirement', () => {
     try {
       let session!: Session
       const sessionFiber = await ctx.plugin(Object.assign((inner: Context) => {
-        session = inner.sessions.create(SessionId('retry-retirement'))
+        session = inner.sessions.create(SessionId('retry-retirement'), { meta: { driverId: AgentDriverId('dsh') } })
       }, { inject: ['sessions'] }))
       session.append('turn/start', { turn: 1 })
       session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
@@ -1710,7 +1710,7 @@ describe('PersistenceCoordinator retirement', () => {
     try {
       let session!: Session
       const sessionFiber = await ctx.plugin(Object.assign((inner: Context) => {
-        session = inner.sessions.create(SessionId('inflight-retirement'))
+        session = inner.sessions.create(SessionId('inflight-retirement'), { meta: { driverId: AgentDriverId('dsh') } })
       }, { inject: ['sessions'] }))
       session.append('turn/start', { turn: 1 })
       session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
@@ -1862,7 +1862,7 @@ describe('SessionPersistence service registration', () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
     const fiber = await ctx.plugin(MemoryPersistence)
-    const session = ctx.sessions.create(SessionId('legacy-live'), { meta: { cwd: '/legacy' } })
+    const session = ctx.sessions.create(SessionId('legacy-live'), { meta: { driverId: AgentDriverId('dsh'), cwd: '/legacy' } })
     // Model the runtime shape available to JavaScript or a hot-loaded plugin
     // compiled against the obsolete event vocabulary.
     const appendLegacy = session.append.bind(session) as (type: string, data: unknown) => SessionEvent
@@ -1876,7 +1876,7 @@ describe('SessionPersistence service registration', () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
     const fiber = await ctx.plugin(MemoryPersistence)
-    const session = ctx.sessions.create(SessionId('legacy-fallback-live'), { meta: { cwd: '/legacy' } })
+    const session = ctx.sessions.create(SessionId('legacy-fallback-live'), { meta: { driverId: AgentDriverId('dsh'), cwd: '/legacy' } })
     const appendLegacy = session.append.bind(session) as (type: string, data: unknown) => SessionEvent
 
     expect(() => appendLegacy('request/header', legacyFallbackHeader().data))
@@ -1895,7 +1895,7 @@ describe('SessionPersistence service registration', () => {
     // A current live session cannot carry the obsolete event in its seed, but
     // HMR still has to identify the persisted prefix as unsupported rather than
     // treating it as an ordinary live-prefix collision.
-    const session = ctx.sessions.create(id, { meta: { cwd: '/legacy' } })
+    const session = ctx.sessions.create(id, { meta: { driverId: AgentDriverId('dsh'), cwd: '/legacy' } })
     const fiber = await ctx.plugin(MemoryPersistence, { store })
 
     await expect(ctx.sessions.flush(session))
@@ -1939,7 +1939,7 @@ describe('SessionPersistence service registration', () => {
       for (let index = 0; index < 3; index += 1) {
         let session!: Session
         const sessionFiber = await ctx.plugin(Object.assign((inner: Context) => {
-          session = inner.sessions.create(SessionId(`disposed-${index}`))
+          session = inner.sessions.create(SessionId(`disposed-${index}`), { meta: { driverId: AgentDriverId('dsh') } })
         }, { inject: ['sessions'] }))
         session.append('turn/start', { turn: 1 })
         session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })

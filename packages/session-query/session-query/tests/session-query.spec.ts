@@ -1,7 +1,7 @@
 import { createUserMessage, createMessage } from '@deepseek-ai/dsh-llm'
 import { describe, expect, it, vi } from 'vitest'
 import { Context, type Fiber } from '@deepseek-ai/cordis'
-import SessionStore, { SESSION_FORMAT_VERSION, SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, SESSION_FORMAT_VERSION, SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionEvent, SessionHeader, SessionId as SessionIdType } from '@deepseek-ai/dsh-session'
 import SessionPersistence, { SessionPersistenceCorruptionError, SessionPersistenceRevision } from '@deepseek-ai/dsh-session-persistence'
 import SessionQueryEngine, {
@@ -13,7 +13,13 @@ import { SessionTitleProviderId } from '@deepseek-ai/dsh-session-title'
 import { TestSessionQueryEngine } from './test-service.ts'
 
 function header(id: string, createdAt = 1, extra: Partial<SessionHeader> = {}): SessionHeader {
-  return { version: SESSION_FORMAT_VERSION, id: SessionId(id), createdAt, ...extra }
+  return {
+    version: SESSION_FORMAT_VERSION,
+    driverId: AgentDriverId('dsh'),
+    id: SessionId(id),
+    createdAt,
+    ...extra,
+  }
 }
 
 function eventLog(text = 'hello'): SessionEvent[] {
@@ -447,7 +453,7 @@ describe('session-query exact reads', () => {
     TestPersistence.inspectEffect = () => {
       ctx.sessions.create(shared.id, {
         seed: eventLog('live'),
-        meta: { createdAt: shared.createdAt },
+        meta: { driverId: AgentDriverId('dsh'), createdAt: shared.createdAt },
       })
     }
 
@@ -487,7 +493,7 @@ describe('session-query exact reads', () => {
       },
     ])
     const ctx = await liveContext()
-    const shared = ctx.sessions.create(sharedHeader.id, { meta: { createdAt: 3 } })
+    const shared = ctx.sessions.create(sharedHeader.id, { meta: { driverId: AgentDriverId('dsh'), createdAt: 3 } })
     shared.append('session/title', {
       title: 'Live title',
       messageSeqs: [7],
@@ -754,7 +760,7 @@ describe('session-query exact reads', () => {
       const entry = TestPersistence.entries.get(id)
       if (entry === undefined) return Promise.reject(new Error('missing test session'))
       if (id === attached.id) {
-        const session = ctx.sessions.create(attached.id, { meta: { createdAt: attached.createdAt } })
+        const session = ctx.sessions.create(attached.id, { meta: { driverId: AgentDriverId('dsh'), createdAt: attached.createdAt } })
         session.append('session/title', {
           title: 'Attached live title',
           messageSeqs: [],
@@ -789,7 +795,7 @@ describe('session-query exact reads', () => {
 
   it('preserves live batch results across missing persistence, listing failure, and late attachment', async () => {
     const liveOnly = await liveContext()
-    const live = liveOnly.sessions.create(SessionId('batch-title-live'))
+    const live = liveOnly.sessions.create(SessionId('batch-title-live'), { meta: { driverId: AgentDriverId('dsh') } })
     const missing = SessionId('batch-title-no-persistence')
 
     await expect(liveOnly.sessionQuery.readTitleSnapshots([live.id, live.id])).resolves.toEqual([{
@@ -808,10 +814,10 @@ describe('session-query exact reads', () => {
     const late = header('batch-title-late', 2)
     TestPersistence.reset([{ meta: persisted, events: [] }])
     const mixed = await liveContext()
-    const mixedLive = mixed.sessions.create(SessionId('batch-title-mixed-live'))
+    const mixedLive = mixed.sessions.create(SessionId('batch-title-mixed-live'), { meta: { driverId: AgentDriverId('dsh') } })
     await mixed.plugin(TestPersistence)
     TestPersistence.afterList = () => {
-      mixed.sessions.create(late.id, { meta: { createdAt: late.createdAt } })
+      mixed.sessions.create(late.id, { meta: { driverId: AgentDriverId('dsh'), createdAt: late.createdAt } })
       TestPersistence.afterList = undefined
     }
 
@@ -828,7 +834,7 @@ describe('session-query exact reads', () => {
     TestPersistence.reset()
     TestPersistence.listFailure = new Error('title listing failed')
     const failedList = await liveContext()
-    const survivingLive = failedList.sessions.create(SessionId('batch-title-list-live'))
+    const survivingLive = failedList.sessions.create(SessionId('batch-title-list-live'), { meta: { driverId: AgentDriverId('dsh') } })
     await failedList.plugin(TestPersistence)
 
     await expect(failedList.sessionQuery.readTitleSnapshots([survivingLive.id, missing]))
@@ -844,9 +850,9 @@ describe('session-query exact reads', () => {
 
   it('lists live sessions deterministically and returns detached headers', async () => {
     const ctx = await liveContext()
-    const older = ctx.sessions.create(SessionId('older'), { meta: { createdAt: 1 } })
-    ctx.sessions.create(SessionId('z'), { meta: { createdAt: 2 } })
-    ctx.sessions.create(SessionId('a'), { meta: { createdAt: 2 } })
+    const older = ctx.sessions.create(SessionId('older'), { meta: { driverId: AgentDriverId('dsh'), createdAt: 1 } })
+    ctx.sessions.create(SessionId('z'), { meta: { driverId: AgentDriverId('dsh'), createdAt: 2 } })
+    ctx.sessions.create(SessionId('a'), { meta: { driverId: AgentDriverId('dsh'), createdAt: 2 } })
 
     const records = await ctx.sessionQuery.listSessions()
     expect(records.map(record => record.header.id)).toEqual([SessionId('a'), SessionId('z'), older.id])
@@ -859,7 +865,7 @@ describe('session-query exact reads', () => {
     const durable = header('durable-filter', 1)
     TestPersistence.reset([{ meta: durable, events: eventLog('durable') }])
     const ctx = await liveContext()
-    const live = ctx.sessions.create(SessionId('live-filter'), { meta: { createdAt: 2 } })
+    const live = ctx.sessions.create(SessionId('live-filter'), { meta: { driverId: AgentDriverId('dsh'), createdAt: 2 } })
     live.append(
       'user/message',
       createUserMessage({
@@ -891,7 +897,7 @@ describe('session-query exact reads', () => {
 
   it('classifies current, shadowed, and raw-log-only events through foldSurface', async () => {
     const ctx = await liveContext()
-    const session = ctx.sessions.create(SessionId('surface'))
+    const session = ctx.sessions.create(SessionId('surface'), { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', { turn: 1 })
     session.append('step/start', { turn: 1, step: 1 })
     const first = session.append(
@@ -928,7 +934,7 @@ describe('session-query exact reads', () => {
 
   it('reads a detached current surface with its raw-log capture boundary', async () => {
     const ctx = await liveContext()
-    const session = ctx.sessions.create(SessionId('surface-snapshot'), { meta: { cwd: '/work' } })
+    const session = ctx.sessions.create(SessionId('surface-snapshot'), { meta: { driverId: AgentDriverId('dsh'), cwd: '/work' } })
     const first = session.append(
       'user/message',
       createUserMessage({
@@ -997,7 +1003,7 @@ describe('session-query exact reads', () => {
 
   it('returns an empty current surface with a null capture boundary', async () => {
     const ctx = await liveContext()
-    const session = ctx.sessions.create(SessionId('empty-surface'))
+    const session = ctx.sessions.create(SessionId('empty-surface'), { meta: { driverId: AgentDriverId('dsh') } })
     await expect(ctx.sessionQuery.readSurface(session.id)).resolves.toMatchObject({
       capturedThroughSeq: null,
       events: [],
@@ -1006,7 +1012,7 @@ describe('session-query exact reads', () => {
 
   it('returns a bounded detached raw-event window and validates the request', async () => {
     const ctx = await liveContext({ readWindowMax: 1 })
-    const session = ctx.sessions.create(SessionId('window'), { meta: { cwd: '/work' } })
+    const session = ctx.sessions.create(SessionId('window'), { meta: { driverId: AgentDriverId('dsh'), cwd: '/work' } })
     session.append('turn/start', { turn: 1 })
     for (const text of ['one', 'two', 'three']) {
       session.append(
@@ -1048,7 +1054,7 @@ describe('session-query exact reads', () => {
       { meta: durable, events: eventLog('durable') },
     ])
     const ctx = await liveContext()
-    const live = ctx.sessions.create(shared.id, { meta: { createdAt: 3, cwd: '/same' } })
+    const live = ctx.sessions.create(shared.id, { meta: { driverId: AgentDriverId('dsh'), createdAt: 3, cwd: '/same' } })
     live.append('turn/start', { turn: 1 })
     live.append(
       'user/message',
@@ -1088,7 +1094,7 @@ describe('session-query exact reads', () => {
   it('keeps known live reads independent from persistence health', async () => {
     TestPersistence.reset()
     const ctx = await liveContext()
-    const live = ctx.sessions.create(SessionId('live'))
+    const live = ctx.sessions.create(SessionId('live'), { meta: { driverId: AgentDriverId('dsh') } })
     live.append('turn/start', { turn: 1 })
     live.append(
       'user/message',
