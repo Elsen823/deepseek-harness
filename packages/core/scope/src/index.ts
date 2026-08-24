@@ -1,6 +1,9 @@
 /**
  * Scoped-context primitive: mint a Cordis context that tags registrations with
  * an opaque identity and build routing-only event carriers for that identity.
+ * Compatible copies evaluated in one JavaScript realm share identity-bearing
+ * runtime state. Evaluating a copy against an incompatible runtime revision
+ * throws before its exports are usable.
  *
  * @module @deepseek-ai/dsh-scope
  */
@@ -14,9 +17,6 @@ export type { ScopeLayer } from './store.ts'
 /** An opaque, identity-compared scope key. */
 export type ScopeKey = object
 
-/** Context tag written by {@link createScope}. */
-const kScope = Symbol('dsh.scope')
-
 declare const ScopedBrand: unique symbol
 
 /**
@@ -26,17 +26,51 @@ declare const ScopedBrand: unique symbol
  */
 export type Scoped<T extends object> = object & { readonly [ScopedBrand]: T }
 
-/** The key associated with each carrier. Presence distinguishes an unkeyed carrier from a non-carrier. */
-const carrierKeys = new WeakMap<object, ScopeKey | undefined>()
+/** Identity-bearing state reused by copies with the same runtime revision. */
+interface ScopeRuntimeState {
+  readonly revision: typeof SCOPE_RUNTIME_REVISION
+  /** Context tag written by {@link createScope}. */
+  readonly contextTag: symbol
+  /** Carrier membership and key; presence distinguishes an unkeyed carrier from a non-carrier. */
+  readonly carrierKeys: WeakMap<object, ScopeKey | undefined>
+  /**
+   * One parent relation drives registration inheritance down the chain through
+   * {@link ScopedLayers} and event admission up the chain through
+   * {@link scopeTarget}.
+   */
+  readonly scopeParents: WeakMap<ScopeKey, ScopeKey>
+}
 
-/**
- * The enclosing scope of each key. One relation powers both directions of
- * scope nesting: registration views inherit DOWN the chain (a child scope
- * sees its ancestors' layers — {@link ScopedLayers}), and event admission
- * extends UP it (a listener tagged with an ancestor receives events dispatched
- * to a descendant key — {@link scopeTarget}).
- */
-const scopeParents = new WeakMap<ScopeKey, ScopeKey>()
+/** Increment whenever a module copy cannot safely reuse the prior state's fields or semantics. */
+const SCOPE_RUNTIME_REVISION = 1 as const
+const SCOPE_RUNTIME_SLOT = Symbol.for('@deepseek-ai/dsh-scope/runtime')
+
+interface ScopeRuntimeGlobal {
+  [SCOPE_RUNTIME_SLOT]?: { readonly revision: unknown }
+}
+
+const runtimeGlobal = globalThis as typeof globalThis & ScopeRuntimeGlobal
+const runtimeState = (() => {
+  const existing = runtimeGlobal[SCOPE_RUNTIME_SLOT]
+  if (existing !== undefined) {
+    if (existing.revision !== SCOPE_RUNTIME_REVISION) {
+      throw new Error(
+        `dsh-scope: incompatible shared runtime revision ${String(existing.revision)}; expected ${String(SCOPE_RUNTIME_REVISION)}`,
+      )
+    }
+    return existing as ScopeRuntimeState
+  }
+  const created: ScopeRuntimeState = {
+    revision: SCOPE_RUNTIME_REVISION,
+    contextTag: Symbol('dsh.scope'),
+    carrierKeys: new WeakMap<object, ScopeKey | undefined>(),
+    scopeParents: new WeakMap<ScopeKey, ScopeKey>(),
+  }
+  runtimeGlobal[SCOPE_RUNTIME_SLOT] = created
+  return created
+})()
+
+const { contextTag: kScope, carrierKeys, scopeParents } = runtimeState
 
 /** The privileged handle to move one scope key's parent link. */
 export interface ScopeParentBinding {

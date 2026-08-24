@@ -26,6 +26,8 @@
 
 注册上下文同时决定可见性和所有权，防止注册在一个作用域中可见、却随另一个作用域 dispose（资源释放）。作用域用于路由受信任的同进程插件；它们不是沙箱或权限边界。原理与明确排除的安全目标见 [agent 作用域 Agent Note](../../../.agents/notes/implemented/architecture/2026-07-08-agent-scope-contexts.zh.md#security-and-authority-are-non-goals)。
 
+在同一 JavaScript realm 中求值的每个兼容 `dsh-scope` 副本，都会把上下文标签、载体标记和父级链接放在同一份带版本运行时状态中。源码导入与产物导入因此可以交换带作用域的上下文和载体，而不依赖唯一模块 URL。运行时状态 revision 不兼容的副本会在模块求值期间抛错；worker、进程和其他 realm 各自保有独立状态。设计依据与验证覆盖见[模块实例运行时状态 Agent Note](../../../.agents/notes/implemented/bug-fix/2026-08-24-scope-runtime-state-across-module-instances.zh.md)。
+
 感知作用域的服务会定义具体 `ScopeLayer`，聚合各自不同的表与领域辅助函数。`ScopedLayers.effect()` 接受一个返回同步撤销函数的同步动作，在可选通知前安装该撤销函数，并且只有在完整聚合为空时才回收精确作用域层。`notify` 默认为 `true`；由所提供的回调决定观测方失败是向外抛出还是在内部处理。`EntryValues` 保持内部可见；存储类从包根而非 `/store` 子路径导入；共享存储不定义注册表专属的筛选或迭代策略。详见[共享作用域层存储 Agent Note](../../../.agents/notes/implemented/architecture/2026-07-12-scoped-layers-store.zh.md)。
 
 交出带作用域的上下文，也会交出创建该上下文的插件的服务解析范围（解析会沿创建者 fiber 的依赖链，而非持有者的依赖链行进），因此应由具备这些带作用域注册所需依赖的插件来创建它。

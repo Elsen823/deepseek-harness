@@ -1,10 +1,9 @@
 /**
  * Built-artifact guard for the scope carrier shared by `dsh-subagent` and
- * `dsh-sdk-jsonrpc-server`. The carrier registry is module-local, so both bundles must
- * externalize `dsh-scope`; source-mode tests cannot expose an accidentally
- * inlined second registry. This test runs the real `lib/index.js` bundles in a
- * plain Node subprocess, disposes the child before settlement, and requires the
- * SDK completion notification to retain the delegating parent.
+ * `dsh-sdk-jsonrpc-server`. Source-mode tests cannot expose artifact bundling
+ * and resolution differences. This test runs the real `lib/index.js` bundles
+ * in a plain Node subprocess, disposes the child before settlement, and
+ * requires the SDK completion notification to retain the delegating parent.
  */
 
 import { execFile } from 'node:child_process'
