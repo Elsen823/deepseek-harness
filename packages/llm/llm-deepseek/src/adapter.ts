@@ -439,6 +439,9 @@ export class DeepSeekAdapter extends LlmAdapter {
     // never observes a configuration change and the next call re-resolves.
     // The key resolves *from this snapshot*, so an endpoint and the secret
     // sent to it can never come from different configuration generations.
+    if (options.serviceTier !== undefined) {
+      throw new LlmError('dsh-llm-deepseek does not support GenerateOptions.serviceTier', 'UNSUPPORTED_OPTION')
+    }
     const hasImages = options.messages.some(message => contentHasImage(message.content))
     let attachments: AttachmentStore | undefined
     if (hasImages) {

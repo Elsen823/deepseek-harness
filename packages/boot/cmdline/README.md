@@ -10,6 +10,7 @@ A launcher calls `provideCmdline(ctx, host)` before any tree entry mounts, which
 
 - `ctx.cmdlineArgs` — the invocation's inner arguments. `get()` is the whole interface, and it returns a snapshot: `dsh --profile tui --resume abc` yields `['--resume', 'abc']`.
 - `ctx.appExit` — a bounded process-exit request, wired to the launcher's shutdown controller.
+- `ctx.appRestart` — an optional explicit process-generation restart request. When provided, the app's restart controller performs its restart handoff before ordinary process teardown; a refused handoff rejects without disposing the serving generation.
 
 An embedding host with no command line provides an empty list; that is the honest answer, not a missing value.
 

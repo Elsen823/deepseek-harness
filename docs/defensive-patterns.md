@@ -2,7 +2,7 @@
 
 English | [中文](defensive-patterns.zh.md)
 
-Hard-won bug-class rules: each pattern below is a class of defect that actually shipped or nearly shipped here, stated as the rule that prevents its recurrence. Read this before writing lifecycle, concurrency, subprocess, or teardown code. Test-tier counterparts (real entry path, world-verification, resource ownership) are in [testing.md](testing.md).
+These bug-class rules prevent shipped or near-shipped defects. Read them before lifecycle, concurrency, subprocess, or teardown work. Test-tier counterparts (real entry paths, world verification, resource ownership) are in [testing.md](testing.md).
 
 ## Report orthogonal outcomes independently
 
@@ -19,6 +19,8 @@ When an implementation receives several representations of one outcome, normaliz
 ## Dispose must reach quiescence, not just request it
 
 A teardown that issues kills/aborts but returns before the work stops leaves orphans. Make cleanup async and await the children's exit (kill → await `done`), and close listener/notification registries BEFORE killing so late completions stay silent.
+
+Restart handoff is not disposal: explicit restart intent bounds admitted work, running turns, and persistence flushes; timeout rejects it and leaves the old generation serving. Never fall back to disposal, which emits release facts and loses reattachment ownership.
 
 ## Contain callback exceptions in the dispatcher
 

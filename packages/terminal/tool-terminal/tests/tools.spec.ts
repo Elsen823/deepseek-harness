@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { CallId } from '@deepseek-ai/dsh-llm'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
-import AgentRegistry, { Inbox } from '@deepseek-ai/dsh-agent'
+import AgentRegistry, { createModelSelectionOwner, Inbox } from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime, { renderToolsSdk } from '@deepseek-ai/dsh-tools'
@@ -18,7 +18,11 @@ function fakeAgent(ctx: Context, rawId: string): Agent {
   const id = SessionId(rawId)
   const session = Session.create(id)
   const agent: Agent = {
-    id, options: {}, session, inbox: new Inbox(session, { inserted: () => {}, discarded: () => {}, claimed: () => {} }),
+    id,
+    options: {},
+    session,
+    modelSelection: createModelSelectionOwner(session),
+    inbox: new Inbox(session, { inserted: () => {}, discarded: () => {}, claimed: () => {} }),
     status: 'idle',
     ctx: scope.ctx,
     send: () => {},

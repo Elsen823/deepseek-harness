@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import LlmRuntime, { createUserMessage, CallId, LlmError, StreamChunk  } from '@deepseek-ai/dsh-llm'
+import LlmRuntime, { createUserMessage, CallId, LlmError, ReasoningEffortId, StreamChunk  } from '@deepseek-ai/dsh-llm'
 import SessionStore, { SessionId, TurnEndReason } from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime, { defineContentToolFixture } from '@deepseek-ai/dsh-tools'
@@ -50,6 +50,146 @@ function userTexts(agent: Agent): string[] {
 }
 
 describe('agent loop', () => {
+  it('applies one accepted Model Selection to the prompt and every request in its Turn', async () => {
+    const adapter = new MockAdapter([textResponse('selected')], {
+      efforts: [{ id: ReasoningEffortId('high'), name: 'High' }],
+      defaultEffort: ReasoningEffortId('high'),
+    })
+    const ctx = await harness(adapter, 'You run on {{provider}}/{{model}}.')
+    const agent = await ctx.agentLoop.create(SessionId('model-selection-turn'), {
+      provider: 'mock',
+      model: 'initial',
+    })
+
+    await agent.modelSelection.accept({ provider: 'mock', model: 'selected' })
+    send(agent, 'use the selected route')
+    await waitForIdle(ctx, agent)
+
+    expect(adapter.requests[0]).toMatchObject({
+      provider: 'mock',
+      model: 'selected',
+      reasoningEffort: ReasoningEffortId('high'),
+    })
+    expect(adapter.requests[0]?.system).toContain('You run on mock/selected.')
+    const selected = agent.session.events.find(event => event.type === 'model/selected')
+    const header = agent.session.events.find(event => event.type === 'request/header')
+    expect(selected?.seq).toBeLessThan(header?.seq ?? Number.MAX_SAFE_INTEGER)
+  })
+
+  it('resolves an omitted effort from the selected model for each Turn without stale carry-over', async () => {
+    const adapter = new MockAdapter([textResponse('explicit'), textResponse('defaulted')], {
+      efforts: [
+        { id: ReasoningEffortId('high'), name: 'High' },
+        { id: ReasoningEffortId('max'), name: 'Max' },
+      ],
+      defaultEffort: ReasoningEffortId('high'),
+    })
+    const ctx = await harness(adapter)
+    const agent = await ctx.agentLoop.create(SessionId('model-selection-effort'), {
+      provider: 'mock',
+      model: 'model',
+    })
+
+    await agent.modelSelection.accept({
+      provider: 'mock',
+      model: 'model',
+      reasoningEffort: ReasoningEffortId('max'),
+    })
+    send(agent, 'explicit effort')
+    await waitForIdle(ctx, agent)
+
+    await agent.modelSelection.accept({ provider: 'mock', model: 'model' })
+    send(agent, 'provider default effort')
+    await waitForIdle(ctx, agent)
+
+    expect(adapter.requests.map(request => request.reasoningEffort)).toEqual([
+      ReasoningEffortId('max'),
+      ReasoningEffortId('high'),
+    ])
+  })
+
+  it('keeps a running Turn on its captured selection while a selection change steers the next Turn', async () => {
+    const adapter = new MockAdapter([
+      toolCallResponse('switch-1', 'switch-selection', {}, 'switching'),
+      textResponse('same turn'),
+      textResponse('next turn'),
+    ])
+    const ctx = await harness(adapter, 'Current route: {{model}}.')
+    const agent = await ctx.agentLoop.create(SessionId('model-selection-steering'), {
+      provider: 'mock',
+      model: 'initial',
+    })
+    ctx.tools.register(defineContentToolFixture({
+      name: 'switch-selection',
+      description: 'switch the route for the next Turn',
+      parameters: {},
+      async execute() {
+        await agent.modelSelection.accept({ provider: 'mock', model: 'next' })
+        return [{ type: 'text', text: 'selection queued' }]
+      },
+    }))
+
+    send(agent, 'start')
+    await waitForIdle(ctx, agent)
+    send(agent, 'continue on the new route')
+    await waitForIdle(ctx, agent)
+
+    expect(adapter.requests.map(request => request.model)).toEqual(['initial', 'initial', 'next'])
+    expect(adapter.requests[1]?.system).toContain('Current route: initial.')
+    expect(adapter.requests[2]?.system).toContain('Current route: next.')
+  })
+
+  it('rejects an unavailable or incompatible selection without mutating intent or falling back', async () => {
+    const adapter = new MockAdapter([textResponse('recovered')], {
+      efforts: [{ id: ReasoningEffortId('high'), name: 'High' }],
+      defaultEffort: ReasoningEffortId('high'),
+    })
+    const ctx = await harness(adapter)
+    const agent = await ctx.agentLoop.create(SessionId('model-selection-unavailable'), {
+      provider: 'missing',
+      model: 'model',
+    })
+
+    await expect(agent.modelSelection.accept({
+      provider: 'mock',
+      model: 'model',
+      reasoningEffort: ReasoningEffortId('unsupported'),
+    })).rejects.toThrow(/does not support reasoning effort/)
+    expect(agent.modelSelection.selected).toBeUndefined()
+    expect(agent.session.events.some(event => event.type === 'model/selected')).toBe(false)
+
+    send(agent, 'missing provider')
+    await waitForIdle(ctx, agent)
+    expect(adapter.requests).toHaveLength(0)
+    expect(agent.modelSelection.selected).toBeUndefined()
+
+    ctx.llm.registerAdapter(['missing'], adapter)
+    send(agent, 'recover')
+    await waitForIdle(ctx, agent)
+    expect(adapter.requests[0]?.provider).toBe('missing')
+    expect(agent.modelSelection.selected).toMatchObject({ provider: 'missing', model: 'model', source: 'default' })
+  })
+
+  it('retains Selected intent and Effective evidence when a prepared attempt fails', async () => {
+    const adapter = new MockAdapter([])
+    const ctx = await harness(adapter)
+    const agent = await ctx.agentLoop.create(SessionId('model-selection-failure'), {
+      provider: 'mock',
+      model: 'initial',
+    })
+    await agent.modelSelection.accept({ provider: 'mock', model: 'selected' })
+
+    send(agent, 'fail after prepare')
+    await waitForIdle(ctx, agent)
+
+    expect(agent.modelSelection.selected).toMatchObject({ provider: 'mock', model: 'selected', source: 'user' })
+    expect(agent.modelSelection.effective).toMatchObject({ provider: 'mock', model: 'selected' })
+    expect(agent.session.events.find(event => event.type === 'request/header')).toMatchObject({
+      type: 'request/header',
+      data: { header: { config: { provider: 'mock', model: 'selected' } } },
+    })
+  })
+
   it.each([0, -1, 1.5, Number.NaN, Number.MAX_SAFE_INTEGER + 1])(
     'rejects invalid AgentOptions.maxTokens %s before publication',
     async (maxTokens) => {
@@ -309,33 +449,6 @@ describe('agent loop', () => {
     const turnEnds = agent.session.events.filter(e => e.type === 'turn/end')
     expect(turnEnds).toHaveLength(2)
     expect(turnEnds[1]?.type === 'turn/end' && turnEnds[1].data.reason.kind).toBe('completed')
-  })
-
-  it('supports the model-via-agent/request path with a {{model}} persona: the supplier states it via the assemble waterfall', async () => {
-    // AgentOptions.model unset: the model arrives in the agent/request
-    // waterfall (the loop's documented fallback — see runStep's no-model
-    // error). {{model}} renders BEFORE that waterfall, so the SAME plugin
-    // states the fact early on system-prompt/assemble — the owner of a
-    // late-bound fact owns stating it wherever it is claimed.
-    const adapter = new MockAdapter([textResponse('ok')])
-    const ctx = await harness(adapter, 'You run on {{model}}.')
-    ctx.on('system-prompt/assemble', async (assembly, _context, next) => {
-      assembly.variables['provider'] = 'mock'
-      assembly.variables['model'] = 'mock'
-      return next()
-    })
-    ctx.on('agent/request', async (_payload, next) => {
-      const config = await next()
-      return { ...config, provider: 'mock', model: 'mock' }
-    })
-    const agent = await ctx.agentLoop.create(SessionId('a-late-model'), {})
-
-    send(agent, 'hi')
-    await waitForIdle(ctx, agent)
-
-    expect(adapter.requests).toHaveLength(1)
-    expect(adapter.requests[0]!.model).toBe('mock')
-    expect(adapter.requests[0]!.system).toBe('You are an AI agent powered by DeepSeek Harness.\n\nYou run on mock.')
   })
 
   it('omits the system field when system-prompt/assemble short-circuits with an empty assembly', async () => {
@@ -841,27 +954,26 @@ describe('agent loop', () => {
     expect(texts).toContain('late steering')
   })
 
-  it('agent/request waterfall switches models by returning a replacement config; the switch is logged', async () => {
+  it('agent/request cannot replace the immutable Turn Model Selection route', async () => {
     const adapter = new MockAdapter([textResponse('ok')])
     const ctx = await harness(adapter)
     const agent = await ctx.agentLoop.create(SessionId('a1'), { provider: 'mock', model: 'mock' })
 
     ctx.on('agent/request', async (_payload, next) => {
       const config = await next()
-      // The seed is frozen — config is not a mutable per-call knob; a switch
-      // is proposed by returning a replacement, and the loop logs it.
+      // The seed is frozen — request middleware may add unrelated request
+      // fields, but Model Selection remains owned by the Turn.
       expect(Object.isFrozen(config)).toBe(true)
       expect(() => { (config as { model: string }).model = 'other-model' }).toThrow(TypeError)
-      return { ...config, model: 'other-model' }
+      return { ...config, model: 'other-model', temperature: 0.2 }
     })
 
     send(agent, 'hi')
     await waitForIdle(ctx, agent)
-    expect(adapter.requests[0]!.model).toBe('other-model')
-    // The header event records what the request ACTUALLY used — the switch is
-    // a reconstructable fact, not silent drift.
+    expect(adapter.requests[0]!.model).toBe('mock')
+    expect(adapter.requests[0]!.temperature).toBe(0.2)
     const headerEvent = agent.session.events.find(e => e.type === 'request/header')
-    expect(headerEvent?.type === 'request/header' && headerEvent.data.header.config.model).toBe('other-model')
+    expect(headerEvent?.type === 'request/header' && headerEvent.data.header.config.model).toBe('mock')
   })
 
   it('agent/pre-step fires once per proposed step before the step is opened', async () => {
@@ -946,6 +1058,7 @@ describe('agent loop', () => {
     const adapter = new MockAdapter(['hang'])
     const ctx = await harness(adapter)
     const agent = await ctx.agentLoop.create(SessionId('a1'), { provider: 'mock', model: 'mock' })
+    await agent.modelSelection.accept({ provider: 'mock', model: 'selected' })
 
     const reasons: TurnEndReason[] = []
     ctx.on('session/event', (_s, event) => { if (event.type === 'turn/end') reasons.push(event.data.reason) })
@@ -958,6 +1071,8 @@ describe('agent loop', () => {
     await waitForIdle(ctx, agent)
 
     expect(reasons).toEqual([{ kind: 'aborted', reason: { kind: 'user' } }])
+    expect(agent.modelSelection.selected).toMatchObject({ provider: 'mock', model: 'selected', source: 'user' })
+    expect(agent.modelSelection.effective).toMatchObject({ provider: 'mock', model: 'selected' })
   })
 
   it('surfaces max-tokens as the turn-end reason when the last step is cut off', async () => {

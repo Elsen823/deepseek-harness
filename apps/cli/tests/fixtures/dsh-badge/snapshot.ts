@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
-import { agentEvents, Inbox, type Agent } from '@deepseek-ai/dsh-agent'
+import { agentEvents, createModelSelectionOwner, Inbox, type Agent } from '@deepseek-ai/dsh-agent'
 import { CallId } from '@deepseek-ai/dsh-llm'
 import { boot, loadOverlayPatches } from '@deepseek-ai/dsh-app-boot'
 import { AgentDriverId, SessionId } from '@deepseek-ai/dsh-session'
@@ -26,6 +26,7 @@ try {
     id: agentId,
     options: {},
     session,
+    modelSelection: createModelSelectionOwner(session),
     inbox: new Inbox(session, { inserted: () => {}, discarded: () => {}, claimed: () => {} }),
     status: 'idle',
     send: () => {},

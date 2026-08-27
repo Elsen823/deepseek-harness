@@ -1,6 +1,6 @@
 import { Context } from '@deepseek-ai/cordis'
 import { describe, expect, it, vi } from 'vitest'
-import type { SessionId, WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-api-remotes/client'
+import type { AgentDriverId, SessionId, WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-api-remotes/client'
 import { SessionRuntime } from '../src/client/sessions/service.ts'
 import { WorkspaceManager } from '../src/client/workspaces/manager.ts'
 import { DirectoryBrowseError, WorkspaceCreateError, WorkspaceRuntime } from '../src/client/workspaces/service.ts'
@@ -8,6 +8,7 @@ import { DRIVER_ID, FakeApiClient, deferred, err, fakeRemote, ok } from './fake-
 
 const sid = (id: string): SessionId => id as SessionId
 const wid = (id: string): WorkspaceId => id as WorkspaceId
+const driver = (id: string): AgentDriverId => id as AgentDriverId
 
 function workspace(id: string, sessionIds: SessionId[] = [], createdAt = '2026-01-01T00:00:00.000Z'): WorkspaceView {
   return {
@@ -273,6 +274,64 @@ describe('WorkspaceRuntime', () => {
     await workspaces.archiveSession(sid('s-blank'))
     api.onCreate = () => Promise.resolve(ok({ sessionId: sid('s-fresh-2'), driverId: DRIVER_ID }))
     await expect(workspaces.connectWorkspace(wid('alpha'))).resolves.toBe('s-fresh-2')
+  })
+
+  it('connectWorkspace preserves the selected Driver alongside Workspace membership', async () => {
+    const ctx = new Context()
+    const api = new FakeApiClient()
+    const sessions = new SessionRuntime(ctx, api, fakeRemote())
+    const workspaces = new WorkspaceRuntime(ctx, api, sessions)
+    api.onWorkspaceList = () => Promise.resolve(ok({
+      items: [workspace('alpha', [sid('s-dsh')])] as never[],
+    }))
+    api.onList = () => Promise.resolve(ok({
+      items: [{
+        sessionId: sid('s-dsh'), driverId: driver('dsh'), updatedAt: 1,
+        running: false, blank: true, cwd: '/w/alpha',
+      }] as never[],
+    }))
+    await Promise.all([workspaces.refresh(), sessions.refresh()])
+    await Promise.resolve()
+
+    api.onCreate = () => Promise.resolve(ok({
+      sessionId: sid('s-codex'), driverId: driver('codex'),
+    }))
+    await expect(workspaces.connectWorkspace(wid('alpha'), { driverId: driver('codex') }))
+      .resolves.toBe('s-codex')
+    expect(api.callsOf('session.create')).toEqual([{
+      workspaceId: 'alpha',
+      driverId: 'codex',
+    }])
+  })
+
+  it('coalesces concurrent connects by Workspace and Driver pair', async () => {
+    const ctx = new Context()
+    const api = new FakeApiClient()
+    const sessions = new SessionRuntime(ctx, api, fakeRemote())
+    const workspaces = new WorkspaceRuntime(ctx, api, sessions)
+    api.onWorkspaceList = () => Promise.resolve(ok({
+      items: [workspace('alpha')] as never[],
+    }))
+    await workspaces.refresh()
+
+    const dshCreate = deferred<Awaited<ReturnType<typeof api.onCreate>>>()
+    const codexCreate = deferred<Awaited<ReturnType<typeof api.onCreate>>>()
+    api.onCreate = payload => (payload as { driverId: AgentDriverId }).driverId === driver('codex')
+      ? codexCreate.promise
+      : dshCreate.promise
+
+    const dshFirst = workspaces.connectWorkspace(wid('alpha'), { driverId: driver('dsh') })
+    const dshSecond = workspaces.connectWorkspace(wid('alpha'), { driverId: driver('dsh') })
+    const codex = workspaces.connectWorkspace(wid('alpha'), { driverId: driver('codex') })
+    expect(api.callsOf('session.create')).toEqual([
+      { workspaceId: 'alpha', driverId: 'dsh' },
+      { workspaceId: 'alpha', driverId: 'codex' },
+    ])
+
+    dshCreate.resolve(ok({ sessionId: sid('s-dsh'), driverId: driver('dsh') }))
+    codexCreate.resolve(ok({ sessionId: sid('s-codex'), driverId: driver('codex') }))
+    await expect(Promise.all([dshFirst, dshSecond, codex]))
+      .resolves.toEqual(['s-dsh', 's-dsh', 's-codex'])
   })
 
   it('a rejected first prompt keeps the blank session eligible for connectWorkspace reuse', async () => {

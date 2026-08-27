@@ -21,6 +21,56 @@ describe('Session', () => {
     expect(surface).toBe(session.surface)
   })
 
+  it('folds accepted Model Selection separately from effective request evidence', () => {
+    const session = Session.create(SessionId('selection-fold'))
+    session.append('model/selected', {
+      provider: 'route-a',
+      model: 'model-a',
+      reasoningEffort: ReasoningEffortId('high'),
+      source: 'user',
+    })
+    expect(session.modelSelection()).toEqual({
+      provider: 'route-a',
+      model: 'model-a',
+      reasoningEffort: ReasoningEffortId('high'),
+      source: 'user',
+    })
+    expect(session.effectiveModelSelection()).toBeUndefined()
+
+    session.append('request/header', {
+      header: { config: { provider: 'route-a', model: 'model-a' } },
+      reason: 'initial',
+    })
+    expect(session.modelSelection()).toMatchObject({ provider: 'route-a', model: 'model-a' })
+    expect(session.effectiveModelSelection()).toEqual({ provider: 'route-a', model: 'model-a' })
+
+    session.append('model/selected', {
+      provider: 'route-b',
+      model: 'model-b',
+      source: 'user',
+    })
+    expect(session.modelSelection()).toMatchObject({ provider: 'route-b', model: 'model-b', source: 'user' })
+    expect(session.effectiveModelSelection()).toEqual({ provider: 'route-a', model: 'model-a' })
+  })
+
+  it('rejects malformed Model Selection payloads at append and restore boundaries', () => {
+    const session = Session.create(SessionId('selection-invalid'))
+    expect(() => session.append('model/selected', {
+      provider: '',
+      model: 'model',
+      source: 'user',
+    })).toThrow('model/selected')
+
+    const malformed = {
+      type: 'model/selected',
+      seq: 0,
+      time: 1,
+      data: { provider: 'route', model: 'model', source: 'future', serviceTier: 'priority' },
+    } as unknown as SessionEvent
+    expect(() => Session.create(SessionId('selection-invalid-seed'), [malformed]))
+      .toThrow('model/selected')
+  })
+
   it('derives message history from the event log', () => {
     const session = Session.create(SessionId('s1'))
     session.append('turn/start', { turn: 1 })

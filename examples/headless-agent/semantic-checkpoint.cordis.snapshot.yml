@@ -16,6 +16,12 @@
   config:
     file: !!js process.env.DSH_SNAPSHOT_FILE
     overrideFile: !!js process.env.DSH_SNAPSHOT_OVERRIDE
+    providers:
+      - id: deepseek-official
+        name: DeepSeek
+        models:
+          - id: deepseek-v4-flash
+          - id: deepseek-v4-pro
 
 # Managed child-process groups for the bash executor (spawn/kill/output plumbing).
 - id: subprocess

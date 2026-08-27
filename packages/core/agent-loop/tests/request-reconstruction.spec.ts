@@ -122,13 +122,10 @@ describe('request stability across the loop', () => {
     const adapter = new MockAdapter([textResponse('one'), textResponse('two')], reasoning)
     const ctx = await harness(adapter)
     const agent = await ctx.agentLoop.create(SessionId('effort'), { provider: 'mock', model: 'mock' })
-    ctx.on('agent/request', async ({ turn }, next) => {
-      const config = await next()
-      return turn === 2 ? { ...config, reasoningEffort: ReasoningEffortId('max') } : config
-    })
 
     send(agent, 'first')
     await waitForIdle(ctx, agent)
+    await agent.modelSelection.accept({ provider: 'mock', model: 'mock', reasoningEffort: ReasoningEffortId('max') })
     send(agent, 'second')
     await waitForIdle(ctx, agent)
 
@@ -161,10 +158,14 @@ describe('request stability across the loop', () => {
       send(resumedHandle.agent, 'resumed')
       await waitForIdle(resumedCtx, resumedHandle.agent)
 
-      expect(resumedAdapter.requests[0]?.model).toBe(model)
-      expect(resumedAdapter.requests[0]?.reasoningEffort).toBe(effort)
+      // The selected intent in the seed is authoritative; a new AgentOptions
+      // model cannot replace it during resume. The second iteration therefore
+      // proves that replacement options do not create a hidden routing path.
+      expect(resumedAdapter.requests[0]?.model).toBe('mock')
+      expect(resumedAdapter.requests[0]?.reasoningEffort).toBe(model === 'mock' ? effort : ReasoningEffortId('max'))
       const resumedHeaders = resumedHandle.agent.session.events.filter(event => event.type === 'request/header')
-      expect(resumedHeaders.at(-1)?.data.header.config.reasoningEffort).toBe(effort)
+      expect(resumedHeaders.at(-1)?.data.header.config.reasoningEffort)
+        .toBe(model === 'mock' ? effort : ReasoningEffortId('max'))
       expect(resumedHeaders.at(-1)?.data.reason).toBe('resume')
     }
   })
@@ -198,15 +199,10 @@ describe('request stability across the loop', () => {
       provider: 'deepseek',
       model: 'deepseek-model',
     })
-    ctx.on('agent/request', async ({ turn }, next) => {
-      const config = await next()
-      return turn === 2
-        ? { ...config, provider: 'other', model: 'other-model' }
-        : config
-    })
 
     send(agent, 'first')
     await waitForIdle(ctx, agent)
+    await agent.modelSelection.accept({ provider: 'other', model: 'other-model' })
     send(agent, 'second')
     await waitForIdle(ctx, agent)
 
@@ -232,15 +228,10 @@ describe('request stability across the loop', () => {
       model: 'deepseek-model',
       maxTokens: 4_096,
     })
-    ctx.on('agent/request', async ({ turn }, next) => {
-      const config = await next()
-      return turn === 2
-        ? { ...config, provider: 'other', model: 'other-model' }
-        : config
-    })
 
     send(agent, 'first')
     await waitForIdle(ctx, agent)
+    await agent.modelSelection.accept({ provider: 'other', model: 'other-model' })
     send(agent, 'second')
     await waitForIdle(ctx, agent)
 
@@ -369,7 +360,7 @@ describe('request stability across the loop', () => {
     },
   )
 
-  it('lets a short-circuiting llm/stream listener own an unregistered route', async () => {
+  it('rejects an unregistered route before llm/stream listeners can bypass Model Selection', async () => {
     const ctx = new Context()
     await ctx.plugin(LlmRuntime)
     await ctx.plugin(SessionStore)
@@ -392,14 +383,10 @@ describe('request stability across the loop', () => {
     send(agent, 'go')
     await waitForIdle(ctx, agent)
 
-    expect(observed).toMatchObject({ provider: 'listener', model: 'virtual' })
-    expect(agent.session.requestHeader()?.config).toEqual({
-      provider: 'listener',
-      model: 'virtual',
-    })
-    expect(agent.session.deriveMessages().at(-1)?.content).toContainEqual({
-      type: 'text',
-      text: 'owned',
+    expect(observed).toBeUndefined()
+    expect(agent.session.requestHeader()).toBeUndefined()
+    expect(agent.session.events.findLast(event => event.type === 'turn/end')).toMatchObject({
+      data: { reason: { kind: 'error' } },
     })
   })
 
@@ -658,9 +645,7 @@ describe('request/context capacity records', () => {
 
     send(agent, 'first')
     await waitForIdle(ctx, agent)
-    ctx.on('agent/request', ({ agent: subject }, next) => subject === agent
-      ? Promise.resolve({ provider: 'mock', model: 'large' })
-      : next())
+    await agent.modelSelection.accept({ provider: 'mock', model: 'large' })
     send(agent, 'second')
     await waitForIdle(ctx, agent)
 
@@ -685,14 +670,9 @@ describe('request/context capacity records', () => {
     const adapter = capacityAdapter({ known: 64_000 }, [textResponse('a'), textResponse('b')])
     const ctx = await harness(adapter)
     const agent = await ctx.agentLoop.create(SessionId('capacity-clear'), { provider: 'mock', model: 'known' })
-    let model = 'known'
-    ctx.on('agent/request', ({ agent: subject }, next) => subject === agent
-      ? Promise.resolve({ provider: 'mock', model })
-      : next())
-
     send(agent, 'first')
     await waitForIdle(ctx, agent)
-    model = 'unknown'
+    await agent.modelSelection.accept({ provider: 'mock', model: 'unknown' })
     send(agent, 'second')
     await waitForIdle(ctx, agent)
 

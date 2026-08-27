@@ -1,4 +1,5 @@
 import type { Context } from '@deepseek-ai/cordis'
+import { createModelSelectionOwner } from '@deepseek-ai/dsh-agent'
 import type { Agent, AgentDriver, PreparedAgentDriver } from '@deepseek-ai/dsh-agent'
 import { AgentDriverId } from '@deepseek-ai/dsh-session'
 import type { Session } from '@deepseek-ai/dsh-session'
@@ -9,11 +10,12 @@ export function registerFakeAgentDriver(
   makeAgent: (session: Session) => Agent,
   id = AgentDriverId('dsh'),
   name = 'Test Driver',
-): () => void {
+): () => Promise<void> {
   const driver: AgentDriver = {
     info: { id, name },
     prepare(session): PreparedAgentDriver {
       const agent = makeAgent(session)
+      Object.assign(agent, { modelSelection: createModelSelectionOwner(session) })
       ;(agent as { ctx?: Context }).ctx = ctx.extend({ agent })
       return {
         agent,

@@ -5,7 +5,7 @@
  * except workspace Rename/Delete and session Rename/Fork/Archive; the session
  * and workspace hover cards are suppressed while a menu is open.
  */
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import clsx from 'clsx'
 import {
   HoverCard, IconArchiveOutline20, IconBranchOutline16, IconEditOutline16,
@@ -359,7 +359,7 @@ export function SearchResultItem({ result, currentId, onOpen, t }: {
  * @param props.t - the browser root's locale seat.
  * @returns the session row.
  */
-export function SessionNodeItem({ node, currentId, now, onOpen, onRename, onFork, onArchive, drag, flat = false, t }: {
+export function SessionNodeItem({ node, currentId, now, onOpen, onRename, onFork, onArchive, trailing, drag, flat = false, t }: {
   node: SessionNode
   currentId: string | undefined
   now: number
@@ -370,6 +370,8 @@ export function SessionNodeItem({ node, currentId, now, onOpen, onRename, onFork
   onFork: (id: SessionNode['id']) => void
   /** Archive this session (row menu action; commits without a dialog). */
   onArchive: (id: SessionNode['id']) => void
+  /** Additive content rendered through the browser's Session trailing slot. */
+  trailing?: ReactNode
   /** Present only on draggable rows (workspace-group sessions outside search). */
   drag?: RowDragProps | undefined
   /** The row is rendered without a parent Workspace header. */
@@ -442,6 +444,9 @@ export function SessionNodeItem({ node, currentId, now, onOpen, onRename, onFork
           (rename/fork/archive) would all act on content that does not
           exist — both trailing cells stay off until the first prompt. */}
       {!row.blank && <span className={css.time}>{timeLabel(row.updatedAt, now, t)}</span>}
+      {trailing !== undefined && trailing !== null && (
+        <span className={css.sessionTrailing}>{trailing}</span>
+      )}
       {!row.blank && (
         <span className={css.rowActions}>
           <Menu

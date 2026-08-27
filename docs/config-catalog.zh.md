@@ -97,12 +97,24 @@ export interface Config {
 export interface Config {
   /** Driver selected for fresh Sessions whose caller omits `driverId`. */
   defaultDriverId?: AgentDriverId
+  /**
+   * Optional restart-handoff sidecar. Omitting this object disables restart
+   * handoff; when present every field is required and validated at load time.
+   */
+  restartHandoff?: {
+    /** Owner-only absolute directory for generation manifests. */
+    directory: string
+    /** Maximum time for one resident Agent to become idle and flush. */
+    quiescenceTimeoutMs: number
+    /** Lease duration from intent publication through next-generation adoption. */
+    leaseTimeoutMs: number
+  }
 }
 ```
 
 依赖：[`AgentDriverId`](subsystems/core.zh.md)
 
-来源：[`packages/core/agent/src/index.ts:186`](../packages/core/agent/src/index.ts)
+来源：[`packages/core/agent/src/index.ts:259`](../packages/core/agent/src/index.ts)
 
 <a id="deepseek-aidsh-agent-default-model"></a>
 
@@ -180,7 +192,7 @@ export interface Config {
 
 依赖：[`AgentOptions`](subsystems/core.zh.md) · [`SessionId`](subsystems/core.zh.md)
 
-来源：[`packages/core/agent-loop/src/index.ts:148`](../packages/core/agent-loop/src/index.ts)
+来源：[`packages/core/agent-loop/src/index.ts:149`](../packages/core/agent-loop/src/index.ts)
 
 <a id="deepseek-aidsh-agent-presets"></a>
 
@@ -412,6 +424,62 @@ export type Config = LocalConfig
 依赖：[`LocalConfig`](#deepseek-aidsh-bash-local)
 
 来源：[`packages/shell/bash-sandbox/src/index.ts:35`](../packages/shell/bash-sandbox/src/index.ts)
+
+<a id="deepseek-aidsh-claude-agent-driver"></a>
+
+## `@deepseek-ai/dsh-claude-agent-driver`
+
+需要：`agents`
+
+```ts config-catalog
+/** Deployment-owned Claude CLI and DSH route settings. */
+export interface Config {
+  /** DSH provider id represented by Claude Code. */
+  provider?: string
+  /** Default Claude model used for a blank Session. */
+  model?: string
+  /** DSH model ids mapped to native Claude model ids. */
+  modelAliases?: Record<string, string>
+  /** Optional exact allowlist; omission accepts documented Claude aliases and ids. */
+  supportedModels?: string[]
+  /** Native Claude effort levels accepted by this deployment. */
+  supportedEfforts?: string[]
+  /** Permission mode supplied to Claude Code; DSH does not rewrite native policy. */
+  permissionMode?: ClaudeDriverConfig['permissionMode']
+  /** Explicit Claude Code executable, when the bundled executable is not desired. */
+  cliPath?: string
+}
+
+/** Driver configuration resolved before registration. */
+export interface ClaudeDriverConfig {
+  /** DSH provider id represented by Claude Code. */
+  readonly provider: string
+  /** Default native Claude model used for a blank Session. */
+  readonly model: string
+  /** DSH model ids mapped to native Claude model ids. */
+  readonly aliases: Readonly<Record<string, string>>
+  /** Optional exact allowlist of accepted DSH or native model ids. */
+  readonly supportedModels: readonly string[]
+  /** Native effort values accepted by this Claude deployment. */
+  readonly supportedEfforts: readonly string[]
+  /** Native Claude permission mode supplied to each query. */
+  readonly permissionMode: NonNullable<Options['permissionMode']>
+  /** Explicit Claude Code executable path, when configured. */
+  readonly cliPath?: string
+  /** Optional host callback that retains Claude's native approval decision. */
+  readonly canUseTool?: NonNullable<Options['canUseTool']>
+  /** Optional host callback that retains Claude's native MCP user-input decision. */
+  readonly onElicitation?: NonNullable<Options['onElicitation']>
+  /** Optional host callback that retains Claude's native blocking-dialog decision. */
+  readonly onUserDialog?: NonNullable<Options['onUserDialog']>
+  /** Dialog kinds rendered by the host callback, when one is configured. */
+  readonly supportedDialogKinds?: readonly string[]
+}
+```
+
+依赖：`Options`（`@anthropic-ai/claude-agent-sdk`）
+
+来源：[`packages/extensions/claude-agent-driver/src/index.ts:30`](../packages/extensions/claude-agent-driver/src/index.ts)
 
 <a id="deepseek-aidsh-client-connection"></a>
 
@@ -742,7 +810,7 @@ export interface Config {
 }
 ```
 
-来源：[`packages/bundle/headless/src/index.ts:31`](../packages/bundle/headless/src/index.ts)
+来源：[`packages/bundle/headless/src/index.ts:29`](../packages/bundle/headless/src/index.ts)
 
 <a id="deepseek-aidsh-hooks-claude-code"></a>
 
@@ -841,7 +909,7 @@ export interface Config {
 }
 ```
 
-来源：[`packages/host/apiproxy/src/index.ts:41`](../packages/host/apiproxy/src/index.ts)
+来源：[`packages/host/apiproxy/src/index.ts:42`](../packages/host/apiproxy/src/index.ts)
 
 <a id="deepseek-aidsh-host-directory-picker-browse"></a>
 
@@ -2426,7 +2494,7 @@ export interface Config {
 }
 ```
 
-来源：[`packages/core/system-prompt/src/index.ts:186`](../packages/core/system-prompt/src/index.ts)
+来源：[`packages/core/system-prompt/src/index.ts:192`](../packages/core/system-prompt/src/index.ts)
 
 <a id="deepseek-aidsh-terminal-bash"></a>
 
@@ -3249,6 +3317,7 @@ export interface Config {
 - `@deepseek-ai/dsh-client-ui-agent-preset`（[`packages/client/ui-agent-preset/src/index.ts`](../packages/client/ui-agent-preset/src/index.ts)）
 - `@deepseek-ai/dsh-client-ui-attachment`（[`packages/client/ui-attachment/src/index.ts`](../packages/client/ui-attachment/src/index.ts)）
 - `@deepseek-ai/dsh-client-ui-brand-official`（[`packages/client/ui-brand-official/src/index.ts`](../packages/client/ui-brand-official/src/index.ts)）
+- `@deepseek-ai/dsh-client-ui-claude-agent-driver`（[`packages/extensions/ui-claude-agent-driver/src/index.ts`](../packages/extensions/ui-claude-agent-driver/src/index.ts)）
 - `@deepseek-ai/dsh-client-ui-commands`（[`packages/client/ui-commands/src/index.ts`](../packages/client/ui-commands/src/index.ts)）
 - `@deepseek-ai/dsh-client-ui-conversation`（[`packages/client/ui-conversation/src/index.ts`](../packages/client/ui-conversation/src/index.ts)）
 - `@deepseek-ai/dsh-client-ui-cordis`（[`packages/extensions/ui-cordis/src/index.ts`](../packages/extensions/ui-cordis/src/index.ts)）

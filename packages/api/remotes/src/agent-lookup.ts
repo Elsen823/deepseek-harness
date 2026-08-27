@@ -1,7 +1,7 @@
 /** Host BFF policy for resolving Remote Agent and Session identities. */
 
 import type { Context } from '@deepseek-ai/cordis'
-import type { Agent, AgentOptions, AgentSetup } from '@deepseek-ai/dsh-agent'
+import type { Agent, AgentHandle, AgentOptions, AgentSetup } from '@deepseek-ai/dsh-agent'
 import type { Session, SessionEvent, SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-session-persistence'
 import { TypertLookupFailure } from '@deepseek-ai/dsh-typert-protocol'
@@ -18,8 +18,21 @@ export type ApiRemoteAgentResult =
   | { readonly agent: Agent }
   | { readonly error: ApiRemoteLookupError }
 
+/** Internal control flow used when admission closes during a cold lookup. */
+class ApiRemoteAdmissionError extends Error {
+  constructor(readonly lookupError: ApiRemoteLookupError) {
+    super(lookupError.message)
+  }
+}
+
 /** Resume configuration supplied by the owning Host composition. */
 export interface ApiRemoteAgentOptions {
+  /**
+   * Reject a request admitted during a process-generation handoff. The
+   * callback is evaluated before lookup and immediately before publication so
+   * an in-flight request cannot publish or operate on a replacement Agent.
+   */
+  readonly checkAdmission?: () => ApiRemoteLookupError | undefined
   /** Read the per-Agent defaults when a cold identity must resume. */
   readonly agentOptions?: () => AgentOptions
   /**
@@ -36,6 +49,12 @@ export interface ApiRemoteAgentOptions {
   readonly setup?: (
     session: { meta: SessionHeader; events: readonly SessionEvent[] },
   ) => AgentSetup | Promise<AgentSetup>
+  /**
+   * Transfer each cold-resume handle to the Host lifecycle owner before the
+   * resolver returns its Agent. Omission leaves teardown to Context disposal.
+   * @param handle - newly published Agent and its exclusive disposer.
+   */
+  readonly retainHandle?: (handle: AgentHandle) => void
 }
 
 /** Cold identity absent from the durable session store. */
@@ -134,6 +153,8 @@ export function createApiRemoteAgentResolver(
   }
 
   const agentFor = async (sessionId: SessionId): Promise<ApiRemoteAgentResult> => {
+    const admissionError = options.checkAdmission?.()
+    if (admissionError !== undefined) return { error: admissionError }
     const fenced = fencedLiveAgent(sessionId)
     if (fenced !== undefined) return fenced
     const attached = ctx.sessions.get(sessionId)
@@ -159,11 +180,21 @@ export function createApiRemoteAgentResolver(
             && hasApiRemoteSubagentOwner(ctx, publishedSession, publishedAgent)) {
             throw new ApiRemoteSubagentSessionOwnership(sessionId)
           }
+          const beforeResumeError = options.checkAdmission?.()
+          if (beforeResumeError !== undefined) throw new ApiRemoteAdmissionError(beforeResumeError)
           const handle = await ctx.agents.resume({
             resumeSessionId: sessionId,
             ...options.agentOptions === undefined ? {} : { agentOptions: options.agentOptions() },
             ...setup === undefined ? {} : { setup },
           })
+          const afterResumeError = options.checkAdmission?.()
+          if (afterResumeError !== undefined) {
+            // The Agent was published before admission changed. It belongs to
+            // this generation now; releasing it here could race a replacement
+            // owner and would turn a retryable request into teardown.
+            throw new ApiRemoteAdmissionError(afterResumeError)
+          }
+          options.retainHandle?.(handle)
           return handle.agent
         } finally {
           resumes.delete(sessionId)
@@ -180,6 +211,7 @@ export function createApiRemoteAgentResolver(
       if (error instanceof ApiRemoteSubagentSessionOwnership) {
         return { error: apiRemoteSubagentOwnershipError(error.sessionId) }
       }
+      if (error instanceof ApiRemoteAdmissionError) return { error: error.lookupError }
       const fenced = fencedLiveAgent(sessionId)
       if (fenced !== undefined) return fenced
       const attached = ctx.sessions.get(sessionId)

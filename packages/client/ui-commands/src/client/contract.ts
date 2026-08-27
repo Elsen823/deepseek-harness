@@ -21,6 +21,8 @@ export interface SelectOption {
   readonly label: string
   readonly detail?: string
   readonly active?: boolean
+  /** Driver or capability diagnostic for a visible row that cannot be selected. */
+  readonly disabledReason?: string
   /** Optional in-page risk gate owned by the shared popup shell. */
   readonly confirmation?: SelectConfirmation
 }

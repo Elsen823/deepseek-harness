@@ -55,7 +55,21 @@ scripts/     repo gates and generators
 website/     VitePress projection of selected bilingual docs/ sources
 ```
 
-Package groups: [packages/README.md](packages/README.md).
+Packages: [packages/README.md](packages/README.md).
+
+## Agent skills
+
+### Issue tracker
+
+[Tracker](docs/agents/issue-tracker.md)
+
+### Triage labels
+
+[Labels](docs/agents/triage-labels.md)
+
+### Domain docs
+
+[Domain](docs/agents/domain.md)
 
 ## Commands
 

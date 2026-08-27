@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import Include from '@deepseek-ai/cordis-plugin-include'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
-import AgentRegistry, { type Agent, type AgentDriver } from '@deepseek-ai/dsh-agent'
+import AgentRegistry, { createModelSelectionOwner, type Agent, type AgentDriver } from '@deepseek-ai/dsh-agent'
 import AgentPresets from '@deepseek-ai/dsh-agent-presets'
 import SessionStore, { AgentDriverId, SessionId, type Session } from '@deepseek-ai/dsh-session'
 import UserQuestionService from '@deepseek-ai/dsh-user-questions'
@@ -32,7 +32,7 @@ function registerDriver(ctx: Context, scopeApi: ScopeApi, id: string, scoped: bo
   const driver: AgentDriver = {
     info: { id: driverId, name: `Driver ${id}` },
     prepare(session: Session) {
-      const agent = { id: session.id, session, status: 'idle' } as unknown as Agent
+      const agent = { id: session.id, session, modelSelection: createModelSelectionOwner(session), status: 'idle' } as unknown as Agent
       const scope = scoped ? scopeApi.createScope(ctx, agent) : undefined
       Object.assign(agent, { ctx: (scope?.ctx ?? ctx).extend({ agent }) })
       return {

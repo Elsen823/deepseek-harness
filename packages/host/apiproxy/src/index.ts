@@ -8,8 +8,8 @@
  * routes — physical carriers wrap `ctx.apiProxy` themselves.
  *
  * The gateway consumes `ctx.agentDefaultModel`, the transport-independent default
- * shared with direct entry points. Switching models persists through that
- * service; sessions that have already logged a selection remain unchanged.
+ * shared with direct entry points. Session model switches stay on the addressed
+ * Agent; the default service remains the separate owner for future Sessions.
  */
 
 import { Context, Service } from '@deepseek-ai/cordis'
@@ -17,6 +17,7 @@ import z from '@deepseek-ai/schemastery'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type { ApiProxy } from './api/index.ts'
 import { createApiProxy, DEFAULT_COLD_BLANK_PROBE_MAX_BYTES } from './api-proxy.ts'
+import type { ApiProxySessionLifecycles, ManagedApiProxy } from './api-proxy.ts'
 import {
   DEFAULT_SESSION_LOG_COMPRESSION_LEVEL,
   type SessionLogCompressionLevel,
@@ -28,12 +29,12 @@ export { toFetchHandler } from './fetch/handler.ts'
 export { AbstractApiClient, InProcessApiClient } from './fetch/client.ts'
 export type { IApiClient } from './fetch/client.ts'
 export { createApiProxy } from './api-proxy.ts'
-export type { ApiProxyDefaults } from './api-proxy.ts'
+export type { ApiProxyDefaults, ApiProxySessionLifecycles, ManagedApiProxy } from './api-proxy.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
     /** The host-side ApiProxy implementation (the transport-agnostic gateway face). */
-    apiProxy: ApiProxy
+    apiProxy: ManagedApiProxy
   }
 }
 
@@ -67,6 +68,8 @@ export interface Config {
  * project directory.
  */
 export class ApiProxyService extends Service implements ApiProxy {
+  /** Lifecycle control for Agents whose exclusive handles this service retains. */
+  readonly sessionLifecycles: ApiProxySessionLifecycles
   static inject = [
     'agentDefaultModel', 'agents', 'attachments', 'directoryPicker', 'llm', 'sessions', 'subagents', 'sessionQuery',
     'tools', 'userQuestions', 'workspaceRegistry',
@@ -95,10 +98,11 @@ export class ApiProxyService extends Service implements ApiProxy {
 
   constructor(ctx: Context, config: Config) {
     super(ctx, 'apiProxy')
+    const appRestart = ctx.get('appRestart') as (() => Promise<void>) | undefined
     const api = createApiProxy(ctx, {
       defaultModelSelection: () => ctx.agentDefaultModel.currentSelection(),
-      saveDefaultModelSelection: selection => ctx.agentDefaultModel.saveSelection(selection),
       cwd: process.cwd(),
+      ...appRestart === undefined ? {} : { restart: appRestart },
       ...config.nativeOpen === undefined ? {} : { canOpenPath: () => config.nativeOpen as boolean },
       ...(config.sessionExportCompressionLevel === undefined
         ? {}
@@ -107,6 +111,7 @@ export class ApiProxyService extends Service implements ApiProxy {
         ? {}
         : { coldBlankProbeMaxBytes: config.coldBlankProbeMaxBytes }),
     })
+    this.sessionLifecycles = api.sessionLifecycles
     this.sessions = api.sessions
     this.subagents = api.subagents
     this.workspace = api.workspace

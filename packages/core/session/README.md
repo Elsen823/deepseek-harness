@@ -18,6 +18,8 @@ Creates and holds event-sourced `Session` instances. Persistence is intentionall
 - `ctx.sessions.get(id: SessionId): Session | undefined`
 - `ctx.sessions.list(): Session[]`
 
+`SessionStore.flush()` is the persistence barrier used by restart handoff. Handoff records remain outside the model-visible log and never call persistence retirement or emit `session/disposed`; a next generation validates the flushed sequence and digest before adopting the Session.
+
 #### Advanced: ordered-teardown lifecycle primitives
 
 Use the split lifecycle only when teardown must be ordered with another resource:
@@ -42,6 +44,7 @@ Plain class (not a Cordis Service). Create live sessions through `ctx.sessions.c
 - `session.surface` exposes the readonly `SessionSurface` view owned by the session's single incremental surface manager; `replaceGeneration` changes on every committed rewrite.
 - `session.events` is a cached frozen snapshot invalidated by append; accepted events remain deeply frozen.
 - `session.seq`, `session.id` — current sequence and readonly typed identity.
+- `session.modelSelection()` folds the latest accepted `model/selected` intent, including an unconsumed user or inherited-default selection; `session.effectiveModelSelection()` and `session.effectiveModelSelectionEvidence()` fold request/header or agent-driver/model-request evidence separately.
 - `session.header: SessionHeader` — detached, deep-frozen creation metadata (`version`, `id`, `createdAt`, optional `cwd`/`parentSession`/`seedLength`/`delegationDepth`). Construction validates the durable record and requires its id to match `session.id`.
 
 ### Lossless JSON utilities
@@ -61,6 +64,10 @@ This package owns ordered surface projection, replacement validation, replay, an
 ### Request-header reconstruction (`request-header.ts`)
 
 `request/header` records a full canonical snapshot of the non-history request envelope with reason `initial`, `resume`, or `change`. Its optional `adapterDefaults` map marks effective `reasoningEffort` or `maxTokens` values materialized by exact-model resolution, allowing the next request proposal to distinguish them from explicit conversation settings. `foldRequestHeader()` selects the latest snapshot; legacy delta events and the removed `fallback` reason are rejected. See the [reconstructable-requests Agent Note](../../../.agents/notes/implemented/architecture/2026-07-05-reconstructable-requests.md).
+
+`llm/service-tier` is the whole-value per-session choice that request-producing plugins fold in `agent/request`: a branded id selects an adapter-owned tier and `null` restores the provider standard. The changed effective choice is also carried by the next `request/header`, while the dedicated event preserves user intent before that request exists.
+
+`model/selected` is the Agent-owned Model Selection intent: exactly one DSH provider, one provider-owned model, and optional adapter-owned reasoning effort. The append and restore boundaries reject empty provider/model values, unsupported source values, extra request or Driver settings, and malformed effort values. Effective request evidence remains in `request/header` or `agent-driver/model-request`, so accepting a selection before a request does not masquerade as a model call.
 
 A `user/message` stores the complete `UserMessage` directly, including the identity created before inbox routing or step entry. It renders its `content` verbatim whether it is a direct human prompt, a synthetic injection, or an entered goal round; its typed `source` is the only channel that tells them apart and carries any domain-specific durable facts. `assistant/message` and `tool/result` likewise store complete message values. Turn execution remains enclosed by `turn/start` and `turn/end`; `agent.inject()` queues input until a later pre-step claims it and returns it in an enter decision.
 

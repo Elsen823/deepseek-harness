@@ -8,7 +8,7 @@ import { createScope, type Scope } from '@deepseek-ai/dsh-scope'
 import { AgentDriverId, Session, SessionId, type SessionEvent, type UserMessage } from '@deepseek-ai/dsh-session'
 import SystemPrompt, { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime, { defineContentToolFixture } from '@deepseek-ai/dsh-tools'
-import AgentRegistry, { agentEvents, Inbox, type Agent, type PreStepDecision } from '@deepseek-ai/dsh-agent'
+import AgentRegistry, { agentEvents, createModelSelectionOwner, Inbox, type Agent, type PreStepDecision } from '@deepseek-ai/dsh-agent'
 import SkillRegistry from '@deepseek-ai/dsh-skill'
 import * as SkillFileSystem from '@deepseek-ai/dsh-skill-filesystem'
 import * as toolSkill from '@deepseek-ai/dsh-tool-skill'
@@ -44,6 +44,7 @@ function agentForCwd(cwd: string): Agent {
     id,
     options: {},
     session,
+    modelSelection: createModelSelectionOwner(session),
     inbox: new Inbox(session, { inserted: () => {}, discarded: () => {}, claimed: () => {} }),
     status: 'idle',
     send: () => {},
@@ -61,6 +62,7 @@ function sessionAgent(session: Session, id = 'tool-skill-agent'): Agent {
     id: SessionId(id),
     options: {},
     session,
+    modelSelection: createModelSelectionOwner(session),
     inbox: new Inbox(session, { inserted: () => {}, discarded: () => {}, claimed: () => {} }),
     status: 'running',
     ctx: new Context(),

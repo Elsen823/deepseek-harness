@@ -93,6 +93,14 @@ export function filterOptions(options: readonly SelectOption[], search: string):
   return options.filter(o => o.label.toLowerCase().includes(query) || (o.detail?.toLowerCase().includes(query) ?? false))
 }
 
+function selectable(option: SelectOption | undefined): boolean {
+  return option !== undefined && option.disabledReason === undefined
+}
+
+function firstSelectable(options: readonly SelectOption[]): number {
+  return options.findIndex(selectable)
+}
+
 /** One open shell's bindings (spec + open-time context + segment snapshot + options-fetch abort). */
 interface OpenBinding<TCtx> {
   readonly command: string
@@ -145,7 +153,10 @@ export class PopupSelectController<TCtx = unknown> {
     binding.spec.options(binding.context, binding.abort.signal).then(
       (options) => {
         if (this.binding !== binding) return
-        this.state.set({ ...this.state.getSnapshot(), status: 'ready', options, active: 0, error: null })
+        const first = firstSelectable(options)
+        this.state.set({
+          ...this.state.getSnapshot(), status: 'ready', options, active: first < 0 ? 0 : first, error: null,
+        })
       },
       (error: unknown) => {
         if (this.binding !== binding) return
@@ -185,8 +196,15 @@ export class PopupSelectController<TCtx = unknown> {
     if (!s.open || s.status !== 'ready' || s.submitting || s.confirming !== null) return
     const rows = filterOptions(s.options, s.search)
     if (rows.length === 0) return
-    const active = (s.active + dir + rows.length) % rows.length
-    this.state.set({ ...s, active })
+    if (rows.every(option => !selectable(option))) return
+    let active = s.active
+    for (let attempt = 0; attempt < rows.length; attempt++) {
+      active = (active + dir + rows.length) % rows.length
+      if (selectable(rows[active])) {
+        this.state.set({ ...s, active })
+        return
+      }
+    }
   }
 
   /**
@@ -197,7 +215,8 @@ export class PopupSelectController<TCtx = unknown> {
   highlight(index: number): void {
     const s = this.state.getSnapshot()
     if (!s.open || s.status !== 'ready' || s.submitting || s.confirming !== null) return
-    if (index < 0 || index >= filterOptions(s.options, s.search).length || index === s.active) return
+    const rows = filterOptions(s.options, s.search)
+    if (index < 0 || index >= rows.length || index === s.active || !selectable(rows[index])) return
     this.state.set({ ...s, active: index })
   }
 
@@ -216,7 +235,7 @@ export class PopupSelectController<TCtx = unknown> {
     const s = this.state.getSnapshot()
     if (binding === null || !s.open || s.status !== 'ready' || s.submitting || s.confirming !== null) return
     const option = filterOptions(s.options, s.search)[index]
-    if (option === undefined) return
+    if (option === undefined || option.disabledReason !== undefined) return
     if (option.confirmation !== undefined) {
       this.state.set({ ...s, confirming: option, acknowledged: false, error: null })
       return

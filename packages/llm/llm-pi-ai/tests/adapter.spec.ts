@@ -9,7 +9,7 @@ import type {
   SaveImageAttachment,
   StoredImageAttachment,
 } from '@deepseek-ai/dsh-attachment'
-import LlmRuntime, { createUserMessage, CONTEXT_WINDOW_EXCEEDED_CODE, LlmError, ReasoningEffortId, userAgent } from '@deepseek-ai/dsh-llm'
+import LlmRuntime, { createUserMessage, CONTEXT_WINDOW_EXCEEDED_CODE, LlmError, ReasoningEffortId, ServiceTierId, userAgent } from '@deepseek-ai/dsh-llm'
 import * as LlmPiAi from '@deepseek-ai/dsh-llm-pi-ai'
 import { PiAiAdapter } from '@deepseek-ai/dsh-llm-pi-ai'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
@@ -224,6 +224,33 @@ describe('PiAiAdapter provider routing', () => {
     const result = await assemble(ctx, { provider: 'openai', model: 'gpt-4.1', messages: [] })
     expect(result.finish.kind).toBe('error')
     expect(server.paths).toEqual(['/v1/responses'])
+  })
+
+  it('maps an explicit service tier to OpenAI Responses and rejects unsupported protocols', async () => {
+    const responses = await mockServer([{ status: 401, body: JSON.stringify({ error: { message: 'expected mock failure' } }) }])
+    const responsesCtx = new Context()
+    await responsesCtx.plugin(LlmRuntime)
+    await responsesCtx.plugin(LlmPiAi, {
+      providers: { openai: { apiKeyEnv: 'PI_TEST_KEY', baseURL: `${responses.url}/v1` } },
+    })
+
+    await assemble(responsesCtx, {
+      provider: 'openai',
+      model: 'gpt-4.1',
+      serviceTier: ServiceTierId('priority'),
+      messages: [],
+    })
+    expect(responses.requests[0]).toMatchObject({ service_tier: 'priority' })
+
+    const completions = await mockServer([])
+    const completionsCtx = await harness(completions.url)
+    const unsupported = await assemble(completionsCtx, {
+      model: 'deepseek-v4-flash',
+      serviceTier: ServiceTierId('priority'),
+      messages: [],
+    })
+    expect(unsupported.finish).toMatchObject({ kind: 'error', failure: { code: 'UNSUPPORTED_OPTION' } })
+    expect(completions.requests).toEqual([])
   })
 
   it('resolves an attachment service mounted after the adapter when dispatching an image', async () => {
@@ -799,8 +826,8 @@ describe('provider profile lifecycle', () => {
     expect(resolveProfiles({}).size).toBe(0)
     expect(resolveProfiles(undefined).size).toBe(0)
     expect(() => resolveProfiles({ '': {} })).toThrow(/non-empty/)
-    // A route the installed catalog does not ship is allowed, but it has no
-    // defaults to fall back on: it must describe its own models.
+    // A route the installed catalog does not ship is allowed, but it must
+    // describe its own models; the catalog cannot supply them.
     expect(() => resolveProfiles({ 'not-real': {} })).toThrow(/resolves no models/)
     // The pre-release array shape and its per-profile provider field fail
     // loud with migration directions instead of half-working.

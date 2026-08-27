@@ -82,7 +82,11 @@ function bench(options: {
     return { snapshot: coldBlock }
   })
   const ctx = new Context()
-  ctx.provide('agents', { get: getAgent })
+  ctx.provide('agents', {
+    get: getAgent,
+    restartHandoffPhase: 'active',
+    admitRestartOperation: () => () => {},
+  })
   ctx.provide('subagents', { listChildren, followup, interrupt })
   ctx.provide('sessions', {
     get: (id: SessionId) => options.liveChild === true && id === CHILD

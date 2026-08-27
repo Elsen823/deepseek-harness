@@ -4,6 +4,7 @@ import { createUserMessage, freezeMessage } from '@deepseek-ai/dsh-llm'
 import { AgentDriverId, Session, SessionId, type UserMessage } from '@deepseek-ai/dsh-session'
 import AgentRegistry, {
   agentEvents,
+  createModelSelectionOwner,
   Inbox,
 } from '@deepseek-ai/dsh-agent'
 import TypertRegistry from '@deepseek-ai/dsh-typert-registry'
@@ -22,6 +23,7 @@ function stubAgent(rawId: string, overrides: Partial<Agent> = {}): Agent {
     id,
     options: {},
     session,
+    modelSelection: createModelSelectionOwner(session),
     inbox: new Inbox(session, { inserted: () => {}, discarded: () => {}, claimed: () => {} }),
     status: 'idle',
     ctx: new Context(),

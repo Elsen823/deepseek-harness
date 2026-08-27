@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import AgentRegistry, { Inbox } from '@deepseek-ai/dsh-agent'
+import AgentRegistry, { createModelSelectionOwner, Inbox } from '@deepseek-ai/dsh-agent'
 import type { Agent, AgentCancelCause, InboxTarget } from '@deepseek-ai/dsh-agent'
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import SessionStore, { AgentDriverId, SessionId } from '@deepseek-ai/dsh-session'
@@ -64,6 +64,7 @@ async function harness(): Promise<RuntimeHarness> {
     id: session.id,
     options: {},
     session,
+    modelSelection: createModelSelectionOwner(session),
     inbox,
     status: 'idle',
     ctx: new Context(),

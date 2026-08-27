@@ -9,7 +9,7 @@
  * menu in between; the flow and its error dialog live in WorkspacePicker
  * (same package — direct composition, no slot between them).
  */
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import clsx from 'clsx'
 import {
   Button, IconCloseFill14, IconPersonalizationOutline16,
@@ -18,7 +18,7 @@ import {
 import type {
   SessionId, SessionListState, SessionSearchResultItem, WorkspaceId, WorkspaceView,
 } from '@deepseek-ai/dsh-client-runtime/client'
-import type { WorkspaceBrowserProps } from './contract/slots.ts'
+import type { SessionTrailingOwnerProps, WorkspaceBrowserProps } from './contract/slots.ts'
 import type { SessionNode, SessionOrderBy } from './tree.ts'
 import { deriveFlat, deriveGroups, deriveSearchResults, UNGROUPED_KEY } from './tree.ts'
 import { ProjectRowItem, SearchResultItem, SessionNodeItem } from './rows/Rows.tsx'
@@ -245,6 +245,8 @@ type SessionTreeProps = Pick<
   onSessionArchive: (sessionId: SessionNode['id']) => void
   /** Session order behavior: fixed after edits, or additionally promoted by user activity. */
   orderBy: SessionOrderBy
+  /** Render additive content after one Session row's timestamp. */
+  renderSessionTrailing: (node: SessionNode) => ReactNode
 }
 
 /** The scrolling session tree; unmounting drops the sessions subscription and expand-all state. */
@@ -253,7 +255,8 @@ function SessionTree({
   onRenameRequest, onDeleteRequest, onSessionRename, onSessionArchive,
   insertWorkspaceBefore, insertSessionBefore, orderBy,
   groupExpansion, setGroupExpanded,
-  sessionOrderByAccount, sessionUpdatedAtByAccount, syncSessionOrderAccount, setSessionOrder, home, t,
+  sessionOrderByAccount, sessionUpdatedAtByAccount, syncSessionOrderAccount, setSessionOrder,
+  renderSessionTrailing, home, t,
 }: SessionTreeProps) {
   const list = useSessions(s => s)
   const current = list.current
@@ -519,6 +522,7 @@ function SessionTree({
                     onRename={onSessionRename}
                     onFork={forkSession}
                     onArchive={onSessionArchive}
+                    trailing={renderSessionTrailing(node)}
                     drag={dragProps}
                     t={t}
                   />
@@ -548,7 +552,8 @@ function SessionTree({
 /** The flat "In one list" body: every session is one draggable top-level row. */
 function FlatList({
   useSessions, open, forkSession, onSessionRename, onSessionArchive, archivedSessionIds,
-  orderBy, sessionOrderByAccount, sessionUpdatedAtByAccount, syncSessionOrderAccount, setSessionOrder, t,
+  orderBy, sessionOrderByAccount, sessionUpdatedAtByAccount, syncSessionOrderAccount, setSessionOrder,
+  renderSessionTrailing, t,
 }: Pick<
   SessionTreeProps,
   | 'useSessions'
@@ -562,6 +567,7 @@ function FlatList({
   | 'sessionUpdatedAtByAccount'
   | 'syncSessionOrderAccount'
   | 'setSessionOrder'
+  | 'renderSessionTrailing'
   | 't'
 >) {
   const list = useSessions(s => s)
@@ -635,6 +641,7 @@ function FlatList({
               onRename={onSessionRename}
               onFork={forkSession}
               onArchive={onSessionArchive}
+              trailing={renderSessionTrailing(node)}
               flat
               drag={{
                 start: () => {
@@ -769,6 +776,14 @@ export function WorkspaceBrowser({
   const workspaces = useWorkspaces(state => state.items)
   const workspacePhase = useWorkspaces(state => state.phase)
   const archivedSessionIds = useWorkspaces(state => state.archivedSessionIds)
+  const renderSessionTrailing = (node: SessionNode): ReactNode => {
+    const owner: SessionTrailingOwnerProps = {
+      sessionId: node.id,
+      ...(node.driverId === undefined ? {} : { driverId: node.driverId }),
+      ...(node.runtime === undefined ? {} : { runtime: node.runtime }),
+    }
+    return renderSlot('sidebar.workspaces.session.trailing', owner)
+  }
   // Live occupancy of this surface's directory-flow hole (the same source the
   // flow reads): a composition without a picking affordance can add nothing.
   const directoryFlowAvailable = useDirectoryFlow(occupied => occupied)
@@ -1165,6 +1180,7 @@ export function WorkspaceBrowser({
                 sessionUpdatedAtByAccount={sessionUpdatedAtByAccount}
                 syncSessionOrderAccount={actions.syncSessionOrderAccount}
                 setSessionOrder={actions.setSessionOrder}
+                renderSessionTrailing={renderSessionTrailing}
                 t={t}
               />
             )
@@ -1187,6 +1203,7 @@ export function WorkspaceBrowser({
                 insertWorkspaceBefore={insertWorkspaceBefore}
                 insertSessionBefore={insertSessionBefore}
                 orderBy={orderBy}
+                renderSessionTrailing={renderSessionTrailing}
                 home={home}
                 t={t}
                 onRenameRequest={(workspaceId, currentTitle) => {

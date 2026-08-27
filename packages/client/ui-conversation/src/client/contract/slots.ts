@@ -6,9 +6,9 @@ import type {
   SlotHookFactory, SnapshotSelectorHook,
 } from '@deepseek-ai/dsh-client-ui-slots'
 import type {
-  CommandNode, CompactionSummaryNode, ConversationSnapshot, ConversationTurnDataMap,
+  AgentDriverId, CommandNode, CompactionSummaryNode, ConversationSnapshot, ConversationTurnDataMap,
   ObservableSnapshot, PendingInteraction, PendingWait, SessionId, ToolCallBlock,
-  TurnLocation, WorkspaceId,
+  TurnLocation, WorkspaceConnectOptions, WorkspaceId,
 } from '@deepseek-ai/dsh-client-runtime/client'
 import type { MarkdownFileMentions } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { MessageId } from '@deepseek-ai/dsh-client-connection/client'
@@ -177,6 +177,11 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
      */
     'conversation.hero.workspace': { kind: 'single'; scope: 'root'; owner: EmptyWorkspaceOwnerProps }
     /**
+     * Agent Driver choice for the new-session screen. The owner keeps the
+     * staged choice with Workspace selection and materializes both together.
+     */
+    'conversation.hero.agentDriver': { kind: 'single'; scope: 'root'; owner: HeroAgentDriverOwnerProps }
+    /**
      * Brand mark leading the blank-session headline. Declared by this
      * package's `conversation` entry; the shell supplies a fish fallback.
      */
@@ -294,6 +299,14 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 export interface HeroAgentPresetOwnerProps {
   /** Marker field: the chip owns its own roster, staging, and menu state. */
   children?: never
+}
+
+/** Creation-time Agent Driver state supplied to the new-session selector. */
+export interface HeroAgentDriverOwnerProps {
+  /** Driver staged for the next Session, or the current blank Session binding. */
+  selectedDriverId?: AgentDriverId
+  /** Stage the Driver and reconnect the selected Workspace when one exists. */
+  selectDriver: (driverId: AgentDriverId) => Promise<void>
 }
 
 /** Owner share of the strict session content seat. */
@@ -475,7 +488,7 @@ export interface ConversationInjected {
    * Connect the selected Workspace and open its reusable/new blank session.
    * When a blank session is already current, carry its draft to the target.
    */
-  selectWorkspace: (workspaceId: WorkspaceId) => Promise<void>
+  selectWorkspace: (workspaceId: WorkspaceId, options?: WorkspaceConnectOptions) => Promise<void>
   /**
    * Framework-bound sources. `composerBlock` is this session's block when a
    * plugin raised one; the reason is the blocker's own localized copy, which
@@ -645,6 +658,7 @@ export type ConversationSlotProps =
     | 'conversation.input.left' | 'conversation.input.right'
     | 'conversation.hero.brand.mark'
     | 'conversation.hero.workspace'
+    | 'conversation.hero.agentDriver'
     | 'conversation.hero.agentPreset'
   >
   & InjectFace<ConversationInjected>

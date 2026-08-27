@@ -339,6 +339,30 @@ describe('steering from late extension points is never stranded', () => {
     expect(JSON.stringify(adapter.requests[1]!.messages)).toContain('one more thing')
   })
 
+  it('wakes next-step steering queued during the turn-end to idle handoff', async () => {
+    const adapter = new MockAdapter([textResponse('first'), textResponse('late steering')])
+    const ctx = await harness(adapter)
+    const agent = await ctx.agentLoop.create(SessionId('late-idle-steering'), { provider: 'mock', model: 'mock' })
+    let queued = false
+    ctx.on('session/event', (_session, event) => {
+      if (event.type !== 'turn/end' || queued) return
+      queued = true
+      queueMicrotask(() => {
+        agent.steer(createUserMessage({
+          content: [{ type: 'text', text: 'queued during idle handoff' }],
+          source: { kind: 'user' },
+        }))
+      })
+    })
+
+    send(agent, 'go')
+    await agent.whenIdle()
+
+    expect(adapter.requests).toHaveLength(2)
+    expect(JSON.stringify(adapter.requests[1]?.messages)).toContain('queued during idle handoff')
+    expect(agent.inbox.nextStep).toHaveLength(0)
+  })
+
 })
 
 describe('plugin exceptions are contained', () => {
@@ -436,7 +460,7 @@ describe('adapter registration, routing, and accepted-input ownership', () => {
     expect(ctx.llm.listProviders()).toEqual([{ id: 'm1', name: 'm1' }])
   })
 
-  it('an agent without a model fails the step with a clear error (not NO_ADAPTER for "default")', async () => {
+  it('an agent without a Model Selection default fails before model I/O', async () => {
     const adapter = new MockAdapter([textResponse('never')])
     const ctx = await harness(adapter)
     const agent = await ctx.agentLoop.create(SessionId('a1'), {}) // no model
@@ -446,25 +470,8 @@ describe('adapter registration, routing, and accepted-input ownership', () => {
     const turnEnd = agent.session.events.findLast(event => event.type === 'turn/end')
     expect(turnEnd?.type === 'turn/end' && turnEnd.data.reason.kind === 'error'
       ? turnEnd.data.reason.error.message
-      : undefined).toContain('has no provider/model')
-    expect(turnEnd?.type === 'turn/end' && turnEnd.data.reason.kind === 'error'
-      ? turnEnd.data.reason.error.message
-      : undefined).toContain('agent/request')
-  })
-
-  it('the agent/request waterfall can supply the model for a model-less agent', async () => {
-    const adapter = new MockAdapter([textResponse('routed')])
-    const ctx = await harness(adapter)
-    const agent = await ctx.agentLoop.create(SessionId('a1'), {}) // no model — router plugin decides
-
-    ctx.on('agent/request', async (_payload, next) => {
-      return { ...await next(), provider: 'mock', model: 'mock' }
-    })
-
-    send(agent, 'go')
-    await waitForIdle(ctx, agent)
-    expect(adapter.requests).toHaveLength(1)
-    expect(agent.session.deriveMessages().at(-1)?.content).toEqual([{ type: 'text', text: 'routed' }])
+      : undefined).toContain('no default Model Selection')
+    expect(adapter.requests).toHaveLength(0)
   })
 
   it('durable inbox splices carry exact messages and the claimed steer preserves its source', async () => {

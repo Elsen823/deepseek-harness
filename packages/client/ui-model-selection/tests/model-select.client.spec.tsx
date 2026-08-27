@@ -82,6 +82,34 @@ describe('ModelSelect reasoning effort', () => {
     })
   })
 
+  it('keeps an incompatible effort visible and disabled with its reason', () => {
+    const directory = createSnapshotStore(state({
+      groups: [{
+        id: 'provider', name: 'Provider', models: [{
+          id: 'model', name: 'Model', reasoning: {
+            efforts: [{ id: 'safe', name: 'Safe' }, {
+              id: 'native-max', name: 'Native Max', disabledReason: 'Native Driver does not support Native Max',
+            }],
+          },
+        }],
+      }],
+      current: { provider: 'provider', model: 'model' },
+    }))
+    render(<ModelSelect
+      locked={false}
+      available
+      directory={directory}
+      load={vi.fn()}
+      select={vi.fn().mockResolvedValue(true)}
+      t={t}
+    />)
+    fireEvent.click(screen.getByRole('button', { name: '选择模型，当前 Model，推理等级 Default' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /推理等级/ }))
+    const max = screen.getByRole('menuitemradio', { name: /Native Max/ }) as HTMLButtonElement
+    expect(max.disabled).toBe(true)
+    expect(max.textContent).toContain('Native Driver does not support Native Max')
+  })
+
   it('offers provider default only when the adapter does not configure a model default', () => {
     const directory = createSnapshotStore(state({
       groups: [{

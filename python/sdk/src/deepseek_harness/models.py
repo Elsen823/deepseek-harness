@@ -3,11 +3,34 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal, TypeAlias
 
-from pydantic import BaseModel, JsonValue as PydanticJsonValue
+from pydantic import BaseModel, ConfigDict, JsonValue as PydanticJsonValue, field_validator
 
 JsonScalar: TypeAlias = str | int | float | bool | None
 JsonValue: TypeAlias = JsonScalar | dict[str, "JsonValue"] | list["JsonValue"]
 JsonObject: TypeAlias = dict[str, JsonValue]
+
+
+class ModelSelection(BaseModel):
+    """One DSH provider/model route with optional adapter-owned effort."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    provider: str
+    model: str
+    reasoningEffort: str | None = None
+
+    @field_validator("provider", "model", "reasoningEffort")
+    @classmethod
+    def non_empty(cls, value: str | None) -> str | None:
+        if value == "":
+            raise ValueError("Model Selection fields must be non-empty")
+        return value
+
+
+class SelectedModelSelection(ModelSelection):
+    """Accepted Session model intent and its durable source."""
+
+    source: Literal["user", "default"]
 
 
 @dataclass(slots=True)

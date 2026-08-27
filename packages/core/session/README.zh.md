@@ -18,6 +18,8 @@
 - `ctx.sessions.get(id: SessionId): Session | undefined`
 - `ctx.sessions.list(): Session[]`
 
+`SessionStore.flush()` 是重启交接使用的持久化屏障。交接记录保留在模型可见日志之外，不调用持久化 retirement，也不发出 `session/disposed`；下一代会在采用 Session 前校验已刷新的 sequence 与 digest。
+
 #### 高级：有序清理生命周期原语
 
 仅在清理必须与另一项资源排序时使用拆分生命周期：
@@ -42,6 +44,7 @@
 - `session.surface` 暴露只读 `SessionSurface` 视图，由会话唯一的增量 surface 管理器所有；每次提交重写，`replaceGeneration` 都会变化。
 - `session.events` 是按追加失效的缓存冻结快照；已接受事件保持深度冻结。
 - `session.seq`、`session.id`：当前序号和只读类型化身份。
+- `session.modelSelection()` 折叠最新已接受的 `model/selected` intent，包括尚未消费的用户或继承 default；`session.effectiveModelSelection()` 与 `session.effectiveModelSelectionEvidence()` 独立折叠 `request/header` 或 `agent-driver/model-request` 证据。
 - `session.header: SessionHeader`：脱离、深冻结的创建元数据（`version`、`id`、`createdAt`，以及可选的 `cwd`／`parentSession`／`seedLength`／`delegationDepth`）。构造时会校验持久记录，并要求其中的 id 与 `session.id` 一致。
 
 ### 无损 JSON 工具
@@ -61,6 +64,10 @@
 ### 请求头重建（`request-header.ts`）
 
 `request/header` 记录非历史请求封装的完整规范快照，其原因为 `initial`、`resume` 或 `change`。其可选 `adapterDefaults` 映射会标记由精确模型解析填入的生效 `reasoningEffort` 或 `maxTokens` 值，使下一次请求提议能够将它们与显式对话设置区分开。`foldRequestHeader()` 选择最新快照；旧版增量事件和已移除的 `fallback` 原因会被拒绝。详见[可重建请求 Agent Note](../../../.agents/notes/implemented/architecture/2026-07-05-reconstructable-requests.zh.md)。
+
+`llm/service-tier` 是按会话保存的全值选择，由请求产生插件在 `agent/request` 中折叠：品牌化 id 选择适配器自有 tier，`null` 恢复提供方标准服务层。变更后的生效选择也会进入下一条 `request/header`，而专用事件会在请求尚未发生时保留用户意图。
+
+`model/selected` 是 Agent 所有的 Model Selection intent：恰好一个 DSH provider、一个 provider 所有的 model，以及可选的 adapter 所有的 reasoning effort。追加和恢复边界会拒绝空 provider/model、未知 source、额外 request 或 Driver 设置，以及格式错误的 effort。生效请求证据仍位于 `request/header` 或 `agent-driver/model-request`，所以在请求之前接受选择不会被误读为模型调用。
 
 `user/message` 会直接存储完整的 `UserMessage`，其中包括收件箱路由或进入步骤前创建的标识。无论它是直接人类提示词、合成注入，还是已进入的 Goal Round，都会原样呈现其 `content`；带类型的 `source` 是区分三者的唯一通道，并携带各领域专有的持久事实。`assistant/message` 和 `tool/result` 也会存储完整的消息值。轮次执行仍由 `turn/start` 与 `turn/end` 包围；`agent.inject()` 会把输入排队，直到后续某次 pre-step 领取它，并在 enter 决策中返回它。
 

@@ -89,6 +89,34 @@ function throwUnknown(value: unknown): never {
 }
 
 describe('the session-persistence Agent Note: AgentLoop factory create/resume', () => {
+  it('resumes an unconsumed Selected Model Selection and uses it on the next Turn', async () => {
+    const first = await persistentHarness(new MockAdapter([]))
+    const firstAgent = (await first.ctx.agents.create({
+      sessionId: SessionId('unconsumed-selection'),
+      agentOptions: { provider: 'mock', model: 'initial' },
+    })).agent
+    await firstAgent.modelSelection.accept({ provider: 'mock', model: 'selected' })
+    await first.ctx.sessions.flush(firstAgent.session)
+    await first.ctx.fiber.dispose()
+
+    const adapter = new MockAdapter([textResponse('resumed')])
+    const ctx = await mountPersistentHarness(first.root, adapter)
+    const resumed = (await ctx.agents.resume({ resumeSessionId: SessionId('unconsumed-selection') })).agent
+    expect(resumed.modelSelection.selected).toMatchObject({
+      provider: 'mock',
+      model: 'selected',
+      source: 'user',
+    })
+
+    resumed.followup(createUserMessage({
+      content: [{ type: 'text', text: 'use the retained selection' }],
+      source: { kind: 'user' },
+    }))
+    await waitForIdle(ctx, resumed)
+    expect(adapter.requests[0]).toMatchObject({ provider: 'mock', model: 'selected' })
+    await ctx.fiber.dispose()
+  })
+
   it('resumes a pre-react-loop session including pre-identity message events', async () => {
     const sessionId = SessionId('pre-identity-resume')
     const first = await persistentHarness(new MockAdapter([]))
@@ -610,7 +638,11 @@ describe('the session-persistence Agent Note: AgentLoop factory create/resume', 
   it('a pending idle inject() survives persist + resume without a synthetic turn', async () => {
     const adapter1 = new MockAdapter([textResponse('answer')])
     const { ctx: ctx1, root } = await persistentHarness(adapter1)
-    const a1 = (await ctx1.agents.create({ sessionId: SessionId('inject-sess'), meta: { cwd: '/w' } })).agent
+    const a1 = (await ctx1.agents.create({
+      sessionId: SessionId('inject-sess'),
+      meta: { cwd: '/w' },
+      agentOptions: { provider: 'mock', model: 'mock' },
+    })).agent
     a1.followup(createUserMessage({ content: [{ type: 'text', text: 'q' }], source: { kind: 'user' } }))
     await waitForIdle(ctx1, a1)
     a1.inject(createUserMessage({ content: [{ type: 'text', text: 'background job 42 finished' }], source: { kind: 'plugin', plugin: 'tool-bash' } }))

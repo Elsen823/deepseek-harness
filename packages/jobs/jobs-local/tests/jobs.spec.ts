@@ -1,7 +1,7 @@
 import { describe, expect, expectTypeOf, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
-import AgentRegistry, { Inbox } from '@deepseek-ai/dsh-agent'
+import AgentRegistry, { createModelSelectionOwner, Inbox } from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { bindScopeParent, createScope, scopeOf } from '@deepseek-ai/dsh-scope'
 import type { ScopeKey } from '@deepseek-ai/dsh-scope'
@@ -34,6 +34,7 @@ function stubAgent(ctx: Context, rawId: string, presetScope?: ScopeKey): Agent {
     id,
     options: {},
     session,
+    modelSelection: createModelSelectionOwner(session),
     inbox: new Inbox(session, { inserted: () => {}, discarded: () => {}, claimed: () => {} }),
     status: 'idle' as const,
     ctx: agentCtx,

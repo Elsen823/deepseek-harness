@@ -57,6 +57,14 @@
 
     - id: agent
       name: '@deepseek-ai/dsh-agent'
+      config:
+        # Restart handoff state is owner-only sidecar data, separate from
+        # model-visible Session logs. Deployments may replace these bounds in
+        # a later patch layer after measuring their persistence latency.
+        restartHandoff:
+          directory: !!js dshHomePath('agent-handoff')
+          quiescenceTimeoutMs: 5000
+          leaseTimeoutMs: 60000
 
     - id: session-runtime
       name: '@deepseek-ai/dsh-session-runtime'

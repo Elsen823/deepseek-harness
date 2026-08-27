@@ -1,0 +1,27 @@
+.root {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(680px, 52vw);
+  overflow: hidden;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.row {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.label {
+  color: var(--dsw-alias-label-caption);
+}
+
+.row code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

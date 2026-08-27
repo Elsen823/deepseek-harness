@@ -208,12 +208,13 @@ export function apply(ctx: Context): void {
       'conversation.input.right': { kind: 'list', scope: 'session' },
       'conversation.hero.brand.mark': { kind: 'single', scope: 'root' },
       'conversation.hero.workspace': { kind: 'single', scope: 'root' },
+      'conversation.hero.agentDriver': { kind: 'single', scope: 'root' },
       'conversation.hero.agentPreset': { kind: 'single', scope: 'root' },
     },
     inject: (sessionId: SessionId | undefined): ConversationInjected => ({
       hooks: { composerBlock: sessionId === undefined ? ABSENT_BLOCK : composerBlocks.storeFor(sessionId) },
-      selectWorkspace: async (workspaceId) => {
-        const nextId = await workspaces.connectWorkspace(workspaceId)
+      selectWorkspace: async (workspaceId, options) => {
+        const nextId = await workspaces.connectWorkspace(workspaceId, options)
         if (sessionId !== undefined && nextId !== sessionId) {
           const from = inputHub.shell(sessionId)
           const draft = from.snapshot.draft

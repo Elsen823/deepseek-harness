@@ -498,7 +498,7 @@ describe('headless stream-json snapshots', () => {
     expect(normalized).not.toContain('ByteString')
   }, LOADER_SMOKE_TEST_TIMEOUT_MS)
 
-  it('logs the model default and a dynamic next-step reasoning effort', async () => {
+  it('logs the model default and keeps one Turn reasoning effort', async () => {
     const result = await runLoaderSmoke({
       label: 'reasoning effort headless stream-json snapshot',
       tempDirPrefix: 'headless-snapshot-reasoning-effort-',
@@ -510,15 +510,16 @@ describe('headless stream-json snapshots', () => {
     })
 
     expect(result.stderr).toBe('')
-    const headers = parseJsonl(result.stdout)
+    const events = parseJsonl(result.stdout)
       .map(record => record.event)
       .filter((event): event is JsonObject => (
         event !== null
         && typeof event === 'object'
         && !Array.isArray(event)
         && 'type' in event
-        && event.type === 'request/header'
       ))
+    const headers = events
+      .filter(event => event.type === 'request/header')
       .map((event) => {
         const data = event.data as JsonObject
         return (data.header as JsonObject).config
@@ -530,13 +531,18 @@ describe('headless stream-json snapshots', () => {
           "provider": "cli-mock",
           "reasoningEffort": "high",
         },
-        {
-          "model": "cli-mock",
-          "provider": "cli-mock",
-          "reasoningEffort": "off",
-        },
       ]
     `)
+    const selected = events.find(event => event.type === 'model/selected')
+    expect(selected).toMatchObject({
+      type: 'model/selected',
+      data: {
+        provider: 'cli-mock',
+        model: 'cli-mock',
+        source: 'default',
+      },
+    })
+    expect(events.indexOf(selected!)).toBeLessThan(events.findIndex(event => event.type === 'request/header'))
   }, LOADER_SMOKE_TEST_TIMEOUT_MS)
 
   it('keeps provider comments alive and sends DeepSeek defaults through the one-shot app', async () => {

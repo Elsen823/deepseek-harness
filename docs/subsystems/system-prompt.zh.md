@@ -8,7 +8,7 @@
 
 ## 组装上下文
 
-`AssembleContext` 标识一次组装所解析的作用域层，并可携带该请求的显式控制信号。它可合并扩展：`dsh-agent` 添加可选字段 `agent`，用于携带当前的 agent（智能体）实例；`assembleContextFor(agent, signal)` 则一起设置这些显式字段。裸组装既没有作用域，也没有信号。
+`AssembleContext` 标识一次组装所解析的作用域层，并可携带该请求的显式控制信号。它可合并扩展：`dsh-agent` 添加可选字段 `agent`（当前 agent 实例）和当前 Turn 的不可变 `modelSelection`；`assembleContextFor(agent, signal, modelSelection)` 则一起设置这些显式字段。裸组装既没有作用域、信号，也没有模型选择。
 
 ```ts type-equiv
 /** Merge-extensible context for one prompt assembly. */
@@ -20,6 +20,12 @@ interface AssembleContext {
   scope?: ScopeKey
   /** Explicit control signal for the turn that requested this assembly, when any. */
   signal?: AbortSignal
+  /** Immutable Model Selection captured for the current Turn, when a Driver supplies one. */
+  modelSelection?: {
+    readonly provider: string
+    readonly model: string
+    readonly reasoningEffort?: ReasoningEffortId
+  }
 }
 ```
 

@@ -12,6 +12,7 @@ import LlmRuntime, { CallId, createUserMessage,
   ProviderRequestId,
   QUOTA_EXCEEDED_CODE,
   ReasoningEffortId,
+  ServiceTierId,
   userAgent,
 } from '@deepseek-ai/dsh-llm'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
@@ -182,6 +183,20 @@ describe('DeepSeekAdapter against a mock server', () => {
     expect(server.headers[0]).not.toHaveProperty('x-openrouter-title')
     expect(server.headers[0]).not.toHaveProperty('x-openrouter-categories')
     expect(server.headers[0]).not.toHaveProperty('x-deepseek-harness-compact')
+  })
+
+  it('rejects service tiers before provider I/O', async () => {
+    const server = await mockServer([])
+    const ctx = await harness(server.url)
+
+    const result = await assemble(ctx, {
+      model: 'deepseek-v4-flash',
+      serviceTier: ServiceTierId('priority'),
+      messages: [],
+    })
+
+    expect(result.finish).toMatchObject({ kind: 'error', failure: { code: 'UNSUPPORTED_OPTION' } })
+    expect(server.requests).toEqual([])
   })
 
   it('uploads a durable image once and sends only its Files API id to the vision model', async () => {

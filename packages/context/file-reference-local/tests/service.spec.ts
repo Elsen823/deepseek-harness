@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import AgentRegistry from '@deepseek-ai/dsh-agent'
+import AgentRegistry, { createModelSelectionOwner } from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import SessionStore, { AgentDriverId, SessionId } from '@deepseek-ai/dsh-session'
 import SystemPrompt, { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
@@ -40,6 +40,7 @@ async function stubAgent(
     id: session.id,
     options: {},
     session,
+    modelSelection: createModelSelectionOwner(session),
     status: 'idle',
     acceptsNextStep: false,
     ctx,

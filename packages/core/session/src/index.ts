@@ -14,7 +14,7 @@ import type { Scoped } from '@deepseek-ai/dsh-scope'
 import type { Message } from '@deepseek-ai/dsh-llm'
 import { AgentDriverId, SESSION_FORMAT_VERSION, SessionId } from './types.ts'
 import type { TypertLookup } from '@deepseek-ai/dsh-typert-protocol'
-import type { CreateSessionOptions, EpochHeader, PrepareSessionOptions, RequestContext, SessionEvent, SessionEventMap, SessionEventType, SessionHeader, SurfaceIntent, SurfaceEventType } from './types.ts'
+import type { CreateSessionOptions, EffectiveModelSelectionEvidence, EpochHeader, ModelSelection, ModelSelectionSource, PrepareSessionOptions, RequestContext, SessionEvent, SessionEventMap, SessionEventType, SessionHeader, SurfaceIntent, SurfaceEventType } from './types.ts'
 import { snapshotJsonValue } from './json.ts'
 import { deriveEventMessage, SurfaceManager } from './surface.ts'
 import type { SessionSurface } from './surface.ts'
@@ -168,6 +168,12 @@ function snapshotSessionHeader(id: SessionId, source?: SessionHeader): SessionHe
  * @returns the same event object with a validated, deeply frozen message.
  */
 export function adoptSessionEvent<T extends SessionEvent>(event: T): T {
+  if (event.type === 'model/selected') {
+    assertModelSelectionEventShape(
+      event,
+      `session event at seq ${event.seq}`,
+    )
+  }
   assertMessageEventShape(
     event,
     `session event at seq ${event.seq}`,
@@ -249,6 +255,9 @@ function assertSessionEventEnvelope(value: Record<string, unknown>, index: numbe
     case 'tool/result':
       assertCurrentLlmShape(event, index)
       break
+    case 'model/selected':
+      assertModelSelectionEventShape(event, `seed model/selected at index ${index}`)
+      break
   }
 }
 
@@ -277,6 +286,29 @@ function assertCurrentLlmShape(event: Record<string, unknown>, index: number): v
   if (type !== 'user/message' && type !== 'assistant/message'
     && type !== 'tool/result') return
   assertMessageEventShape(event, `seed ${type} at index ${index}`)
+}
+
+/** Validate the durable selected-model intent without admitting request settings. */
+function assertModelSelectionEventShape(event: Record<string, unknown>, location: string): void {
+  const data = event['data']
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+    throw new Error(`${location} has invalid data`)
+  }
+  const record = data as Record<string, unknown>
+  const allowed = new Set(['provider', 'model', 'reasoningEffort', 'source'])
+  if (Object.keys(record).some(key => !allowed.has(key))) {
+    throw new Error(`${location} contains request or Driver settings; only provider, model, reasoningEffort, and source are allowed`)
+  }
+  if (!hasProviderModel(record)) {
+    throw new Error(`${location} lacks provider/model`)
+  }
+  if (record['reasoningEffort'] !== undefined
+    && (typeof record['reasoningEffort'] !== 'string' || record['reasoningEffort'].length === 0)) {
+    throw new Error(`${location} has an invalid reasoningEffort`)
+  }
+  if (record['source'] !== 'user' && record['source'] !== 'default') {
+    throw new Error(`${location} has an invalid source`)
+  }
 }
 
 const allowedAdapterKeys = new Set(['reasoningEffort', 'maxTokens'])
@@ -360,6 +392,15 @@ function hasProviderModel(value: unknown): boolean {
   const pair = value as Record<string, unknown>
   return typeof pair['provider'] === 'string' && pair['provider'].length > 0
     && typeof pair['model'] === 'string' && pair['model'].length > 0
+}
+
+/** Project a resolved call config onto the three fields owned by Model Selection. */
+function selectionFromConfig(config: { provider: string; model: string; reasoningEffort?: ModelSelection['reasoningEffort'] }): ModelSelection {
+  return {
+    provider: config.provider,
+    model: config.model,
+    ...config.reasoningEffort === undefined ? {} : { reasoningEffort: config.reasoningEffort },
+  }
 }
 
 /** Reject request-header vocabulary removed with the legacy delta codec. */
@@ -619,6 +660,12 @@ export class Session {
     if (dataSnapshot === undefined) {
       throw new Error(`session event "${type}" carries non-JSON-serializable data`)
     }
+    if (type === 'model/selected') {
+      assertModelSelectionEventShape(
+        { data: dataSnapshot },
+        `session event "${type}"`,
+      )
+    }
     assertSupportedRequestHeader(type, dataSnapshot, `session event "${type}"`)
     const surfaceMetadataSnapshot = snapshotJsonValue(surfaceMetadata)
     if (surfaceMetadataSnapshot === undefined) {
@@ -681,6 +728,67 @@ export class Session {
       this.headerFoldSeq = this.log.length
     }
     return this.headerFold
+  }
+
+  /** Cached fold of `model/selected` events. */
+  private modelSelectionFold: (ModelSelection & { source: ModelSelectionSource }) | undefined
+  private modelSelectionFoldSeq = 0
+
+  /**
+   * Return the latest durable selected-model intent, or `undefined` before a
+   * user choice or default materialization. Each event is folded once.
+   * @returns the latest immutable selected-model record.
+   */
+  modelSelection(): (ModelSelection & { source: ModelSelectionSource }) | undefined {
+    if (this.modelSelectionFoldSeq < this.log.length) {
+      for (const event of this.log.slice(this.modelSelectionFoldSeq)) {
+        if (event.type === 'model/selected') this.modelSelectionFold = deepFreeze({ ...event.data })
+      }
+      this.modelSelectionFoldSeq = this.log.length
+    }
+    return this.modelSelectionFold
+  }
+
+  /** Cached fold of the latest request evidence that names a provider/model/effort. */
+  private effectiveModelSelectionFold: EffectiveModelSelectionEvidence | undefined
+  private effectiveModelSelectionFoldSeq = 0
+
+  /**
+   * Return the latest effective Model Selection evidence independently of the
+   * accepted `model/selected` intent. Request headers and Driver model-request
+   * records are both effective evidence; service tier and other request fields
+   * remain outside the returned selection.
+   * @returns the latest effective evidence, or `undefined` before any request boundary.
+   */
+  effectiveModelSelection(): ModelSelection | undefined {
+    return this.effectiveModelSelectionEvidence()?.selection
+  }
+
+  /**
+   * Return the latest effective Model Selection together with its durable source.
+   * @returns effective evidence, or `undefined` before any request boundary.
+   */
+  effectiveModelSelectionEvidence(): EffectiveModelSelectionEvidence | undefined {
+    if (this.effectiveModelSelectionFoldSeq < this.log.length) {
+      for (const event of this.log.slice(this.effectiveModelSelectionFoldSeq)) {
+        if (event.type === 'request/header') {
+          const config = event.data.header.config
+          this.effectiveModelSelectionFold = deepFreeze({
+            selection: selectionFromConfig(config),
+            source: 'request/header',
+            seq: event.seq,
+          })
+        } else if (event.type === 'agent-driver/model-request') {
+          this.effectiveModelSelectionFold = deepFreeze({
+            selection: selectionFromConfig(event.data.config),
+            source: 'agent-driver/model-request',
+            seq: event.seq,
+          })
+        }
+      }
+      this.effectiveModelSelectionFoldSeq = this.log.length
+    }
+    return this.effectiveModelSelectionFold
   }
 
   /** Cached fold of `request/context` events. */

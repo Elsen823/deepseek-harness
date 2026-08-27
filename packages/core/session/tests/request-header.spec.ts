@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest'
 import { Session, SessionId, canonicalHeader, foldRequestHeader, headerEquals } from '@deepseek-ai/dsh-session'
 import type { EpochHeader, SessionEvent } from '@deepseek-ai/dsh-session'
-import { createUserMessage, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, ReasoningEffortId, ServiceTierId } from '@deepseek-ai/dsh-llm'
 import type { ToolSchema } from '@deepseek-ai/dsh-llm'
 
 const CONFIG = { provider: 'mock', model: 'm' }
@@ -44,6 +44,10 @@ describe('headerEquals', () => {
     expect(headerEquals(base, {
       ...base,
       config: { ...base.config, reasoningEffort: ReasoningEffortId('high') },
+    })).toBe(false)
+    expect(headerEquals(base, {
+      ...base,
+      config: { ...base.config, serviceTier: ServiceTierId('priority') },
     })).toBe(false)
     expect(headerEquals(
       { ...base, config: { ...base.config, maxTokens: 256_000 } },

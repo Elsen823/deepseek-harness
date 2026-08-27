@@ -7,7 +7,7 @@ import Loader from '@deepseek-ai/cordis-plugin-loader'
 import { CallId } from '@deepseek-ai/dsh-llm'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime, { TOOL_ABORTED_BEFORE_DISPATCH } from '@deepseek-ai/dsh-tools'
-import { assembleContextFor, type Agent } from '@deepseek-ai/dsh-agent'
+import { assembleContextFor, createModelSelectionOwner, type Agent } from '@deepseek-ai/dsh-agent'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
@@ -20,7 +20,7 @@ import * as ToolTasks from '@deepseek-ai/dsh-tool-jobs'
 import { MockAdapter, textResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
 import * as mock from './scripted-provider.ts'
 import * as tool from '../src/index.ts'
-import { SessionId } from '@deepseek-ai/dsh-session'
+import { Session, SessionId } from '@deepseek-ai/dsh-session'
 
 const testToolSignal = new AbortController().signal
 
@@ -34,7 +34,12 @@ const testToolSignal = new AbortController().signal
 
 /** A minimal parent Agent passed through to the provider request. */
 function fakeAgent(id = 'parent-1'): Agent {
-  return { id: SessionId(id) } as unknown as Agent
+  const session = Session.create(SessionId(id))
+  return {
+    id: session.id,
+    session,
+    modelSelection: createModelSelectionOwner(session),
+  } as unknown as Agent
 }
 
 async function setup(toolConfig: tool.Config, mockConfig: Partial<mock.Config> = {}) {
@@ -778,12 +783,14 @@ describe('dsh-tool-subagent background mode', () => {
   function ownerAgent(ctx: Context, sessionId: string, inject: (...args: unknown[]) => void = () => {}): Agent {
     const scopeFiber = ctx.plugin(() => {})
     const id = SessionId(sessionId)
+    const session = Session.create(id)
     const agent = {
       id,
       ctx: scopeFiber.ctx,
       inject,
       options: {},
-      session: { id, header: { version: 0, id, createdAt: 0 } },
+      session,
+      modelSelection: createModelSelectionOwner(session),
     } as unknown as Agent
     ctx.agents.register(agent)
     return agent
@@ -1245,12 +1252,14 @@ describe('background preflight failure (no orphaned child, by construction)', ()
     await ctx.plugin(LocalJobRegistry)
     const scopeFiber = ctx.plugin(() => {})
     const id = SessionId('sess-p')
+    const session = Session.create(id)
     const parent = {
       id,
       ctx: scopeFiber.ctx,
       inject: () => {},
       options: {},
-      session: { id, header: { version: 0, id, createdAt: 0 } },
+      session,
+      modelSelection: createModelSelectionOwner(session),
     } as unknown as Agent
     ctx.agents.register(parent)
 

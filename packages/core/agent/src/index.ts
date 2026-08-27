@@ -8,22 +8,36 @@
 import { Context, FiberState, getTraceable, Service, symbols } from '@deepseek-ai/cordis'
 import type { Fiber } from '@deepseek-ai/cordis'
 import { AsyncLocalStorage } from 'node:async_hooks'
+import { randomUUID } from 'node:crypto'
 import { isPromise } from 'node:util/types'
 import z from '@deepseek-ai/schemastery'
 import { scopeTarget } from '@deepseek-ai/dsh-scope'
 import type { Scoped } from '@deepseek-ai/dsh-scope'
 import { AgentDriverId, SessionPreparation } from '@deepseek-ai/dsh-session'
-import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
+import type { Session, SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-session-persistence'
 import type { TypertContext, TypertLookup } from '@deepseek-ai/dsh-typert-protocol'
 import { DSH_AGENT_DRIVER_ID } from './driver.ts'
-import type { AgentDriver, AgentDriverInfo, PreparedAgentDriver } from './driver.ts'
+import type { AgentDriver, AgentDriverContribution, AgentDriverInfo, PreparedAgentDriver } from './driver.ts'
+import {
+  digestSession,
+  digestSessionEvents,
+  RestartHandoffStore,
+} from './handoff.ts'
+import type {
+  AgentDriverHandoff,
+  AgentHandoffAdoption,
+  AgentHandoffFailure,
+  AgentHandoffRecord,
+} from './handoff.ts'
+import type { ModelSelectionOwner } from './model-selection.ts'
 import { emitAgentEvent } from './dispatch.ts'
 import type { Agent, AgentOptions, SessionStartSource } from './runtime-types.ts'
 
 export * from './runtime-types.ts'
 export * from './types.ts'
 export * from './driver.ts'
+export * from './handoff.ts'
 export * from './inbox.ts'
 export * from './consumed-work.ts'
 export * from './model-selection.ts'
@@ -90,6 +104,11 @@ export interface CreateAgentOptions {
   /** Agent Driver to bind durably; omission uses the registry default. */
   readonly driverId?: AgentDriverId
   /**
+   * Explicitly retain this Session for a process-generation restart handoff.
+   * Residency is never inferred from a Driver id or from persisted history.
+   */
+  readonly resident?: boolean
+  /**
    * Session creation metadata: validated absolute `cwd`, `parentSession`
    * fork lineage, the `seedLength` seed boundary, the coarse `origin`
    * classification, and the `delegationDepth` recursion budget. Mirrors the
@@ -148,6 +167,13 @@ export interface CreateAgentOptions {
 export interface ResumeAgentOptions {
   /** The persisted session id to load and use as the live agent/session identity. */
   readonly resumeSessionId: SessionId
+  /**
+   * Explicitly retain this resumed Session for a later restart handoff. An
+   * adopted handoff is resident regardless of this optional flag.
+   */
+  readonly resident?: boolean
+  /** Exact sidecar record supplied by {@link AgentRegistry.adoptRestartHandoffs}. */
+  readonly handoff?: AgentHandoffRecord
   /** Per-agent options (model, …). */
   readonly agentOptions?: AgentOptions
   /** Optional creation-only cancellation signal for persistence load/setup; detached before return. */
@@ -182,19 +208,92 @@ export interface AgentHandle {
   dispose(): Promise<void>
 }
 
+/** Options for one explicit process-generation restart handoff. */
+export interface RestartHandoffOptions {
+  /** Optional caller-selected generation id; omitted, a UUID is generated. */
+  readonly generation?: string
+  /** Optional cancellation for the complete bounded handoff. */
+  readonly signal?: AbortSignal
+}
+
+/** Process-local restart-handoff admission state. */
+export type RestartHandoffPhase = 'active' | 'requested' | 'committed'
+
+/**
+ * Raised when a process-local operation tries to enter after restart handoff
+ * admission has closed. Callers should retry against the next generation.
+ */
+export class RestartHandoffAdmissionError extends Error {
+  /**
+   * @param phase - lifecycle phase that rejected the operation.
+   */
+  constructor(readonly phase: Exclude<RestartHandoffPhase, 'active'>) {
+    super(`Agent registry is ${phase} for restart handoff`)
+    this.name = 'RestartHandoffAdmissionError'
+  }
+}
+
+/** Result of a committed process-generation handoff. */
+export interface RestartHandoffResult {
+  /** Explicit restart generation written to the sidecar. */
+  readonly generation: string
+  /** Resident Session records committed atomically for adoption. */
+  readonly records: readonly AgentHandoffRecord[]
+}
+
+/** Options for discovering and claiming records in a new process generation. */
+export interface AdoptRestartHandoffsOptions {
+  /** Process-generation claimant used for stale/double-claim protection. */
+  readonly claimant?: string
+  /** Restrict adoption to one committed handoff generation. */
+  readonly generation?: string
+  /** Optional cancellation for listing, claim, and resume operations. */
+  readonly signal?: AbortSignal
+  /** Per-record Agent options needed by the selected Driver, when any. */
+  readonly agentOptions?: (record: AgentHandoffRecord) => AgentOptions | undefined
+  /** Transfer each successfully adopted handle to the next-generation owner. */
+  readonly retainHandle?: (handle: AgentHandle) => void
+}
+
 /** Agent registry configuration. */
 export interface Config {
   /** Driver selected for fresh Sessions whose caller omits `driverId`. */
   defaultDriverId?: AgentDriverId
+  /**
+   * Optional restart-handoff sidecar. Omitting this object disables restart
+   * handoff; when present every field is required and validated at load time.
+   */
+  restartHandoff?: {
+    /** Owner-only absolute directory for generation manifests. */
+    directory: string
+    /** Maximum time for one resident Agent to become idle and flush. */
+    quiescenceTimeoutMs: number
+    /** Lease duration from intent publication through next-generation adoption. */
+    leaseTimeoutMs: number
+  }
 }
 
 /** Agent registry configuration after defaults. */
-type ResolvedConfig = Readonly<{ defaultDriverId: AgentDriverId }>
+type ResolvedConfig = Readonly<{
+  defaultDriverId: AgentDriverId
+  restartHandoff?: Readonly<{
+    directory: string
+    quiescenceTimeoutMs: number
+    leaseTimeoutMs: number
+  }>
+}>
 
 /** Thrown when a selected Agent Driver is not registered. */
 const NO_DRIVER_MESSAGE = (id: AgentDriverId): string => `no agent driver "${id}" is registered`
 const NO_INITIATOR_MESSAGE = 'no initiating agent is active'
 const DISPOSED_INITIATOR_MESSAGE = 'agent initiator scope is disposed'
+
+/** Reject a Driver that did not construct the required Session-local owner. */
+function assertModelSelectionOwner(agent: Agent, driverId: AgentDriverId): void {
+  const candidate = agent as unknown as { modelSelection?: ModelSelectionOwner }
+  if (candidate.modelSelection !== undefined) return
+  throw new Error(`agent driver "${driverId}" returned an Agent without a Session-local model-selection owner`)
+}
 
 /** All mutable lifecycle state for one exact registry entry. */
 interface AgentEntry {
@@ -206,6 +305,14 @@ interface AgentEntry {
   announced: boolean
   announcing: boolean
   detachRequested: boolean
+  /** Driver generation that prepared this entry, absent for direct registration. */
+  driverId: AgentDriverId | undefined
+  /** Whether the caller explicitly opted this Session into restart handoff. */
+  resident: boolean
+  /** Driver-specific handoff preparation, absent for direct registration. */
+  handoff: ((signal: AbortSignal) => Promise<AgentDriverHandoff | undefined>) | undefined
+  /** True after the sidecar commit; normal disposal must then leave this entry attached. */
+  handedOff: boolean
 }
 
 /** One tracked boundary plus its inherited nesting chain. */
@@ -257,6 +364,68 @@ class DriverRegistration {
       }
       if (failures.length > 0) throw failures[0]
     })())
+  }
+}
+
+/** Maximum delay accepted by the Node timer used for bounded handoff. */
+const MAX_HANDOFF_TIMEOUT_MS = 2_147_483_647
+
+/** Validate a restart-handoff configuration before the service exposes it. */
+function resolveRestartHandoffConfig(config: Config['restartHandoff']): ResolvedConfig['restartHandoff'] {
+  if (config === undefined) return undefined
+  if (config.directory.length === 0) throw new TypeError('Agent handoff directory must be non-empty')
+  if (!Number.isSafeInteger(config.quiescenceTimeoutMs)
+    || config.quiescenceTimeoutMs < 1
+    || config.quiescenceTimeoutMs > MAX_HANDOFF_TIMEOUT_MS) {
+    throw new TypeError(`Agent handoff quiescenceTimeoutMs must be an integer between 1 and ${MAX_HANDOFF_TIMEOUT_MS}`)
+  }
+  if (!Number.isSafeInteger(config.leaseTimeoutMs)
+    || config.leaseTimeoutMs < 1
+    || config.leaseTimeoutMs > MAX_HANDOFF_TIMEOUT_MS) {
+    throw new TypeError(`Agent handoff leaseTimeoutMs must be an integer between 1 and ${MAX_HANDOFF_TIMEOUT_MS}`)
+  }
+  return Object.freeze({
+    directory: config.directory,
+    quiescenceTimeoutMs: config.quiescenceTimeoutMs,
+    leaseTimeoutMs: config.leaseTimeoutMs,
+  })
+}
+
+/** Await a handoff operation until its bounded deadline or caller cancellation. */
+async function raceHandoff<T>(
+  operation: (signal: AbortSignal) => PromiseLike<T> | T,
+  timeoutMs: number,
+  signal: AbortSignal | undefined,
+  reportedTimeoutMs = timeoutMs,
+): Promise<T> {
+  const timeout = new AbortController()
+  const timer = setTimeout(() => {
+    timeout.abort(new Error(`Agent restart handoff exceeded ${reportedTimeoutMs}ms quiescence bound`))
+  }, timeoutMs)
+  const combined = signal === undefined
+    ? timeout.signal
+    : AbortSignal.any([signal, timeout.signal])
+  try {
+    if (combined.aborted) {
+      throw combined.reason instanceof Error ? combined.reason : new Error('Agent restart handoff was cancelled')
+    }
+    const operationResult = Promise.resolve().then(() => operation(combined))
+    // The timeout returns before a non-cooperative implementation necessarily
+    // settles; observe its eventual rejection so a refused handoff cannot
+    // surface as an unhandled process error.
+    void operationResult.catch(() => undefined)
+    const aborted = Promise.withResolvers<never>()
+    const onAbort = (): void => {
+      aborted.reject(combined.reason instanceof Error ? combined.reason : new Error('Agent restart handoff was cancelled'))
+    }
+    combined.addEventListener('abort', onAbort, { once: true })
+    try {
+      return await Promise.race([operationResult, aborted.promise])
+    } finally {
+      combined.removeEventListener('abort', onAbort)
+    }
+  } finally {
+    clearTimeout(timer)
   }
 }
 
@@ -318,6 +487,11 @@ async function raceAbortCall<T>(
 export class AgentRegistry extends Service {
   static Config = z.object({
     defaultDriverId: z.string().min(1).default(DSH_AGENT_DRIVER_ID),
+    restartHandoff: z.object({
+      directory: z.string().min(1).required(),
+      quiescenceTimeoutMs: z.number().step(1).min(1).max(MAX_HANDOFF_TIMEOUT_MS).required(),
+      leaseTimeoutMs: z.number().step(1).min(1).max(MAX_HANDOFF_TIMEOUT_MS).required(),
+    }).default(undefined as unknown as NonNullable<Config['restartHandoff']>),
   }) as z<Config>
 
   /** Validated registry configuration. */
@@ -326,7 +500,15 @@ export class AgentRegistry extends Service {
   private readonly runtime: { ctx: Context }
   private store = new Map<SessionId, AgentEntry>()
   private readonly drivers = new Map<AgentDriverId, DriverRegistration>()
+  private readonly contributions = new Map<string, AgentDriverContribution>()
   private readonly retirements = new Map<SessionId, Promise<void>>()
+  private readonly handoffStore: RestartHandoffStore | undefined
+  private handoffState: RestartHandoffPhase = 'active'
+  private handoffPromise: Promise<RestartHandoffResult> | undefined
+  /** API and other process-local operations admitted before handoff begins. */
+  private restartAdmissions = 0
+  /** Barrier resolved when every pre-handoff operation has settled. */
+  private restartAdmissionDrain: PromiseWithResolvers<void> | undefined
   private readonly initiators = new AsyncLocalStorage<Agent | undefined>()
   private readonly initiatorRuns = new AsyncLocalStorage<InitiatorRun>()
   private initiatorState: 'active' | 'closing' | 'disposed' = 'active'
@@ -336,9 +518,14 @@ export class AgentRegistry extends Service {
 
   constructor(ctx: Context, config: Config = {}) {
     super(ctx, 'agents')
+    const restartHandoff = resolveRestartHandoffConfig(config.restartHandoff)
     this.config = {
       defaultDriverId: config.defaultDriverId ?? DSH_AGENT_DRIVER_ID,
+      ...(restartHandoff === undefined ? {} : { restartHandoff }),
     }
+    this.handoffStore = restartHandoff === undefined
+      ? undefined
+      : new RestartHandoffStore({ directory: restartHandoff.directory })
     this.runtime = { ctx }
     ctx.inject(['typert'], (typeCtx) => {
       typeCtx.typert.lookups.register('agent', {
@@ -370,6 +557,48 @@ export class AgentRegistry extends Service {
       yield () => this.disposeInitiators()
       yield () => { this.closeInitiators() }
     }.bind(this), 'agents.initiatorLifecycle()')
+  }
+
+  /** Current process-generation admission phase for restart handoff. */
+  get restartHandoffPhase(): RestartHandoffPhase {
+    return this.handoffState
+  }
+
+  /**
+   * Admit one process-local operation before a restart handoff closes the
+   * generation. The returned idempotent release must run after the complete
+   * asynchronous operation settles; handoff waits for every admitted release.
+   *
+   * @returns a release callback for the admitted operation.
+   * @throws {@link RestartHandoffAdmissionError} after admission closes.
+   */
+  admitRestartOperation(): () => void {
+    if (this.handoffState !== 'active') {
+      throw new RestartHandoffAdmissionError(this.handoffState)
+    }
+    this.restartAdmissions += 1
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      this.restartAdmissions -= 1
+      if (this.restartAdmissions === 0) {
+        this.restartAdmissionDrain?.resolve()
+        this.restartAdmissionDrain = undefined
+      }
+    }
+  }
+
+  /** Wait for operations admitted before the restart intent to settle. */
+  private async waitForRestartAdmissions(): Promise<void> {
+    if (this.restartAdmissions === 0) return
+    const drain = this.restartAdmissionDrain ??= Promise.withResolvers<void>()
+    if (this.restartAdmissions === 0) {
+      drain.resolve()
+      this.restartAdmissionDrain = undefined
+      return
+    }
+    await drain.promise
   }
 
   /**
@@ -440,7 +669,7 @@ export class AgentRegistry extends Service {
    * @param driver - Driver implementation and immutable discovery metadata.
    * @returns the exact Cordis effect disposer for the registration.
    */
-  registerDriver(driver: AgentDriver): () => void {
+  registerDriver(driver: AgentDriver): () => Promise<void> {
     const dispose = this.ctx.effect(() => {
       const id = AgentDriverId(driver.info.id)
       if (this.drivers.has(id)) throw new Error(`agent driver "${id}" is already registered`)
@@ -453,10 +682,12 @@ export class AgentRegistry extends Service {
           await registration.dispose()
         } finally {
           if (this.drivers.get(id) === registration) this.drivers.delete(id)
+          for (const [key, contribution] of this.contributions) {
+            if (contribution.driverId === id) this.contributions.delete(key)
+          }
         }
       }
     }, `agents.registerDriver(${driver.info.id})`)
-    // oxlint-disable-next-line typescript/no-misused-promises -- exact effect identity preserves provider teardown ordering
     return dispose
   }
 
@@ -479,11 +710,284 @@ export class AgentRegistry extends Service {
       .sort((left, right) => left.id.localeCompare(right.id))
   }
 
+  /**
+   * Register one consumer-defined contribution owned by an Agent Driver.
+   * Contributions are deliberately opaque to this service: the Agent layer
+   * only provides effect-scoped storage and deterministic discovery, leaving
+   * settings, management, and presentation vocabularies to their consumers.
+   * @param contribution - stable key, owning Driver, and consumer value.
+   * @returns a synchronous disposer that removes the contribution.
+   */
+  registerDriverContribution(contribution: AgentDriverContribution): () => void {
+    const driverId = AgentDriverId(contribution.driverId)
+    if (contribution.id.length === 0) throw new TypeError('Agent Driver contribution id must be non-empty')
+    if (contribution.kind.length === 0) throw new TypeError('Agent Driver contribution kind must be non-empty')
+    const key = `${driverId}:${contribution.id}`
+    const detached = Object.freeze({ ...contribution, driverId })
+    const dispose = this.ctx.effect(() => {
+      if (this.contributions.has(key)) {
+        throw new Error(`Agent Driver contribution "${key}" is already registered`)
+      }
+      this.contributions.set(key, detached)
+      return () => {
+        if (this.contributions.get(key) === detached) this.contributions.delete(key)
+      }
+    }, `agents.registerDriverContribution(${key})`)
+    return () => { void dispose() }
+  }
+
+  /**
+   * List opaque Driver contributions in stable key order.
+   * @param driverId - optional Driver filter.
+   * @returns detached contribution records owned by active Driver providers.
+   */
+  listDriverContributions(driverId?: AgentDriverId): AgentDriverContribution[] {
+    return [...this.contributions.values()]
+      .filter(contribution => driverId === undefined || contribution.driverId === driverId)
+      .sort((left, right) => `${left.driverId}:${left.id}`.localeCompare(`${right.driverId}:${right.id}`))
+  }
+
+  /** Reject ordinary lifecycle admission while this generation owns restart handoff. */
+  private assertHandoffAdmission(handoff?: AgentHandoffRecord): void {
+    if (this.handoffState === 'active') return
+    if (handoff !== undefined && this.handoffState === 'requested') {
+      throw new Error('Agent restart handoff is still being prepared in this generation')
+    }
+    throw new Error(`Agent registry is ${this.handoffState} for restart handoff`)
+  }
+
+  /** Validate sidecar identity against the exact Session loaded by persistence. */
+  private assertHandoffRecord(session: Session, record: AgentHandoffRecord | undefined): void {
+    if (record === undefined) return
+    if (record.sessionId !== session.id) {
+      throw new Error(`Agent handoff Session mismatch: expected "${record.sessionId}", got "${session.id}"`)
+    }
+    if (record.driverId !== session.header.driverId) {
+      throw new Error(`Agent handoff Driver mismatch for "${session.id}": expected "${record.driverId}", got "${session.header.driverId}"`)
+    }
+    // Persistence preparation may append a process-local `session/end-seed`
+    // marker after the stored prefix. The marker is not part of the sidecar's
+    // identity, so validate the exact recorded prefix while requiring the
+    // Session's first-live watermark to name that same prefix. A digest-only
+    // check would accept a stale checkpoint whose prefix happened to match.
+    const durablePrefix = session.events.slice(0, record.eventSeq)
+    if (session.firstLiveSeq !== record.eventSeq
+      || durablePrefix.length !== record.eventSeq
+      || record.eventDigest !== digestSessionEvents(durablePrefix)) {
+      throw new Error(`Agent handoff Session "${session.id}" changed after its durable checkpoint (firstLiveSeq ${String(session.firstLiveSeq)}, expected ${String(record.eventSeq)})`)
+    }
+  }
+
+  /**
+   * Quiesce explicitly resident Agents and atomically publish a next-generation
+   * adoption manifest. Ordinary provider unload and Agent disposal retain their
+   * existing semantics; this method is the only restart handoff entry point.
+   * @param options - explicit generation and cancellation values.
+   * @returns the committed generation and its resident Session records.
+   */
+  async restartHandoff(options: RestartHandoffOptions = {}): Promise<RestartHandoffResult> {
+    if (this.handoffStore === undefined || this.config.restartHandoff === undefined) {
+      throw new Error('Agent restart handoff is not configured')
+    }
+    if (this.handoffPromise !== undefined) return this.handoffPromise
+    if (this.handoffState !== 'active') throw new RestartHandoffAdmissionError(this.handoffState)
+    const generation = options.generation ?? randomUUID()
+    this.handoffState = 'requested'
+    this.handoffPromise = this.performRestartHandoff(generation, options)
+    try {
+      return await this.handoffPromise
+    } catch (error: unknown) {
+      this.handoffPromise = undefined
+      // Publication is a one-way boundary. A Driver commit is required to be
+      // infallible; if an implementation violates that requirement, retain a
+      // committed failure state so no later call can reopen the old generation
+      // over a durable adoption manifest.
+      if (this.restartHandoffPhase !== 'committed') this.handoffState = 'active'
+      throw error
+    }
+  }
+
+  /** Execute one explicit restart handoff after intent publication. */
+  private async performRestartHandoff(
+    generation: string,
+    options: RestartHandoffOptions,
+  ): Promise<RestartHandoffResult> {
+    const store = this.handoffStore
+    const config = this.config.restartHandoff
+    /* v8 ignore next -- guarded by restartHandoff() before this private path. */
+    if (store === undefined || config === undefined) throw new Error('Agent restart handoff is not configured')
+    const leaseExpiresAt = Date.now() + config.leaseTimeoutMs
+    await store.begin(generation, leaseExpiresAt)
+    try {
+      const deadline = Date.now() + config.quiescenceTimeoutMs
+      const withinBound = <T>(operation: (signal: AbortSignal) => PromiseLike<T> | T): Promise<T> => {
+        const remaining = deadline - Date.now()
+        if (remaining < 1) {
+          return Promise.reject(new Error(`Agent restart handoff exceeded ${config.quiescenceTimeoutMs}ms quiescence bound`))
+        }
+        return raceHandoff(operation, remaining, options.signal, config.quiescenceTimeoutMs)
+      }
+      await withinBound(() => this.waitForRestartAdmissions())
+      const residents = [...this.store.values()].filter(entry => entry.resident && !entry.handedOff)
+      const sessions = this.runtime.ctx.get('sessions')
+      if (sessions === undefined) throw new Error('cannot handoff Agents: SessionStore is not configured')
+      const prepared: Array<{ readonly entry: AgentEntry; readonly handoff: AgentDriverHandoff; readonly record: AgentHandoffRecord }> = []
+      for (const entry of residents) {
+        const entryHandoff = entry.handoff
+        if (entryHandoff === undefined) throw new Error(`Agent Driver for "${entry.id}" does not support restart handoff`)
+        const operation = async (
+          handoffSignal: AbortSignal,
+        ): Promise<{ readonly handoff: AgentDriverHandoff; readonly record: AgentHandoffRecord }> => {
+          await raceAbort(entry.agent.whenIdle(), handoffSignal, entry.id)
+          handoffSignal.throwIfAborted()
+          await raceAbort(sessions.flush(entry.agent.session), handoffSignal, entry.id)
+          handoffSignal.throwIfAborted()
+          const eventSeq = entry.agent.session.events.length
+          const eventDigest = digestSession(entry.agent.session)
+          const handoff = await entryHandoff(handoffSignal)
+          handoffSignal.throwIfAborted()
+          if (handoff === undefined) throw new Error(`Agent Driver for "${entry.id}" returned no handoff state`)
+          if (eventSeq !== entry.agent.session.events.length || eventDigest !== digestSession(entry.agent.session)) {
+            throw new Error(`Agent "${entry.id}" changed its Session during restart handoff`)
+          }
+          const record: AgentHandoffRecord = Object.freeze({
+            version: 1,
+            generation,
+            resident: true,
+            sessionId: entry.id,
+            driverId: entry.driverId ?? entry.agent.session.header.driverId,
+            eventSeq,
+            eventDigest,
+            leaseExpiresAt,
+            ...(handoff.state === undefined ? {} : { state: handoff.state }),
+          })
+          return { handoff, record }
+        }
+        const result = await withinBound(operation)
+        prepared.push({ entry, ...result })
+      }
+      await store.publish(generation, prepared.map(item => item.record))
+      // The sidecar is now the source of truth for the next generation. Fence
+      // every old entry before invoking Driver commits so even a violating
+      // throwing commit cannot send ordinary disposal through the old entry.
+      this.handoffState = 'committed'
+      for (const item of prepared) item.entry.handedOff = true
+      const commitFailures: unknown[] = []
+      for (const item of prepared) {
+        try {
+          item.handoff.commit()
+        } catch (error: unknown) {
+          commitFailures.push(error)
+        }
+      }
+      if (commitFailures.length > 0) {
+        throw new AggregateError(commitFailures, 'Agent restart handoff Driver commit failed after publication')
+      }
+      return Object.freeze({ generation, records: prepared.map(item => item.record) })
+    } catch (error: unknown) {
+      if (this.handoffState === 'committed') throw error
+      this.handoffState = 'active'
+      try {
+        await store.reject(generation, error instanceof Error ? error.message : String(error))
+      } catch (rejectError: unknown) {
+        throw new AggregateError([error, rejectError], 'Agent restart handoff was rejected but its intent could not be marked rejected')
+      }
+      throw error
+    }
+  }
+
+  /**
+   * Discover and adopt only resident Sessions explicitly committed by a prior
+   * generation. Failed claims are released for retry and never dispose a
+   * replacement Agent or delete the native Driver state.
+   * @param options - claimant, generation filter, cancellation, and Driver options.
+   * @returns successful handles plus records whose adoption remains retryable.
+   */
+  async adoptRestartHandoffs(options: AdoptRestartHandoffsOptions = {}): Promise<AgentHandoffAdoption<AgentHandle>> {
+    if (this.handoffStore === undefined) throw new Error('Agent restart handoff is not configured')
+    const claimant = options.claimant ?? randomUUID()
+    const candidates = (await this.handoffStore.list())
+      .filter(record => options.generation === undefined || record.generation === options.generation)
+    const handles: AgentHandle[] = []
+    const failures: AgentHandoffFailure[] = []
+    for (const candidate of candidates) {
+      options.signal?.throwIfAborted()
+      let claimed: AgentHandoffRecord | undefined
+      let handle: AgentHandle | undefined
+      let claimCompleted = false
+      let retained = false
+      try {
+        claimed = await this.handoffStore.claim(candidate, claimant)
+        const agentOptions = options.agentOptions?.(claimed)
+        handle = await this.resume({
+          resumeSessionId: claimed.sessionId,
+          resident: true,
+          handoff: claimed,
+          ...(options.signal === undefined ? {} : { signal: options.signal }),
+          ...(agentOptions === undefined ? {} : { agentOptions }),
+        })
+        if (options.retainHandle === undefined) retained = true
+        else {
+          options.retainHandle(handle)
+          retained = true
+        }
+        // Transfer the process-local owner before marking the durable claim
+        // complete. If retention rejects, release() keeps the record
+        // retryable; completing first could leave a replacement Agent without
+        // an owner while making the native Session unavailable to every later
+        // generation.
+        await this.handoffStore.complete(claimed, claimant)
+        claimCompleted = true
+        handles.push(handle)
+      } catch (error: unknown) {
+        const cleanupErrors: unknown[] = []
+        // Retention transfers the process-local owner before completion. Once
+        // that transfer succeeds it cannot be rolled back by this registry:
+        // keep the replacement Agent and its claim fenced rather than
+        // releasing an Agent that the API generation may already be serving.
+        if (handle !== undefined && !retained) {
+          try {
+            await handle.dispose()
+          } catch (disposeError: unknown) {
+            cleanupErrors.push(disposeError)
+          }
+        }
+        if (claimed !== undefined && !claimCompleted && !retained) {
+          try {
+            await this.handoffStore.release(claimed, claimant)
+          } catch (releaseError: unknown) {
+            cleanupErrors.push(releaseError)
+          }
+        }
+        failures.push({
+          record: candidate,
+          error: cleanupErrors.length === 0 ? error : new AggregateError([error, ...cleanupErrors], 'Agent handoff adoption cleanup failed'),
+        })
+      }
+    }
+    return Object.freeze({ handles, failures })
+  }
+
   /** Resolve one exact Driver generation; acquisition rejects a generation already draining. */
   private requireDriver(id: AgentDriverId): DriverRegistration {
     const registration = this.drivers.get(id)
     if (registration === undefined) throw new Error(NO_DRIVER_MESSAGE(id))
     return registration
+  }
+
+  /** Validate a seeded Session intent against the target Driver before publication. */
+  private async validatePreparedSelection(
+    registration: DriverRegistration,
+    session: Session,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const selection = session.modelSelection()
+    if (selection === undefined) return
+    await registration.target.validateModelSelection?.({
+      provider: selection.provider,
+      model: selection.model,
+      ...selection.reasoningEffort === undefined ? {} : { reasoningEffort: selection.reasoningEffort },
+    }, signal)
   }
 
   /** Wait only for a known managed same-id lifecycle already retiring. */
@@ -502,6 +1006,7 @@ export class AgentRegistry extends Service {
    * @returns the handle after setup, ordered publication, notification, and start.
    */
   async create(options: CreateAgentOptions): Promise<AgentHandle> {
+    this.assertHandoffAdmission()
     const ownerCtx = this.ctx
     await this.waitForRetirement(options.sessionId, options.signal)
     const driverId = options.driverId ?? this.config.defaultDriverId
@@ -515,6 +1020,12 @@ export class AgentRegistry extends Service {
         driverId,
       },
     }))
+    try {
+      await this.validatePreparedSelection(registration, preparation.session, options.signal)
+    } catch (error: unknown) {
+      preparation[Symbol.dispose]()
+      throw error
+    }
     const created = this.publishPrepared(
       ownerCtx,
       registration,
@@ -523,6 +1034,7 @@ export class AgentRegistry extends Service {
       options.setup,
       options.signal,
       'startup',
+      options.resident === true,
     )
     registration.track(created)
     return created
@@ -535,6 +1047,7 @@ export class AgentRegistry extends Service {
    * @returns the handle after load, setup, ordered publication, notification, and start.
    */
   async resume(options: ResumeAgentOptions): Promise<AgentHandle> {
+    this.assertHandoffAdmission(options.handoff)
     const persistence = this.runtime.ctx.get('sessionPersistence')
     if (persistence === undefined) {
       throw new Error('cannot resume: session persistence is not configured (load a dsh-session-persistence backend)')
@@ -564,6 +1077,8 @@ export class AgentRegistry extends Service {
     try {
       ownerCtx.fiber.assertActive()
       const registration = this.requireDriver(preparation.session.header.driverId)
+      this.assertHandoffRecord(preparation.session, options.handoff)
+      await this.validatePreparedSelection(registration, preparation.session, options.signal)
       const resumed = this.publishPrepared(
         ownerCtx,
         registration,
@@ -572,6 +1087,8 @@ export class AgentRegistry extends Service {
         options.setup,
         options.signal,
         'resume',
+        options.resident === true || options.handoff !== undefined,
+        options.handoff,
       )
       registration.track(resumed)
       return await resumed
@@ -590,6 +1107,8 @@ export class AgentRegistry extends Service {
     setup: AgentSetup | undefined,
     callerSignal: AbortSignal | undefined,
     source: SessionStartSource,
+    resident: boolean,
+    handoff?: AgentHandoffRecord,
   ): Promise<AgentHandle> {
     using ownedPreparation = preparation
     const id = ownedPreparation.session.id
@@ -625,11 +1144,23 @@ export class AgentRegistry extends Service {
     let detachSession: (() => void) | undefined
     let detachAgent: (() => void) | undefined
     let disposing: Promise<void> | undefined
+    let handoffCommitted = false
     let untrack = (): void => {}
     let unfollowOwner: () => Promise<void> | void = () => {}
     const dispose = (ownerTriggered = false): Promise<void> => {
       if (disposing !== undefined) return disposing
       const retirement = disposing = (async () => {
+        if (handoffCommitted) {
+          // The process-generation handoff has already published durable
+          // adoption state. Normal owner/provider disposal must not call the
+          // Driver hook or emit either ordinary lifecycle edge afterward.
+          detachCallerSignal()
+          detachOwnerSignal()
+          detachDriverSignal()
+          untrack()
+          if (!ownerTriggered) await unfollowOwner()
+          return
+        }
         ownerAbort.abort(new Error(`agent "${id}" lifecycle disposed`))
         try {
           if (prepareStarted && prepared === undefined) await prepareSettled.promise
@@ -667,7 +1198,7 @@ export class AgentRegistry extends Service {
       try {
         prepared = await raceAbortCall(
           // oxlint-disable-next-line typescript/unbound-method -- receiver is deliberately caller-traced
-          () => Reflect.apply(registration.target.prepare, receiver, [ownedPreparation.session, agentOptions, fused]),
+          () => Reflect.apply(registration.target.prepare, receiver, [ownedPreparation.session, agentOptions, fused, handoff]),
           fused,
           id,
           abandoned => abandoned.dispose(),
@@ -682,16 +1213,26 @@ export class AgentRegistry extends Service {
       if (prepared.agent.id !== id || prepared.agent.session !== ownedPreparation.session) {
         throw new Error(`agent driver "${registration.info.id}" returned an Agent for the wrong Session`)
       }
+      assertModelSelectionOwner(prepared.agent, registration.info.id)
       const setupCommit = await raceAbort(setup?.(prepared.agent.ctx), fused, id)
       assertLive()
       setupCommit?.commit()
       assertLive()
       const sessions = this.runtime.ctx.get('sessions')
       if (sessions === undefined) throw new Error('cannot publish an agent: SessionStore is not configured')
+      this.assertHandoffAdmission(handoff)
       const sessionReceiver = getTraceable(prepared.agent.ctx, sessions)
       // oxlint-disable-next-line typescript/unbound-method -- receiver preserves Agent scope while using the SessionStore provider context
       detachSession = Reflect.apply(sessions.enter, sessionReceiver, [ownedPreparation.session])
       detachAgent = this.enter(prepared.agent, ownerCtx.agent)
+      this.configureManagedEntry(prepared.agent, {
+        driverId: registration.info.id,
+        resident,
+        handoff: async signal => prepared?.handoff === undefined
+          ? undefined
+          : await prepared.handoff(signal),
+        commitHandoff: () => { handoffCommitted = true },
+      })
       // oxlint-disable-next-line typescript/unbound-method -- receiver preserves Agent scope while using the SessionStore provider context
       Reflect.apply(sessions.announce, sessionReceiver, [ownedPreparation.session])
       assertLive()
@@ -728,6 +1269,7 @@ export class AgentRegistry extends Service {
    *   while its final turn is still draining.
    */
   register(agent: Agent): () => void {
+    assertModelSelectionOwner(agent, agent.session.header.driverId)
     const dispose = this.ctx.effect(function* (this: AgentRegistry) {
       yield this.enter(agent, this.ctx.agent)
       this.announce(agent)
@@ -768,6 +1310,10 @@ export class AgentRegistry extends Service {
       announced: false,
       announcing: false,
       detachRequested: false,
+      driverId: undefined,
+      resident: false,
+      handoff: undefined,
+      handedOff: false,
     }
     this.store.set(id, entry)
     let entered = true
@@ -786,6 +1332,35 @@ export class AgentRegistry extends Service {
       this.detachEntered(entry)
     }
     return detach
+  }
+
+  /** Attach the private managed lifecycle to an already-entered Driver Agent. */
+  private configureManagedEntry(
+    agent: Agent,
+    options: {
+      readonly driverId: AgentDriverId
+      readonly resident: boolean
+      readonly handoff: (signal: AbortSignal) => Promise<AgentDriverHandoff | undefined>
+      readonly commitHandoff: () => void
+    },
+  ): void {
+    const entry = this.store.get(agent.id)
+    if (entry === undefined || entry.agent !== agent) throw new Error(`agent "${agent.id}" is not live in this registry`)
+    entry.driverId = options.driverId
+    entry.resident = options.resident
+    entry.handoff = options.handoff
+    const originalHandoff = entry.handoff
+    entry.handoff = async (signal) => {
+      const prepared = await originalHandoff(signal)
+      if (prepared === undefined) return undefined
+      return {
+        ...prepared,
+        commit: () => {
+          options.commitHandoff()
+          prepared.commit()
+        },
+      }
+    }
   }
 
   /** Remove one exact entered agent and emit its paired disposal when announced. */

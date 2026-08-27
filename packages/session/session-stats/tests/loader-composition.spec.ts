@@ -13,7 +13,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
 import Include from '@deepseek-ai/cordis-plugin-include'
-import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, SessionId } from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import * as SessionStatsPlugin from '@deepseek-ai/dsh-session-stats'
 
@@ -69,7 +69,7 @@ describe('real Loader composition', () => {
       .map(entry => entry.options.name)
     expect(unloaded).toEqual([])
 
-    const session = loaded.sessions.create(SessionId('composed'))
+    const session = loaded.sessions.create(SessionId('composed'), { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', { turn: 1 })
     session.append('step/start', { turn: 1, step: 1 })
     session.append('step/end', { turn: 1, step: 1 })

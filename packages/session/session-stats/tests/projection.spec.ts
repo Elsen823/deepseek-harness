@@ -13,7 +13,7 @@
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { createMessage } from '@deepseek-ai/dsh-llm'
-import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, SessionId } from '@deepseek-ai/dsh-session'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import * as SessionStatsPlugin from '@deepseek-ai/dsh-session-stats'
@@ -25,7 +25,10 @@ async function harness(withStatsPlugin: boolean): Promise<{ ctx: Context; sessio
   await ctx.plugin(SessionStore)
   await ctx.plugin(SessionProjectionRegistry)
   if (withStatsPlugin) await ctx.plugin(SessionStatsPlugin)
-  return { ctx, session: ctx.sessions.create(SessionId('counted')) }
+  return {
+    ctx,
+    session: ctx.sessions.create(SessionId('counted'), { meta: { driverId: AgentDriverId('dsh') } }),
+  }
 }
 
 /** Close one step; returns the counted `step/end` seq. */

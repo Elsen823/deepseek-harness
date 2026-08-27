@@ -27,6 +27,12 @@ import { ProjectionValueStore } from './projection-store.ts'
 import type { ProjectionsBaseline } from './projection-store.ts'
 import { resolvedClientTimeZone } from '../time-zone.ts'
 import { SessionQueueMirror } from './queue-mirror.ts'
+import {
+  applyModelSelectionIdentity,
+  emptyModelSelectionIdentity,
+  foldModelSelectionIdentity,
+} from './model-selection.ts'
+import type { ModelSelectionIdentity } from './model-selection.ts'
 
 /** Messages requested per history page. */
 export const PAGE_MESSAGES = 50
@@ -87,6 +93,7 @@ export class Session implements SessionFace {
   private readonly conversation: ConversationNodeAssembler
   private running = false
   private runtime: SessionRuntimeStatus | undefined
+  private modelSelectionIdentity: ModelSelectionIdentity
   private address: SubagentAddress | undefined
   private parentAvailable = false
   /**
@@ -149,6 +156,7 @@ export class Session implements SessionFace {
     this.projections = options.projections ?? new ProjectionValueStore()
     this.address = options.address
     this.parentAvailable = options.parentAvailable ?? false
+    this.modelSelectionIdentity = emptyModelSelectionIdentity(sessionId)
     this.conversation = options.conversation === undefined
       ? new ConversationNodeAssembler(
         { entries: () => [], fallbackEntry: () => undefined },
@@ -402,6 +410,7 @@ export class Session implements SessionFace {
       }
       this.events = [...older.map(e => e.event), ...this.events]
       this.views = [...older.map(e => e.view), ...this.views]
+      this.modelSelectionIdentity = foldModelSelectionIdentity(this.events, this.sessionId)
       /* v8 ignore next -- the ?? arm needs older[0] undefined, but the empty-page branch above already returned. */
       this.baseSeq = older[0]?.event.seq ?? this.baseSeq
       this.hasMore = result.value.hasMore
@@ -431,6 +440,7 @@ export class Session implements SessionFace {
     this.openError = null
     this.events = []
     this.views = []
+    this.modelSelectionIdentity = emptyModelSelectionIdentity(this.sessionId)
     this.baseSeq = 0
     // Superseded, not settled: the baseline replay re-sends still-pending requested frames verbatim
     // (same rpcId), re-minting fresh waits; a stale reference's respond() still reaches the host.
@@ -675,6 +685,7 @@ export class Session implements SessionFace {
   private installWindow(entries: HistoryEntry[], hasMore: boolean, projections?: ProjectionsBaseline): void {
     this.events = entries.map(e => e.event)
     this.views = entries.map(e => e.view)
+    this.modelSelectionIdentity = foldModelSelectionIdentity(this.events, this.sessionId)
     this.baseSeq = this.events[0]?.seq ?? 0
     this.hasMore = hasMore
     if (this.events.some(event => event.type === 'turn/start')) this.firstPromptPendingTurn = false
@@ -692,6 +703,7 @@ export class Session implements SessionFace {
     if (tailSeq !== null && event.seq <= tailSeq) return 'none' // replay overlap, drop
     this.events.push(event)
     this.views.push(view)
+    this.modelSelectionIdentity = applyModelSelectionIdentity(this.modelSelectionIdentity, event)
     if (event.type === 'turn/start') this.firstPromptPendingTurn = false
     const queueChanged = this.queueMirror.acceptDurable(event)
     const publication = this.conversation.append({ event, view })
@@ -758,6 +770,7 @@ export class Session implements SessionFace {
     const legacy = chat.legacy
     return {
       sessionId: this.sessionId,
+      modelSelection: this.modelSelectionIdentity,
       views: this.conversation,
       chat,
       nodes: legacy.nodes,

@@ -69,11 +69,11 @@ A trigger/menu/pick pipeline with zero knowledge of "commands":
 ### hub / facade: the resident shell and the strict-session input body
 
 - The hub (trigger/decoration registries + send orchestration) takes the slash/command services as optional `ctx.get()` dependencies: without ui-input-trigger or the command surfaces, input still sends and receives normally — graceful degradation.
-- Each materialized Session has exactly one `SessionInputShell` (the facade), created and torn down with the session scope; with no session, no input machine is built. `ConversationRoot` is itself the `session-maybe` resident shell, holding HeroShell, the Workspace picker, the composer stack, and the chain-fallback frame. It always owns the same scrollport and composer seat; separate strict-session header and body outlets fill those fixed regions after a Session appears.
+- Each materialized Session has exactly one `SessionInputShell` (the facade), created and torn down with the session scope; with no session, no input machine is built. `ConversationRoot` is itself the `session-maybe` resident shell, holding HeroShell, the Workspace picker, creation-time Driver state, the composer stack, and the chain-fallback frame. It always owns the same scrollport and composer seat; separate strict-session header and body outlets fill those fixed regions after a Session appears.
 - The composer bar is one `session-maybe` slot entry rendered unconditionally: with no session the same InputBar renders inert (machine faces absent, `disabled` owner prop), and once `connectWorkspace` returns a blank session the same instance goes live — the textarea DOM survives the no-session → blank transition and every later phase flip; `ConversationRoot`, the Hero, and the layout skeleton hold throughout.
 - ConversationRoot's Hero criterion is `sessionId === undefined || (composerPhase === 'blank' && (openState === 'open' || summaryBlank === true))`: a summary-proven blank Session remains Hero in every open state, while an unproven Session settles during loading. The first submit enters engaging synchronously, and a failure keeps the composer and the error context rather than falling back to the blank Hero; the sidebar's blank bit flips false only after a prompt is successfully accepted.
 - Sending unifies in the hub defaultSink: after an optimistic draft clear it goes only through `session.prompt` with `mode:'queue'` (the Web UI has no steer entry; host-wire `mode:'steer'` remains outside this machine); backfill happens only when it fails and the live draft is still empty — a user who has kept typing is never overwritten. No Draft materialize or attach transaction exists.
-- When the blank Hero re-picks the Workspace, the shell calls `connectWorkspace`; if the target session differs, the non-empty draft moves from the current shell to the target shell before the new id is opened, and the old blank session survives but is no longer current.
+- When the blank Hero re-picks the Workspace, the shell calls `connectWorkspace` with the staged or current blank Session Driver. Selecting a different Driver with a Workspace already chosen calls the same operation for that Workspace. If the target Session differs, the non-empty draft moves from the current shell to the target shell before the new id is opened, and the old blank Session survives but is no longer current.
 - The Notifier's two-bit contract: `dirty` (snapshot freshness, clearable by an `ensureFresh` pull) and `notifyPending` (notification debt, cleared only by a flush) are mutually independent — a pull must not swallow a push, and object-layer push subscribers (watchTransaction) depend on this guarantee.
 
 ### Plain-text references: text outcomes and lexicon decoration
@@ -93,7 +93,7 @@ skill/@subagent references skip the placeholder + occurrence identity chain — 
 
 ### The slot system
 
-`conversation` is itself session-maybe; its session content and the composer input slots are strict session, while the Hero Workspace picker stays root. The root registration renders the header outlet above its resident scrollport and the body outlet inside it, before the resident composer seat. The child slots are all declared by ui-conversation's conversation registration:
+`conversation` is itself session-maybe; its session content and the composer input slots are strict session, while the Hero Workspace and Driver choices stay root. The root registration renders the header outlet above its resident scrollport and the body outlet inside it, before the resident composer seat. The child slots are all declared by ui-conversation's conversation registration:
 
 - `conversation.session.header` (single) — strict-session breadcrumb, view tabs, and header actions above the resident scrollport.
 - `conversation.session` (single) — the strict-session view ring and draft mirror inside the resident scrollport. Header and body share the same session-scoped chat store; each is rebuilt when the session id switches.
@@ -104,6 +104,7 @@ skill/@subagent references skip the placeholder + occurrence identity chain — 
 - `conversation.input.left` / `conversation.input.right` — the tool-row left and right regions.
 - `conversation.input.plan` / `conversation.input.model` (single) — the tool row's two named control seats; the bar passes only `locked` (owner props), each stays empty until its owning plugin registers, no placeholder fallback. The plan seat stays empty while inactive because the shared Command source owns entry; an effective plan target renders the warn-state `Plan ×` status button, whose only action is `/plan off`.
 - `conversation.hero.workspace` (root scope) — the Workspace picker shared by the no-session and blank Hero; a pick reuses or creates the target blank session through `connectWorkspace`, moving the draft where necessary before switching current.
+- `conversation.hero.agentDriver` (root scope) — the creation-time Driver choice shared by the no-session and blank Hero; its owner stages the choice and combines it with the Workspace before connecting or creating a blank Session.
 
 ### Testing discipline
 

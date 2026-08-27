@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-08-23-resident-codex-backed-sessions.md
-2026-08-23-resident-codex-backed-sessions.md: 82eef66ea86d4b25d0086918e4c40d5e64c0da9a
-2026-08-23-resident-codex-backed-sessions.zh.md: dd6e8f8afc452d08bf65e6b175987684f586452f
+2026-08-23-resident-codex-backed-sessions.md: 3232635db3cadbbf2344339c4d631ee97fd43181
+2026-08-23-resident-codex-backed-sessions.zh.md: ff8955f354a2ab35c60d0a1777eff5bd3af05911

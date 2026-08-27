@@ -3,9 +3,9 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import AgentRegistry, { Inbox } from '@deepseek-ai/dsh-agent'
+import AgentRegistry, { createModelSelectionOwner, Inbox } from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import SessionStore, { AgentDriverId, SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, SessionId, SessionPreparation } from '@deepseek-ai/dsh-session'
 import type { Session } from '@deepseek-ai/dsh-session'
 import Storage from '@deepseek-ai/dsh-storage'
 import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
@@ -45,6 +45,7 @@ function stubAgent(session: Session): Agent {
     id: session.id,
     options: {},
     session,
+    modelSelection: createModelSelectionOwner(session),
     inbox: new Inbox(session, { inserted: () => {}, discarded: () => {}, claimed: () => {} }),
     status: 'idle',
     ctx: new Context(),
@@ -68,6 +69,7 @@ async function harness(
   } = {},
 ) {
   const ctx = new Context()
+  const persisted = new Map<SessionId, { meta: Session['header']; events: Session['events'] }>()
   await ctx.plugin(SessionStore)
   await ctx.plugin(AgentRegistry)
   await ctx.plugin(UserQuestionService)
@@ -76,7 +78,23 @@ async function harness(
   const storageDomain = new DomainFacility(ctx, { backend: 'memory', routes: {} })
   ctx.storage.mount('domain', storageDomain)
   ctx.provide('storageDomain', storageDomain)
-  ctx.provide('sessionPersistence', { list: () => Promise.resolve([]) } as never)
+  ctx.provide('sessionPersistence', {
+    list: () => Promise.resolve([...persisted.values()].map(value => value.meta)),
+    inspect: (sessionId: SessionId) => {
+      const value = persisted.get(sessionId)
+      if (value === undefined) return Promise.reject(new Error(`missing persisted Session ${sessionId}`))
+      return Promise.resolve(value)
+    },
+    prepare: (sessionId: SessionId) => {
+      const value = persisted.get(sessionId)
+      if (value === undefined) return Promise.reject(new Error(`missing persisted Session ${sessionId}`))
+      return Promise.resolve(SessionPreparation.create(ctx.sessions.prepare(sessionId, {
+        seed: [...value.events],
+        meta: value.meta,
+        seedSource: 'persistence',
+      }), { release: () => {} }))
+    },
+  } as never)
   await ctx.plugin(WorkspaceRegistry)
 
   registerFakeAgentDriver(ctx, stubAgent)
@@ -89,7 +107,15 @@ async function harness(
     ...extras.openPath === undefined ? {} : { openPath: extras.openPath },
     ...extras.canOpenPath === undefined ? {} : { canOpenPath: extras.canOpenPath },
   })
-  return { api, ctx, storageDomain, root }
+  return {
+    api,
+    ctx,
+    storageDomain,
+    root,
+    persist: (session: Session) => {
+      persisted.set(session.id, { meta: session.header, events: [...session.events] })
+    },
+  }
 }
 
 /** Stage one directory under the harness root for path adoption. */
@@ -136,6 +162,58 @@ describe('host.pickDirectory', () => {
       ok: false,
       error: { code: 'directory-picker-unavailable', details: { capability: 'browse' } },
     })
+  })
+})
+
+describe('API-owned Session lifecycles', () => {
+  it('releases an idle Agent only through the API proxy that retained its handle', async () => {
+    const { api, ctx, root } = await harness()
+    const ownedId = SessionId('api-owned')
+    const foreignId = SessionId('foreign-owned')
+    await api.sessions.create(request({ sessionId: ownedId, cwd: root }))
+    const foreign = await ctx.agents.create({ sessionId: foreignId, meta: { cwd: root } })
+
+    expect(api.sessionLifecycles.owns(ownedId)).toBe(true)
+    expect(api.sessionLifecycles.owns(foreignId)).toBe(false)
+    await expect(api.sessionLifecycles.release(foreignId)).rejects.toThrow('does not own')
+
+    await api.sessionLifecycles.release(ownedId)
+
+    expect(api.sessionLifecycles.owns(ownedId)).toBe(false)
+    expect(ctx.agents.get(ownedId)).toBeUndefined()
+    await foreign.dispose()
+  })
+
+  it('reactivates a cold owned Session without starting a model turn', async () => {
+    const { api, ctx, persist, root } = await harness()
+    const sessionId = SessionId('api-reactivated')
+    await api.sessions.create(request({ sessionId, cwd: root }))
+    const original = ctx.agents.get(sessionId)?.session
+    if (original === undefined) throw new Error('expected the created Session')
+    persist(original)
+    await api.sessionLifecycles.release(sessionId)
+
+    expect(ctx.agents.get(sessionId)).toBeUndefined()
+
+    await api.sessionLifecycles.activate(sessionId)
+
+    expect(api.sessionLifecycles.owns(sessionId)).toBe(true)
+    expect(ctx.agents.get(sessionId)?.status).toBe('idle')
+    expect(ctx.agents.get(sessionId)?.session.events.some(event => event.type === 'turn/start')).toBe(false)
+    expect(ctx.agents.get(sessionId)?.session.events.some(event => event.type === 'user/message')).toBe(false)
+  })
+
+  it('refuses to release an API-owned Agent during a running turn', async () => {
+    const { api, ctx, root } = await harness()
+    const sessionId = SessionId('api-running')
+    await api.sessions.create(request({ sessionId, cwd: root }))
+    const agent = ctx.agents.get(sessionId)
+    if (agent === undefined) throw new Error('expected a live Agent')
+    ;(agent as { status: 'idle' | 'running' }).status = 'running'
+
+    await expect(api.sessionLifecycles.release(sessionId)).rejects.toThrow('is running')
+
+    expect(ctx.agents.get(sessionId)).toBe(agent)
   })
 })
 

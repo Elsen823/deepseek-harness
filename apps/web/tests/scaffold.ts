@@ -22,10 +22,10 @@
 // llm seam post-boot with installLlmReplay on the settled root ctx
 // (the plugin-row path discards the ReplayHandle; the direct install keeps
 // assertConsumed for the teardown fixture-consumption check).
-import { existsSync, readFileSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type { Page } from 'playwright'
 import { expect } from 'vitest'
@@ -50,7 +50,7 @@ import { LlmAdapter } from '@deepseek-ai/dsh-llm'
 import type {
   LlmModelInfo, LlmProviderInfo, LlmResolvedModelInfo, RetryPolicyConfig, StreamChunk,
 } from '@deepseek-ai/dsh-llm'
-import type { ReplayHandle } from '@deepseek-ai/dsh-llm-replay'
+import type { ReplayHandle, ReplayProviderConfig } from '@deepseek-ai/dsh-llm-replay'
 import { installLlmReplay, parseSessionLog } from '@deepseek-ai/dsh-llm-replay'
 import SessionStore, {
   AgentDriverId,
@@ -109,6 +109,82 @@ const INSTALL_ANCHOR = join(REPO_ROOT, 'apps/cli/package.json')
 /** The deployment's own agent-preset root, shipped beside the app's config. */
 const SHIPPED_PRESET_DIR = join(REPO_ROOT, 'apps/cli/config/agent-presets')
 
+const WORKSPACE_PACKAGE_DIRS = new Map<string, string>()
+for (const group of readdirSync(join(REPO_ROOT, 'packages'), { withFileTypes: true })) {
+  if (!group.isDirectory()) continue
+  const groupRoot = join(REPO_ROOT, 'packages', group.name)
+  for (const packageDirectory of readdirSync(groupRoot, { withFileTypes: true })) {
+    if (!packageDirectory.isDirectory()) continue
+    const packageRoot = join(groupRoot, packageDirectory.name)
+    const manifest = join(packageRoot, 'package.json')
+    if (!existsSync(manifest)) continue
+    const name = (JSON.parse(readFileSync(manifest, 'utf8')) as { name?: unknown }).name
+    if (typeof name === 'string') WORKSPACE_PACKAGE_DIRS.set(name, packageRoot)
+  }
+}
+for (const packageDirectory of readdirSync(join(REPO_ROOT, 'vendor'), { withFileTypes: true })) {
+  if (!packageDirectory.isDirectory()) continue
+  const packageRoot = join(REPO_ROOT, 'vendor', packageDirectory.name)
+  const manifest = join(packageRoot, 'package.json')
+  if (!existsSync(manifest)) continue
+  const name = (JSON.parse(readFileSync(manifest, 'utf8')) as { name?: unknown }).name
+  if (typeof name === 'string') WORKSPACE_PACKAGE_DIRS.set(name, packageRoot)
+}
+
+interface WorkspaceManifest {
+  dependencies?: Record<string, string>
+  peerDependencies?: Record<string, string>
+}
+
+/** Link explicitly overlaid workspace packages and their local workspace edges. */
+async function linkOverlayPackages(home: string, patches: readonly PatchOptions[]): Promise<() => Promise<void>> {
+  const names = new Set<string>()
+  for (const patch of patches) {
+    const entries = patch.insert ?? [patch]
+    for (const entry of entries) {
+      if (typeof entry.name === 'string') names.add(entry.name)
+    }
+  }
+  const links = new Map<string, string>()
+  const modulesDir = join(home, 'profiles', 'node_modules')
+  for (const name of names) {
+    const target = WORKSPACE_PACKAGE_DIRS.get(name)
+    if (target === undefined) continue
+    links.set(join(modulesDir, name), target)
+    const manifest = JSON.parse(readFileSync(join(target, 'package.json'), 'utf8')) as WorkspaceManifest
+    for (const dependency of [
+      ...Object.keys(manifest.dependencies ?? {}),
+      ...Object.keys(manifest.peerDependencies ?? {}),
+    ]) {
+      const dependencyTarget = WORKSPACE_PACKAGE_DIRS.get(dependency)
+      if (dependencyTarget !== undefined) {
+        links.set(join(target, 'node_modules', dependency), dependencyTarget)
+      }
+    }
+  }
+  const created: string[] = []
+  for (const [link, target] of links) {
+    if (existsSync(link)) continue
+    await mkdir(dirname(link), { recursive: true })
+    await symlink(target, link, 'junction')
+    created.push(link)
+  }
+  let restored = false
+  return async () => {
+    if (restored) return
+    restored = true
+    const failures: unknown[] = []
+    for (const link of [...created].reverse()) {
+      try {
+        await unlink(link)
+      } catch (error: unknown) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') failures.push(error)
+      }
+    }
+    if (failures.length > 0) throw new AggregateError(failures, 'web e2e overlay link cleanup failed')
+  }
+}
+
 // Replay publishes the provider catalog the gateway routes to (providers
 // mode, never catch-all: with llm-deepseek disabled no adapter exists, so a
 // catch-all would leave resolveModelInfo unroutable and compaction-basic's
@@ -120,15 +196,38 @@ const REPLAY_PROVIDERS = [{
   models: [{ id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash', contextWindow: 128_000 }],
 }]
 
+/** One model exposed by the fixture-only route adapter. */
+export interface RouteOnlyModel {
+  /** Provider-owned model id. */
+  id: string
+  /** Selector label. */
+  name: string
+  /** Optional synthetic context capacity. */
+  contextWindow?: number
+}
+
+/** One deterministic provider route used by assembled browser fixtures. */
+export interface RouteOnlyProvider {
+  /** Provider route id. */
+  id: string
+  /** Selector label. */
+  name?: string
+  /** Models listed when the route is healthy. */
+  models: readonly RouteOnlyModel[]
+  /** When present, catalog discovery fails with this diagnostic. */
+  listModelsFailure?: string
+}
+
 /**
  * The routes a shipped composition always has, with no ability to stream.
  * A fixture-less keyless scenario issues no model calls, but its tree must
  * still answer `listProviders()` — surfaces legitimately gate on whether any
  * adapter serves a session's route, and an empty registry is a test artifact,
- * not a product state.
+ * not a product state. A route may fail catalog discovery deterministically so
+ * the assembled browser lane can prove provider-local recovery controls.
  */
 class RouteOnlyAdapter extends LlmAdapter {
-  constructor(private readonly providers: typeof REPLAY_PROVIDERS) {
+  constructor(private readonly providers: readonly RouteOnlyProvider[]) {
     super()
   }
 
@@ -137,12 +236,17 @@ class RouteOnlyAdapter extends LlmAdapter {
   }
 
   override listModels(provider: string): Promise<readonly LlmModelInfo[]> {
-    return Promise.resolve((this.providers.find(entry => entry.id === provider)?.models ?? [])
+    const configured = this.providers.find(entry => entry.id === provider)
+    if (configured?.listModelsFailure !== undefined) {
+      return Promise.reject(new Error(configured.listModelsFailure))
+    }
+    return Promise.resolve((configured?.models ?? [])
       .map(model => ({ provider, id: model.id, name: model.name })))
   }
 
   override resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
-    const listed = this.providers.find(entry => entry.id === provider)?.models
+    const configured = this.providers.find(entry => entry.id === provider)
+    const listed = configured?.models
       .find(entry => entry.id === model)
     return Promise.resolve({
       provider,
@@ -240,6 +344,10 @@ export interface LaunchOptions {
   paceMs?: number
   /** Synthetic model capacity for UI scenarios whose seeded history must remain uncompacted. */
   replayContextWindow?: number
+  /** Deterministic replay provider catalog used by model-selection browser scenarios. */
+  replayProviders?: ReplayProviderConfig[]
+  /** Deterministic no-stream provider routes used when a scenario needs catalog failures. */
+  routeOnlyProviders?: readonly RouteOnlyProvider[]
   /**
    * Tool presentation mode patched onto the shipped `tools` row (`code`
    * collapses the wire to run_code + the SDK prompt section). Omit for the
@@ -259,6 +367,12 @@ export interface LaunchOptions {
    * keyless first-run configuration lane; the default disables the adapter.
    */
   deepSeekMissingCredential?: boolean
+  /**
+   * Require the real DeepSeek adapter credential in record mode. Set false
+   * only for record scenarios that issue no DSH model calls; those scenarios
+   * receive the route-only catalog instead of the shipped adapter.
+   */
+  requiresDeepSeekCredential?: boolean
   /** Leave the current welcome notice pending; ordinary scenarios pre-acknowledge it before browser boot. */
   welcomeNoticePending?: boolean
   /**
@@ -321,7 +435,8 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
   requireDist()
   const mode = webSnapshotMode()
   const browserHost = options.remoteAuthority ?? '127.0.0.1'
-  if (mode === 'record') {
+  const requiresDeepSeekCredential = options.requiresDeepSeekCredential !== false
+  if (mode === 'record' && requiresDeepSeekCredential) {
     // Both owning vitest configs (web unconditionally, snapshot in record
     // mode) load the repo-root .env before this file runs.
     if (process.env.DEEPSEEK_API_KEY === undefined || process.env.DEEPSEEK_API_KEY.length === 0) {
@@ -397,6 +512,7 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
   const extraOverlayPatches = options.extraOverlayPath === undefined
     ? []
     : loadOverlayPatches('web e2e scaffold', options.extraOverlayPath)
+  let restoreOverlayLinks: () => Promise<void> = async () => {}
   const composedRows = composeEntries([basePatches, surfacePatches, extraOverlayPatches])
   const webRuntimeConfig = composedRows.find(row => row.id === 'web-runtime')?.config as {
     surfaceContext?: boolean
@@ -512,7 +628,7 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
           baseURL: options.deepSeekSearch.baseURL,
         },
       }],
-    ...mode === 'record' || options.deepSeekMissingCredential === true
+    ...mode === 'record' && requiresDeepSeekCredential || options.deepSeekMissingCredential === true
       ? []
       : [{ id: 'llm-deepseek', disabled: true }],
   ]
@@ -529,6 +645,7 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
     // harness home, with bare plugin names resolving through the flat module
     // fallback the launcher heals under <home>/profiles.
     healProfilesModuleFallback(INSTALL_ANCHOR, harnessHome)
+    restoreOverlayLinks = await linkOverlayPackages(harnessHome, extraOverlayPatches)
     const profileDir = join(harnessHome, 'profiles', 'scaffold')
     await mkdir(profileDir, { recursive: true })
     const rootConfig = join(profileDir, 'cordis.yml')
@@ -605,9 +722,10 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
       }
     }
     if (mode !== 'record' && options.replayFixture !== undefined) {
+      const replayCatalog = options.replayProviders ?? replayProviders(options.replayContextWindow)
       replayHandle = installLlmReplay(ctx, {
         file: options.replayFixture,
-        providers: replayProviders(options.replayContextWindow).map(provider => ({
+        providers: replayCatalog.map(provider => ({
           ...provider,
           ...(options.replayRetryPolicy === undefined ? {} : { retryPolicy: options.replayRetryPolicy }),
         })),
@@ -615,20 +733,25 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
         ...(options.replayChildFixtures === undefined ? {} : { childFiles: options.replayChildFixtures }),
         ...(options.paceMs === undefined ? {} : { paceMs: options.paceMs }),
       })
-    } else if (mode !== 'record' && options.deepSeekMissingCredential !== true) {
+    } else if (
+      (mode !== 'record' && options.deepSeekMissingCredential !== true)
+      || (mode === 'record' && options.requiresDeepSeekCredential === false)
+    ) {
       // No fixture and no shipped adapter would leave the tree with ZERO
       // provider routes — a state no product composition has, and one the
       // composer refuses to type into. Register the same routes
       // a fixture would, with streaming that still fails loud: the scenario
       // issues no model calls, and one that slipped in must not pass quietly.
+      const routeOnlyProviders = options.routeOnlyProviders ?? replayProviders(options.replayContextWindow)
       ctx.effect(() => ctx.llm.registerAdapter(
-        replayProviders(options.replayContextWindow).map(provider => provider.id),
-        new RouteOnlyAdapter(replayProviders(options.replayContextWindow)),
+        routeOnlyProviders.map(provider => provider.id),
+        new RouteOnlyAdapter(routeOnlyProviders),
       ), 'web e2e scaffold: route-only adapter')
     }
   } catch (error) {
     if (process.cwd() !== originalCwd) process.chdir(originalCwd)
     const cleanupFailures = await cleanupScaffoldWorld(ctx, workspaceCwd, persistenceRoot)
+    await restoreOverlayLinks().catch((cleanupError: unknown) => { cleanupFailures.push(cleanupError) })
     restoreCredentialEnvironment()
     restoreSkillRootEnvironment()
     if (cleanupFailures.length > 0) {
@@ -680,6 +803,7 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
       try {
         failures.push(...await cleanupScaffoldWorld(ctx, workspaceCwd, persistenceRoot))
       } finally {
+        await restoreOverlayLinks().catch((cleanupError: unknown) => { failures.push(cleanupError) })
         restoreCredentialEnvironment()
         restoreSkillRootEnvironment()
       }
@@ -739,23 +863,6 @@ export function fixtureUserPrompts(fixtureText: string): string[] {
 }
 
 /**
- * Seed a recorded session fixture into the scaffold's persistence root
- * through the REAL backend API (throwaway Context + SessionStore + JSONL
- * plugin — the semantic-checkpoint precedent), never raw file writes: no
- * knowledge of bucket hashing, filename encoding, or compression, and
- * malformed session events fail loud at seed time. The fixture's tokenized identity
- * ({{sessionId}}/{{cwd}}) is realized for this world before parsing. Event
- * times are materialized from event order against the fixture header's
- * creation time, or the seeded creation time when normalization replaced the
- * header value with zero.
- * @param scaffold - the target scaffold.
- * @param fixtureText - raw recorded session.jsonl contents.
- * @param id - the seeded session id (stable for deterministic goldens).
- * @param agentPreset - the preset the recorded session was composed from,
- *   for scenarios asserting what a resumed session reports running.
- * @returns the seeded id.
- */
-/**
  * Realize a recorded seed fixture against one scaffold: substitute the
  * `{{sessionId}}`/`{{cwd}}` placeholders and rewrite the recorded cwd to the
  * scaffold's workspace. Idempotent, so a caller may realize early (e.g. to
@@ -810,6 +917,17 @@ export function renderSeedFixture(
   ].join('\n')
 }
 
+/**
+ * Seed a recorded session fixture through the real persistence backend.
+ * The fixture's immutable `driverId` is retained so optional Driver browser
+ * lanes exercise their own adapter. Event times are materialized from event
+ * order against the fixture creation time.
+ * @param scaffold - the target Web scaffold.
+ * @param fixtureText - raw recorded session.jsonl contents.
+ * @param id - the seeded session id (stable for deterministic goldens).
+ * @param agentPreset - the preset the recorded session was composed from.
+ * @returns the seeded id.
+ */
 export async function seedSession(
   scaffold: WebScaffold,
   fixtureText: string,
@@ -819,13 +937,17 @@ export async function seedSession(
   const decoded = parseSeedFixture(realizeSeedFixture(scaffold, fixtureText, id))
   const events = decoded.events
   if (events.length === 0) throw new Error('seed fixture has no events')
+  const fixtureDriverId = decoded.header.driverId
+  if (typeof fixtureDriverId !== 'string' || fixtureDriverId.length === 0) {
+    throw new Error('seed fixture requires a non-empty driverId header')
+  }
   const last = events[events.length - 1]!
   // An open final turn would be mutated by resume's crash repair on first
   // open; a committed seed must be a closed recording.
   if (last.type !== 'turn/end') throw new Error(`seed fixture must end in turn/end, got ${last.type}`)
   const meta: SessionHeader = {
     version: SESSION_FORMAT_VERSION,
-    driverId: AgentDriverId('dsh'),
+    driverId: AgentDriverId(fixtureDriverId),
     id: SessionId(id),
     createdAt: Date.now() - 60_000,
     cwd: scaffold.workspaceCwd,

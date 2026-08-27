@@ -10,7 +10,7 @@ import {
   createSnapshotStore, EMPTY_CHAT_SNAPSHOT, EMPTY_CONVERSATION_VIEWS,
 } from '@deepseek-ai/dsh-client-runtime/client'
 import type {
-  ConversationSnapshot, SessionId, SessionListState, WorkspaceId, WorkspaceListState, WorkspaceView,
+  AgentDriverId, ConversationSnapshot, SessionId, SessionListState, WorkspaceId, WorkspaceListState, WorkspaceView,
 } from '@deepseek-ai/dsh-client-runtime/client'
 import type { ConversationRootProps } from '../src/client/skeleton/ConversationRoot.tsx'
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
@@ -27,7 +27,7 @@ import type { HeroShellProps } from '../src/client/skeleton/EmptyHero.tsx'
 import { InputBar } from '../src/client/skeleton/InputBar.tsx'
 import type { InputBarProps } from '../src/client/skeleton/InputBar.tsx'
 import type {
-  ComposerBarOwnerProps, ConversationHeaderLineageOwnerProps,
+  ComposerBarOwnerProps, ConversationHeaderLineageOwnerProps, HeroAgentDriverOwnerProps,
 } from '../src/client/contract/slots.ts'
 import type { ViewTab } from '../src/client/contract/views.ts'
 
@@ -59,6 +59,7 @@ const t: ConversationRootProps['t'] = makeTranslate(zh, commonZh)
 
 const sid = (id: string) => id as SessionId
 const wid = (id: string) => id as WorkspaceId
+const driver = (id: string) => id as AgentDriverId
 const SID = sid('s1')
 
 function workspace(id = 'w1'): WorkspaceView {
@@ -87,7 +88,7 @@ function conversationSnapshot(overrides: Partial<ConversationSnapshot> = {}): Co
 function mount(
   snapshot: ConversationSnapshot,
   workspaceRows: WorkspaceView[] = [{ ...workspace('one'), sessionIds: [SID] }],
-  retargetWorkspace = vi.fn(async (_workspaceId: WorkspaceId) => {}),
+  retargetWorkspace: ConversationRootProps['selectWorkspace'] = vi.fn(async () => {}),
   options: {
     /** When true, mimic overlay:true chain siblings (hidden fallback + takeover). */
     overlayTakeover?: boolean
@@ -107,14 +108,14 @@ function mount(
 ) {
   const root = sid('root')
   const parent = sid('parent')
-  const rootRow = { id: root, displayTitle: 'Root', running: false, blank: false, updatedAt: 1 }
+  const rootRow = { id: root, driverId: driver('dsh'), displayTitle: 'Root', running: false, blank: false, updatedAt: 1 }
   const parentRow = {
     id: parent, displayTitle: 'Parent', parentId: root, origin: 'subagent' as const,
     running: false, blank: false, updatedAt: 2,
   }
   const childRow = {
     id: SID, displayTitle: 'Child', parentId: options.nestedSubagent === true ? parent : root,
-    cwd: '/projects/one', running: false, blank: options.summaryBlank ?? false, updatedAt: 3,
+    driverId: driver('dsh'), cwd: '/projects/one', running: false, blank: options.summaryBlank ?? false, updatedAt: 3,
     ...(options.summaryOrigin === undefined ? {} : { origin: options.summaryOrigin }),
   }
   const listed = options.omitSummaryRow !== true
@@ -154,12 +155,17 @@ function mount(
   /** Owner share handed to the two composer tool-row seats, per render. */
   const seatOwners: { key: string; owner: unknown }[] = []
   let pickerOwner: unknown
+  let driverOwner: HeroAgentDriverOwnerProps | undefined
   const renderSlot = ((key: string, owner: object, opts?: { only?: string; fallback?: ReactNode }) => {
     slotCalls.push(key)
     if (key === 'conversation.input.model' || key === 'conversation.input.plan') {
       seatOwners.push({ key, owner })
     }
     if (key === 'conversation.hero.workspace') { pickerOwner = owner; return null }
+    if (key === 'conversation.hero.agentDriver') {
+      driverOwner = owner as HeroAgentDriverOwnerProps
+      return null
+    }
     if (key === 'conversation.session.header.lineage') {
       lineageOwners.push(owner as ConversationHeaderLineageOwnerProps)
       return opts?.fallback ?? null
@@ -273,6 +279,7 @@ function mount(
   return {
     view, chat, sink, retargetWorkspace, session, slotCalls, lineageOwners, seatOwners, open,
     pickerOwner: () => pickerOwner,
+    driverOwner: () => driverOwner,
     rerender: () => { view.rerender(<ConversationRoot {...props} />) },
   }
 }
@@ -425,7 +432,7 @@ describe('ConversationRoot resident composer', () => {
     const owner = b.pickerOwner() as { open: boolean; onPick(id: WorkspaceId): void }
     expect(owner.open).toBe(true)
     act(() => { owner.onPick(wid('second')) })
-    expect(b.retargetWorkspace).toHaveBeenCalledWith(wid('second'))
+    expect(b.retargetWorkspace).toHaveBeenCalledWith(wid('second'), { driverId: driver('dsh') })
     expect(b.view.getByText('Selected Folder')).toBeTruthy()
   })
 
@@ -520,7 +527,7 @@ describe('ConversationRoot resident composer', () => {
     fireEvent.click(b.view.getByRole('button', { name: '选择工作区' }))
     const owner = b.pickerOwner() as { onPick(id: WorkspaceId): void }
     await act(async () => { owner.onPick(wid('second')); await Promise.resolve() })
-    expect(selectWorkspace).toHaveBeenCalledWith(wid('second'))
+    expect(selectWorkspace).toHaveBeenCalledWith(wid('second'), { driverId: driver('dsh') })
     expect(b.view.queryByText('Selected Folder')).toBeNull()
     expect(b.view.getByText('one')).toBeTruthy()
   })
@@ -530,9 +537,34 @@ describe('ConversationRoot resident composer', () => {
     const chip = b.view.getByRole('button', { name: '选择工作区' })
     expect((chip as HTMLButtonElement).disabled).toBe(false)
     expect(b.slotCalls).toContain('conversation.hero.workspace')
+    expect(b.slotCalls).toContain('conversation.hero.agentDriver')
     // The agent-preset chip sits in the same row, for the same reason: both
     // choices are only open before the first message.
     expect(b.slotCalls).toContain('conversation.hero.agentPreset')
+  })
+
+  it('keeps the staged Driver when either Driver or Workspace is chosen first', async () => {
+    const selectWorkspace = vi.fn<ConversationRootProps['selectWorkspace']>(async () => {})
+    const b = mount(
+      conversationSnapshot({ composerPhase: 'blank', blank: true }),
+      [
+        { ...workspace('one'), sessionIds: [SID] },
+        { ...workspace('second'), title: 'Selected Folder' },
+      ],
+      selectWorkspace,
+      { summaryBlank: true },
+    )
+    expect(b.driverOwner()?.selectedDriverId).toBe('dsh')
+
+    await act(async () => {
+      await b.driverOwner()?.selectDriver(driver('codex'))
+    })
+    expect(selectWorkspace).toHaveBeenLastCalledWith(wid('one'), { driverId: driver('codex') })
+    expect(b.driverOwner()?.selectedDriverId).toBe('codex')
+
+    const owner = b.pickerOwner() as { onPick(id: WorkspaceId): void }
+    await act(async () => { owner.onPick(wid('second')); await Promise.resolve() })
+    expect(selectWorkspace).toHaveBeenLastCalledWith(wid('second'), { driverId: driver('codex') })
   })
 
   it('prompt failure renders the promptError strip (ordinary failure, no transaction UI)', () => {

@@ -86,10 +86,15 @@ function historySnapshot(
     runningCalls: [],
     ...inspection,
   }
+  function viewSnapshot(target: 'trajectory'): TrajectorySnapshot
+  function viewSnapshot(target: 'driver-activity'): undefined
+  function viewSnapshot(target: 'trajectory' | 'driver-activity'): TrajectorySnapshot | undefined {
+    return target === 'trajectory' ? trajectory : undefined
+  }
   return {
     sessionId: SID,
     views: {
-      get: target => target === 'trajectory' ? trajectory : undefined,
+      get: viewSnapshot,
     },
     chat: EMPTY_CHAT_SNAPSHOT,
     nodes,

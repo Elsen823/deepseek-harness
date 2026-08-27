@@ -10,7 +10,7 @@ import { globSync, readFileSync, writeFileSync } from 'node:fs'
 import { basename, resolve } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import type { ToolSchema } from '@deepseek-ai/dsh-llm'
-import AgentRegistry from '@deepseek-ai/dsh-agent'
+import AgentRegistry, { createModelSelectionOwner } from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { createScope } from '@deepseek-ai/dsh-scope'
 import SessionStore, { AgentDriverId, SessionId } from '@deepseek-ai/dsh-session'
@@ -553,6 +553,7 @@ const TOOL_PACKAGES: ToolPackage[] = [
           id: session.id,
           session,
           options: {},
+          modelSelection: createModelSelectionOwner(session),
           status: 'idle',
         } as unknown as Agent
         Object.assign(agent, { ctx: createScope(inner, agent).ctx })

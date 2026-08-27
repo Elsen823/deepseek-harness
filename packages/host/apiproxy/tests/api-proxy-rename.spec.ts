@@ -10,7 +10,7 @@
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import SessionStore, { AgentDriverId } from '@deepseek-ai/dsh-session'
-import AgentRegistry from '@deepseek-ai/dsh-agent'
+import AgentRegistry, { createModelSelectionOwner } from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import SessionTitleService from '@deepseek-ai/dsh-session-title'
@@ -55,7 +55,7 @@ function liveAgent(ctx: Context, id: string, turns: number): Session {
     }), { surfaceOp: 'append' })
     session.append('turn/end', { turn, reason: { kind: 'completed' } })
   }
-  ctx.agents.register({ id: session.id, session, status: 'idle', ctx } as Agent)
+  ctx.agents.register({ id: session.id, session, modelSelection: createModelSelectionOwner(session), status: 'idle', ctx } as Agent)
   return session
 }
 
@@ -99,7 +99,7 @@ describe('sessions.rename', () => {
     // read as the user's fault.
     const foreign = await composed(false)
     const stale = liveAgent(foreign, 'session-rename-stale', 1)
-    ctx.agents.register({ id: stale.id, session: stale, status: 'idle', ctx } as Agent)
+    ctx.agents.register({ id: stale.id, session: stale, modelSelection: createModelSelectionOwner(stale), status: 'idle', ctx } as Agent)
 
     const response = await api(ctx).sessions.rename(request({ sessionId: stale.id, title: 'name' }))
     expect(response.result.ok).toBe(false)

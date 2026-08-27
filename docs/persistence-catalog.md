@@ -90,7 +90,7 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 }[T]
 ```
 
-Sources: [`packages/core/session/src/types.ts:708`](../packages/core/session/src/types.ts) · [`packages/core/session/src/types.ts:715`](../packages/core/session/src/types.ts) · [`packages/core/session/src/types.ts:744`](../packages/core/session/src/types.ts) · [`packages/core/session/src/types.ts:776`](../packages/core/session/src/types.ts)
+Sources: [`packages/core/session/src/types.ts:762`](../packages/core/session/src/types.ts) · [`packages/core/session/src/types.ts:769`](../packages/core/session/src/types.ts) · [`packages/core/session/src/types.ts:798`](../packages/core/session/src/types.ts) · [`packages/core/session/src/types.ts:830`](../packages/core/session/src/types.ts)
 
 ## Events
 
@@ -132,7 +132,7 @@ Source: [`packages/core/agent/src/types.ts:19`](../packages/core/agent/src/types
 'agent-driver/activation': AgentDriverActivationSnapshot
 ```
 
-Source: [`packages/core/session/src/types.ts:582`](../packages/core/session/src/types.ts)
+Source: [`packages/core/session/src/types.ts:622`](../packages/core/session/src/types.ts)
 
 <a id="agent-driveractivity--log-only"></a>
 
@@ -146,7 +146,7 @@ Source: [`packages/core/session/src/types.ts:582`](../packages/core/session/src/
 'agent-driver/activity': AgentDriverActivitySnapshot
 ```
 
-Source: [`packages/core/session/src/types.ts:594`](../packages/core/session/src/types.ts)
+Source: [`packages/core/session/src/types.ts:634`](../packages/core/session/src/types.ts)
 
 <a id="agent-drivercheckpoint--log-only"></a>
 
@@ -157,7 +157,7 @@ Source: [`packages/core/session/src/types.ts:594`](../packages/core/session/src/
 'agent-driver/checkpoint': AgentDriverCheckpointSnapshot
 ```
 
-Source: [`packages/core/session/src/types.ts:604`](../packages/core/session/src/types.ts)
+Source: [`packages/core/session/src/types.ts:644`](../packages/core/session/src/types.ts)
 
 <a id="agent-drivermodel-attempt--log-only"></a>
 
@@ -168,7 +168,7 @@ Source: [`packages/core/session/src/types.ts:604`](../packages/core/session/src/
 'agent-driver/model-attempt': AgentDriverModelAttemptSnapshot
 ```
 
-Source: [`packages/core/session/src/types.ts:589`](../packages/core/session/src/types.ts)
+Source: [`packages/core/session/src/types.ts:629`](../packages/core/session/src/types.ts)
 
 <a id="agent-drivermodel-request--log-only"></a>
 
@@ -182,7 +182,7 @@ Source: [`packages/core/session/src/types.ts:589`](../packages/core/session/src/
 'agent-driver/model-request': AgentDriverModelRequestSnapshot
 ```
 
-Source: [`packages/core/session/src/types.ts:587`](../packages/core/session/src/types.ts)
+Source: [`packages/core/session/src/types.ts:627`](../packages/core/session/src/types.ts)
 
 <a id="agent-driverobjective--log-only"></a>
 
@@ -197,7 +197,7 @@ Source: [`packages/core/session/src/types.ts:587`](../packages/core/session/src/
 'agent-driver/objective': { objective: AgentDriverObjectiveSnapshot | null; driver?: AgentDriverDetail }
 ```
 
-Source: [`packages/core/session/src/types.ts:600`](../packages/core/session/src/types.ts)
+Source: [`packages/core/session/src/types.ts:640`](../packages/core/session/src/types.ts)
 
 <a id="agent-driverproposed-plan--log-only"></a>
 
@@ -208,7 +208,7 @@ Source: [`packages/core/session/src/types.ts:600`](../packages/core/session/src/
 'agent-driver/proposed-plan': { plan: AgentDriverProposedPlanSnapshot | null; driver?: AgentDriverDetail }
 ```
 
-Source: [`packages/core/session/src/types.ts:602`](../packages/core/session/src/types.ts)
+Source: [`packages/core/session/src/types.ts:642`](../packages/core/session/src/types.ts)
 
 ### `agent-preset/*`
 
@@ -308,7 +308,7 @@ Source: [`packages/interaction/user-approval/src/index.ts:67`](../packages/inter
 
 Types: [StreamChunk](subsystems/llm-streaming.md)
 
-Source: [`packages/core/session/src/types.ts:634`](../packages/core/session/src/types.ts)
+Source: [`packages/core/session/src/types.ts:674`](../packages/core/session/src/types.ts)
 
 <a id="assistantmessage--surface"></a>
 
@@ -330,7 +330,7 @@ Source: [`packages/core/session/src/types.ts:634`](../packages/core/session/src/
 
 Types: [TokenUsage](subsystems/llm-streaming.md)
 
-Source: [`packages/core/session/src/types.ts:645`](../packages/core/session/src/types.ts)
+Source: [`packages/core/session/src/types.ts:685`](../packages/core/session/src/types.ts)
 
 ### `command/*`
 
@@ -591,6 +591,40 @@ Source: [`packages/llm/llm-retry/src/types.ts:9`](../packages/llm/llm-retry/src/
 
 Source: [`packages/llm/llm-retry/src/types.ts:11`](../packages/llm/llm-retry/src/types.ts)
 
+<a id="llmservice-tier--log-only"></a>
+
+#### `llm/service-tier` — log-only
+
+```ts persistence-catalog
+/**
+ * Whole-value per-session service-tier choice. A branded id selects an
+ * adapter-owned tier; `null` explicitly restores the provider standard.
+ * Request producers fold this event in `agent/request`, while the effective
+ * value remains recorded in each changed `request/header`.
+ */
+'llm/service-tier': { serviceTier: ServiceTierId | null }
+```
+
+Source: [`packages/core/session/src/types.ts:730`](../packages/core/session/src/types.ts)
+
+### `model/*`
+
+<a id="modelselected--log-only"></a>
+
+#### `model/selected` — log-only
+
+```ts persistence-catalog
+/**
+ * Latest accepted Session model intent. A user selection is durable before
+ * any Turn consumes it; a default selection is materialized when the first
+ * prompt is accepted. Effective request configuration remains recorded by
+ * `request/header` or `agent-driver/model-request`.
+ */
+'model/selected': ModelSelection & { source: ModelSelectionSource }
+```
+
+Source: [`packages/core/session/src/types.ts:723`](../packages/core/session/src/types.ts)
+
 ### `permission/*`
 
 <a id="permissionpreset--log-only"></a>
@@ -640,7 +674,7 @@ Source: [`packages/plan/plan-mode/src/index.ts:53`](../packages/plan/plan-mode/s
 'request/context': RequestContext
 ```
 
-Source: [`packages/core/session/src/types.ts:681`](../packages/core/session/src/types.ts)
+Source: [`packages/core/session/src/types.ts:735`](../packages/core/session/src/types.ts)
 
 <a id="requestheader--log-only"></a>
 
@@ -654,7 +688,7 @@ Source: [`packages/core/session/src/types.ts:681`](../packages/core/session/src/
 'request/header': { header: EpochHeader; reason: RequestHeaderReason }
 ```
 
-Source: [`packages/core/session/src/types.ts:676`](../packages/core/session/src/types.ts)
+Source: [`packages/core/session/src/types.ts:716`](../packages/core/session/src/types.ts)
 
 ### `sandbox/*`
 
@@ -729,7 +763,7 @@ Source: [`packages/schedule/schedule/src/types.ts:219`](../packages/schedule/sch
 'session/end-seed': Record<string, never>
 ```
 
-Source: [`packages/core/session/src/types.ts:704`](../packages/core/session/src/types.ts)
+Source: [`packages/core/session/src/types.ts:758`](../packages/core/session/src/types.ts)
 
 <a id="sessiontitle--log-only"></a>
 
@@ -771,7 +805,7 @@ Source: [`packages/session/session-title-llm/src/index.ts:43`](../packages/sessi
 'step/end': { turn: number; step: number }
 ```
 
-Source: [`packages/core/session/src/types.ts:624`](../packages/core/session/src/types.ts)
+Source: [`packages/core/session/src/types.ts:664`](../packages/core/session/src/types.ts)
 
 <a id="stepstart--log-only"></a>
 
@@ -782,7 +816,7 @@ Source: [`packages/core/session/src/types.ts:624`](../packages/core/session/src/
 'step/start': { turn: number; step: number }
 ```
 
-Source: [`packages/core/session/src/types.ts:622`](../packages/core/session/src/types.ts)
+Source: [`packages/core/session/src/types.ts:662`](../packages/core/session/src/types.ts)
 
 ### `subagent/*`
 
@@ -875,7 +909,7 @@ Source: [`packages/experimental/agent-team/src/types.ts:208`](../packages/experi
 
 Types: [TodoItem](subsystems/session.md)
 
-Source: [`packages/core/session/src/types.ts:671`](../packages/core/session/src/types.ts)
+Source: [`packages/core/session/src/types.ts:711`](../packages/core/session/src/types.ts)
 
 ### `tool/*`
 
@@ -894,7 +928,7 @@ Source: [`packages/core/session/src/types.ts:671`](../packages/core/session/src/
 
 Types: [CallId](subsystems/core.md)
 
-Source: [`packages/core/session/src/types.ts:651`](../packages/core/session/src/types.ts)
+Source: [`packages/core/session/src/types.ts:691`](../packages/core/session/src/types.ts)
 
 <a id="toolcode-dispatch--log-only"></a>
 
@@ -969,7 +1003,7 @@ Source: [`packages/core/tools/src/types.ts:40`](../packages/core/tools/src/types
 }
 ```
 
-Source: [`packages/core/session/src/types.ts:663`](../packages/core/session/src/types.ts)
+Source: [`packages/core/session/src/types.ts:703`](../packages/core/session/src/types.ts)
 
 ### `tool-workflow/*`
 
@@ -1049,7 +1083,7 @@ Source: [`packages/workflow/tool-workflow/src/types.ts:47`](../packages/workflow
 
 Types: [TurnEndReason](subsystems/session.md)
 
-Source: [`packages/core/session/src/types.ts:620`](../packages/core/session/src/types.ts)
+Source: [`packages/core/session/src/types.ts:660`](../packages/core/session/src/types.ts)
 
 <a id="turnstart--log-only"></a>
 
@@ -1065,7 +1099,7 @@ Source: [`packages/core/session/src/types.ts:620`](../packages/core/session/src/
 'turn/start': { turn: number }
 ```
 
-Source: [`packages/core/session/src/types.ts:611`](../packages/core/session/src/types.ts)
+Source: [`packages/core/session/src/types.ts:651`](../packages/core/session/src/types.ts)
 
 ### `user/*`
 
@@ -1084,7 +1118,7 @@ Source: [`packages/core/session/src/types.ts:611`](../packages/core/session/src/
 'user/message': UserMessage
 ```
 
-Source: [`packages/core/session/src/types.ts:632`](../packages/core/session/src/types.ts)
+Source: [`packages/core/session/src/types.ts:672`](../packages/core/session/src/types.ts)
 
 ### `web/*`
 

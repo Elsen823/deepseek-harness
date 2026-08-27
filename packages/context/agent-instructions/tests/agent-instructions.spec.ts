@@ -7,7 +7,7 @@ import Loader from '@deepseek-ai/cordis-plugin-loader'
 import * as workspaceContext from '@deepseek-ai/dsh-agent-instructions'
 import LlmRuntime, { createUserMessage, CallId, type Message, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import SessionStore, { AgentDriverId, Session, SessionId, SESSION_FORMAT_VERSION, type SessionEvent, type UserMessage } from '@deepseek-ai/dsh-session'
-import AgentRegistry, { agentEvents, Inbox, type Agent } from '@deepseek-ai/dsh-agent'
+import AgentRegistry, { agentEvents, createModelSelectionOwner, Inbox, type Agent } from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import { FileSystem, FsTargetKey, FsVersion } from '@deepseek-ai/dsh-fs'
 import type {
@@ -194,6 +194,7 @@ function stubAgent(cwd?: string, seed: SessionEvent[] = []): Agent {
     id: SessionId('a1'),
     options: {},
     session,
+    modelSelection: createModelSelectionOwner(session),
     inbox: new Inbox(session, { inserted: () => {}, discarded: () => {}, claimed: () => {} }),
     status: 'idle',
     send: () => {},

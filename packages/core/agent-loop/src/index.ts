@@ -14,6 +14,7 @@ import type {
   AgentDriver,
   AgentDriverInfo,
   AgentOptions,
+  ModelSelection,
   PreparedAgentDriver,
 } from '@deepseek-ai/dsh-agent'
 import { errorChain } from '@deepseek-ai/dsh-llm'
@@ -194,6 +195,14 @@ class DshAgentDriver implements AgentDriver {
 
   constructor(private readonly ctx: Context) {}
 
+  async validateModelSelection(selection: ModelSelection, signal?: AbortSignal): Promise<void> {
+    await this.ctx.llm.resolveCallConfig({
+      provider: selection.provider,
+      model: selection.model,
+      ...selection.reasoningEffort === undefined ? {} : { reasoningEffort: selection.reasoningEffort },
+    }, signal)
+  }
+
   prepare(session: Session, options: AgentOptions, signal: AbortSignal): PreparedAgentDriver {
     assertAgentOptions(options)
     if (signal.aborted) {
@@ -265,8 +274,8 @@ export class AgentLoop extends Service {
     validateConfiguredAgents(this.config.agents)
     const driver = new DshAgentDriver(ctx)
     ctx.effect(() => ctx.agents.registerDriver(driver), 'agentLoop.registerDriver()')
-    ctx.systemPrompt.variable('provider', context => context.agent?.options.provider)
-    ctx.systemPrompt.variable('model', context => context.agent?.options.model)
+    ctx.systemPrompt.variable('provider', context => context.modelSelection?.provider)
+    ctx.systemPrompt.variable('model', context => context.modelSelection?.model)
     ctx.systemPrompt.variable('cwd', context => context.agent?.session.header.cwd)
 
     for (const { id, sessionId, cwd, resumeSessionId, ...options } of this.config.agents) {

@@ -13,6 +13,12 @@
   config:
     file: !!js process.env.DSH_SNAPSHOT_FILE
     overrideFile: !!js process.env.DSH_SNAPSHOT_OVERRIDE
+    providers:
+      - id: deepseek-official
+        name: DeepSeek
+        models:
+          - id: deepseek-v4-flash
+          - id: deepseek-v4-pro
 
 - id: fs-local
   name: '@deepseek-ai/dsh-fs-local'

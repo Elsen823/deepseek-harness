@@ -7,7 +7,9 @@ import type {
   LlmFailure,
   Message,
   ModelModality,
+  ReasoningEffortId,
   ResolvedRetryPolicy,
+  ServiceTierId,
   StreamChunk,
   TokenUsage,
   ToolResultMessage,
@@ -31,6 +33,18 @@ export type AgentDriverId = Branded<'AgentDriverId'>
  */
 export function AgentDriverId(id: string): AgentDriverId {
   return id as AgentDriverId
+}
+
+/** Identifies one native conversation owned by an Agent Driver. */
+export type NativeConversationId = Branded<'NativeConversationId'>
+
+/**
+ * Brand a native conversation identity at the Driver adapter boundary.
+ * @param id - raw native conversation identity returned by the provider.
+ * @returns the branded identity.
+ */
+export function NativeConversationId(id: string): NativeConversationId {
+  return id as NativeConversationId
 }
 
 /** Identifies one session in the store (and its persistence artifacts). */
@@ -236,6 +250,32 @@ export interface RequestContext {
   model: string
   /** Maximum combined request and response context in tokens, when advertised. */
   contextWindow?: number
+}
+
+/** Provider route and optional adapter-owned reasoning effort selected for one Session. */
+export interface ModelSelection {
+  /** Registered provider route. */
+  readonly provider: string
+  /** Provider-owned model id. */
+  readonly model: string
+  /** Explicit adapter-owned reasoning effort; absence preserves provider-default behavior. */
+  readonly reasoningEffort?: ReasoningEffortId
+}
+
+/** Why a durable Session model selection was committed. */
+export type ModelSelectionSource = 'user' | 'default'
+
+/** Durable evidence source for a Model Selection that actually reached a request boundary. */
+export type EffectiveModelSelectionSource = 'request/header' | 'agent-driver/model-request'
+
+/** Most recent effective Model Selection evidence, kept distinct from accepted intent. */
+export interface EffectiveModelSelectionEvidence {
+  /** The exact provider/model/effort fields observed by the request producer. */
+  readonly selection: ModelSelection
+  /** Event vocabulary that carried the effective evidence. */
+  readonly source: EffectiveModelSelectionSource
+  /** Sequence of the evidence event in the Session log. */
+  readonly seq: number
 }
 
 /**
@@ -674,6 +714,20 @@ export interface SessionEventMap {
    * It is log-only; the latest snapshot reconstructs the request header.
    */
   'request/header': { header: EpochHeader; reason: RequestHeaderReason }
+  /**
+   * Latest accepted Session model intent. A user selection is durable before
+   * any Turn consumes it; a default selection is materialized when the first
+   * prompt is accepted. Effective request configuration remains recorded by
+   * `request/header` or `agent-driver/model-request`.
+   */
+  'model/selected': ModelSelection & { source: ModelSelectionSource }
+  /**
+   * Whole-value per-session service-tier choice. A branded id selects an
+   * adapter-owned tier; `null` explicitly restores the provider standard.
+   * Request producers fold this event in `agent/request`, while the effective
+   * value remains recorded in each changed `request/header`.
+   */
+  'llm/service-tier': { serviceTier: ServiceTierId | null }
   /**
    * Route metadata for the next request, logged only when the route or capacity
    * changes. It does not participate in request reconstruction or header equality.

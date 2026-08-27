@@ -10,7 +10,7 @@
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { z } from 'zod'
-import SessionStore from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId } from '@deepseek-ai/dsh-session'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import type { ProjectionDefinition } from '@deepseek-ai/dsh-session-projection'
@@ -60,7 +60,7 @@ async function harness(): Promise<{ ctx: Context; session: Session }> {
   const ctx = new Context()
   await ctx.plugin(SessionStore)
   await ctx.plugin(SessionProjectionRegistry)
-  return { ctx, session: ctx.sessions.create() }
+  return { ctx, session: ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } }) }
 }
 
 const mark = (session: Session, marks: string[]): SessionEvent =>
@@ -110,7 +110,7 @@ describe('SessionProjectionRegistry drive', () => {
 
   it('drives independently per session (cells are per-session watermarks)', async () => {
     const { ctx, session } = await harness()
-    const other = ctx.sessions.create()
+    const other = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     ctx.sessionProjections.register(marksUnit())
     mark(session, ['one'])
     mark(other, ['two'])
@@ -226,7 +226,7 @@ describe('SessionProjectionRegistry drive', () => {
     expect(rows['test/marks']).toEqual({ ver: 1, seq: markEvent.seq, val: { marks: ['a'] } })
     expect(rows['test/count']).toEqual({ ver: 7, seq: markEvent.seq, val: 1 })
     // Empty log: init-derived state at watermark -1.
-    const fresh = ctx.sessions.create()
+    const fresh = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     expect(ctx.sessionProjections.checkpoint(fresh)['test/marks']).toEqual({ ver: 1, seq: -1, val: null })
   })
 

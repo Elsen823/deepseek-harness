@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
 import Include from '@deepseek-ai/cordis-plugin-include'
-import AgentRegistry, { Inbox } from '@deepseek-ai/dsh-agent'
+import AgentRegistry, { createModelSelectionOwner, Inbox } from '@deepseek-ai/dsh-agent'
 import type { Agent, AgentStatus } from '@deepseek-ai/dsh-agent'
 import CommandRuntime from '@deepseek-ai/dsh-commands'
 import SessionStore, { AgentDriverId, SessionId } from '@deepseek-ai/dsh-session'
@@ -35,6 +35,7 @@ function agent(ctx: Context): Agent {
     id,
     options: {},
     session,
+    modelSelection: createModelSelectionOwner(session),
     inbox,
     ctx: scope.ctx,
     get status() { return status },

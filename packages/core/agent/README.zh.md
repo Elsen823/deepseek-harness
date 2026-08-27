@@ -12,7 +12,7 @@ Agent 接口、注册表、进程本地发起方作用域，以及 `agent/*` 事
 
 ### 公开 API
 
-带作用域的注册接口：`Agent.ctx` 是 agent 的作用域上下文（`dsh-scope`，键 = 该 agent）。通过它注册工具／段／变量／监听器，只对该 agent 生效，并在 dispose（资源释放）时全部撤销。`agentEvents(ctx, agent)` 是普通 agent 主体操作的融合分发器（一次完成载体 + 注入主体）；其通知 mode 会调用每个监听器，并同时收容同步抛出和返回 Promise 的拒绝。注册表生命周期对复用一个稳定路由载体。`assembleContextFor(agent)` 构建按 agent 的组装上下文（同时包含 `agent` + `scope`）。`installAgentLlmTarget(agentCtx, target)` 在提示词组装期间快照可变的提供方／模型／推理（reasoning）强度选择，将路由应用到提示词变量，并将完整目标应用到一个步骤的请求路由；如果没有选定推理强度，则会清除继承的推理强度，使该目标使用适配器／提供方默认值。`CreateAgentOptions.setup(agentCtx)` 和 `ResumeAgentOptions.setup(agentCtx)` 在新建或恢复的 agent 尚未发布时，组合其带作用域的世界。Setup 是受信任、仅用于组合的同进程代码：只有创建完成后才能驱动 agent。
+带作用域的注册接口：`Agent.ctx` 是 agent 的作用域上下文（`dsh-scope`，键 = 该 agent）。通过它注册工具／段／变量／监听器，只对该 agent 生效，并在 dispose（资源释放）时全部撤销。`agentEvents(ctx, agent)` 是普通 agent 主体操作的融合分发器（一次完成载体 + 注入主体）；其通知 mode 会调用每个监听器，并同时收容同步抛出和返回 Promise 的拒绝。注册表生命周期对复用一个稳定路由载体。`assembleContextFor(agent)` 构建按 agent 的组装上下文（同时包含 `agent` + `scope`）。每个 Agent Driver 都会为其 Session 构造 `agent.modelSelection`；该 owner 持有一个 `{ provider, model, reasoningEffort? }` 选择、持久化 accepted intent、effective 证据、继承 default 和冻结的 Turn 选择。Service tier 与其他 request／Driver 设置不属于它。`createModelSelectionOwner()` 是 Driver 实现使用的构造 seam。`CreateAgentOptions.setup(agentCtx)` 和 `ResumeAgentOptions.setup(agentCtx)` 在新建或恢复的 agent 尚未发布时，组合其带作用域的世界。Setup 是受信任、仅用于组合的同进程代码：只有创建完成后才能驱动 agent。
 
 `AgentOptions` 提供初始的提供方／模型路由，以及可选的正数 `maxTokens` 输出上限。具体循环会解析确切模型的适配器默认值，把生效上限记录到请求 header，并应用到每次对话模型请求；显式 Agent 选项优先，省略时由适配器或提供方路由默认值控制。
 
@@ -22,6 +22,8 @@ Agent 接口、注册表、进程本地发起方作用域，以及 `agent/*` 事
 - `ctx.agents.isOwnedBy(id: SessionId, owner: Agent): boolean`：该确切实时条目是否通过父 agent 的作用域上下文创建；运行时所有权与持久会话谱系无关。
 - `ctx.agents.list(): Agent[]`
 - `ctx.agents.roots(): Agent[]`：在没有所属 agent 上下文的情况下创建的实时 agent；带谱系的恢复会话仍可能是运行时根。
+
+如果准备的 Agent 没有提供 Session 局部 owner，注册表会在 setup 或发布前拒绝它。Driver 使用 `agent.modelSelection.accept()` 接受选择；接受操作与 Turn 开始时的捕获会串行化，`beginTurn()` 只在首个 prompt 被接纳时物化继承的 default，`Session` 则把 accepted intent 与 effective request 证据分开保存。内置 `dsh` Driver 会在提示词组装前捕获一个冻结的解析值，并在该 Turn 的每个 step 和 retry 中使用它；steering 保持该值，而新的接受值等到下一个 Turn。
 
 <a id="initiating-agent-scope"></a>
 
@@ -47,6 +49,8 @@ Agent 接口、注册表、进程本地发起方作用域，以及 `agent/*` 事
 两条路径都会先进入 Session 和 Agent，再依次通知 `session/created`、`agent/created` 与 `agent/session-start`；setup 或 commit 失败、取消、拥有者卸载、Driver 卸载和同步发布 veto 都汇合到同一回滚。并发同 ID 操作可以同时准备，但最终进入只允许一个发布，其余操作仅回收自己的私有资源。
 
 `AgentHandle = { agent: Agent; dispose(): Promise<void> }`。调用方 fiber、确切 Driver 提供方代际与 handle 共同拥有一个记忆化 teardown。它中止准备，等待 Driver 钩子停止、完全停稳并撤销 `agent.ctx`，再依次分离 Agent 和 Session；只持有裸 Agent 的注册表观察方不能执行 dispose。
+
+`ctx.agents.restartHandoff({ generation?, signal? })` 是独立且显式的进程替换生命周期。启用配置后，它会关闭新的准入，在 `quiescenceTimeoutMs` 内等待常驻 Agent 及其 Session flush，然后为下一代原子发布 sidecar 记录；超时或 Driver 拒绝会恢复 active 服务，不调用 `dispose()`，也不发出释放事件。Driver 的校验在发布前完成，每个发布后的 commit 都必须是不可失败的进程本地状态翻转；违反此要求的异常会让注册表保持 committed，而不会重新开放旧代际。`adoptRestartHandoffs()` 只 claim 精确的常驻记录，校验持久化 Session 前缀与 Driver 绑定，并把每个新准备的 handle 转交给下一代所有者；如果转交成功后持久完成发生竞争，替代 Agent 与 claim 会继续保持隔离。详见[进程代际交接决策](../../../.agents/notes/implemented/architecture/2026-08-26-process-generation-restart-handoff.zh.md)。
 
 ### 实时事件
 
@@ -74,7 +78,7 @@ inbox 的实时通知刻意采用逐消息的最小载荷：`agent/inbox/inserte
 - `agent.inject(message)`：将不会唤醒的 `next-step` 上下文排队。运行中的驱动器会在最近的后续 pre-step 边界领取它；idle 驱动器则会让它保持待处理，直至 `followup()` 或 `steer()` 唤醒驱动器。若某次请求的 pre-step 已经领取完批次，它可能赶不上该请求。
 - `agent.cancel(cause, options?)`：取消活跃驱动器，并在未设置 `options.keepInbox` 时持久取消全部待处理 inbox 工作。空闲取消是空操作。
 - `agent.whenIdle()`：观察整个 agent 达到完全停稳，包括当前驱动器退役前调度的替代工作。它不结算任何特定消息。
-- `agent.session`、`agent.status`、`agent.options`、`agent.id`、`agent.ctx`
+- `agent.session`、`agent.status`、`agent.options`、`agent.modelSelection`、`agent.id`、`agent.ctx`
 
 `running` 描述驱动器范围的 drain 区间，而不是轮次仍打开的证明；它可以覆盖轮次关闭、持久性检查点和连续的排队轮次。只有拥有完整区间的调用方才能将其概括为一次运行的结果（[决策](../../../.agents/notes/implemented/architecture/2026-07-30-followup-enqueue-and-owned-runs.zh.md)）。
 

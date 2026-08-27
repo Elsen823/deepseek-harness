@@ -7,12 +7,12 @@
 
 import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import AgentRegistry, { agentEvents } from '@deepseek-ai/dsh-agent'
+import AgentRegistry, { createModelSelectionOwner } from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import AttachmentStore from '@deepseek-ai/dsh-attachment'
 import LlmRuntime, { LlmAdapter, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type {
-  GenerateOptions, LlmCallConfig, LlmModelInfo, LlmModelReasoningInfo, LlmProviderInfo,
+  GenerateOptions, LlmModelInfo, LlmModelReasoningInfo, LlmProviderInfo,
   LlmResolvedModelInfo, StreamChunk,
   UserMessage,
 } from '@deepseek-ai/dsh-llm'
@@ -73,11 +73,7 @@ const REASONING: LlmModelReasoningInfo = {
   defaultEffort: ReasoningEffortId('high'),
 }
 
-async function harness(logged?: {
-  provider: string
-  model: string
-  reasoningEffort?: ReasoningEffortId
-}): Promise<{
+async function harness(defaultSelection = () => ({ provider: 'deepseek-official', model: 'deepseek-chat' })): Promise<{
   ctx: Context
   agent: Agent
   sessionId: SessionId
@@ -102,15 +98,22 @@ async function harness(logged?: {
     { provider: 'duplicate', id: 'same', name: 'Same Again' },
   ]))
   const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
-  if (logged !== undefined) {
-    session.append('request/header', { header: { config: logged }, reason: 'initial' })
-  }
   const agent = {
     id: session.id,
     session,
+    modelSelection: createModelSelectionOwner(session, {
+      defaultSelection,
+    }),
     status: 'running',
     ctx,
     inbox: { nextTurn: [], nextStep: [] },
+    followup: () => {},
+    steer: () => {},
+    inject: () => {},
+    send: () => {},
+    cancel: () => {},
+    runMaintenance: <T>(task: (signal: AbortSignal) => Promise<T>) => task(new AbortController().signal),
+    whenIdle: () => Promise.resolve(),
   } as unknown as Agent
   ctx.agents.register(agent)
   return { ctx, agent, sessionId: session.id }
@@ -130,6 +133,28 @@ function registerTextOnly(ctx: Context): void {
 }
 
 describe('Web session model selection', () => {
+  it('marks Driver-incompatible model and effort rows disabled without hiding them', async () => {
+    const { ctx, agent, sessionId } = await harness()
+    const validate = vi.fn(async (selection: { provider: string; model: string; reasoningEffort?: string }) => {
+      if (selection.model === 'deepseek-reasoner' && selection.reasoningEffort === 'max') {
+        throw new Error('native route does not support Max')
+      }
+    })
+    vi.spyOn(agent.modelSelection, 'validate').mockImplementation(validate)
+    const api = createApiProxy(ctx, { defaultModelSelection: () => ({ provider: 'deepseek-official', model: 'deepseek-chat' }), cwd: '/tmp' })
+
+    const catalog = expectValue(await api.sessions.models(request({ sessionId })))
+    const reasoner = catalog.groups[0]?.models.find(model => model.id === 'deepseek-reasoner')
+    expect(reasoner?.disabledReason).toBeUndefined()
+    expect(reasoner?.reasoning?.efforts.find(effort => effort.id === 'max')).toMatchObject({
+      disabledReason: 'native route does not support Max',
+    })
+    expect(validate).toHaveBeenCalledWith({
+      provider: 'deepseek-official', model: 'deepseek-reasoner', reasoningEffort: 'max',
+    }, undefined)
+    await ctx.fiber.dispose()
+  })
+
   it('validates an ordered image batch before persisting any member', async () => {
     const { ctx, agent, sessionId } = await harness()
     const validateImage = vi.fn((_input: { data: Uint8Array }) => Promise.resolve())
@@ -221,7 +246,7 @@ describe('Web session model selection', () => {
       id: 'summary', role: 'user', source: { kind: 'plugin', plugin: 'compact' },
       content: [{ type: 'text', text: 'image summarized' }],
     } as never, {
-      surfaceOp: { op: 'replace', start: 0, end: agent.session.events.length - 1 },
+      surfaceOp: { op: 'replace', start: 0, end: agent.session.surface.nodes.at(-1) ?? 0 },
       sourceEventSeqs: agent.session.events.map(event => event.seq),
     })
     ;(agent.inbox.nextTurn as UserMessage[]).push({
@@ -267,55 +292,12 @@ describe('Web session model selection', () => {
     expect(readImage).toHaveBeenCalledOnce()
     await ctx.fiber.dispose()
   })
-  it('groups successful providers and leaves an unlisted current selection out of the catalog', async () => {
-    const { ctx, sessionId } = await harness({
-      provider: 'deepseek-official',
-      model: 'private-preview',
-      reasoningEffort: ReasoningEffortId('max'),
-    })
-    const api = createApiProxy(ctx, { defaultModelSelection: () => ({ provider: 'deepseek-official', model: 'deepseek-chat' }), cwd: '/tmp' })
-
-    const catalog = expectValue(await api.sessions.models(request({ sessionId })))
-    expect(catalog.current).toEqual({
-      provider: 'deepseek-official',
-      model: 'private-preview',
-      reasoningEffort: 'max',
-    })
-    expect(catalog.groups).toEqual([{
-      id: 'deepseek-official',
-      name: 'DeepSeek',
-      models: [
-        { id: 'deepseek-chat', name: 'DeepSeek Chat', reasoning: REASONING },
-        {
-          id: 'deepseek-reasoner',
-          name: 'DeepSeek Reasoner',
-          description: 'Reasoning model',
-          reasoning: REASONING,
-        },
-      ],
-    }])
-    expect(catalog.failures).toEqual([
-      { id: 'broken', name: 'Broken Provider', message: 'catalog offline' },
-      { id: 'metadata-broken', name: 'Metadata Broken', message: 'reasoning metadata offline' },
-      {
-        id: 'duplicate',
-        name: 'Duplicate Provider',
-        message: 'adapter returned invalid or duplicate model metadata for provider "duplicate"',
-      },
-    ])
-    await ctx.fiber.dispose()
-  })
-
-  it('accepts an advisory-unlisted model, rejects an unavailable provider, and switches only after the next assembly', async () => {
+  it('accepts an advisory-unlisted model and rejects an unavailable provider', async () => {
     const { ctx, agent, sessionId } = await harness()
     const api = createApiProxy(ctx, { defaultModelSelection: () => ({ provider: 'deepseek-official', model: 'deepseek-chat' }), cwd: '/tmp' })
-    const seed: LlmCallConfig = { provider: 'seed', model: 'seed', temperature: 0.2 }
-    const signal = new AbortController().signal
 
     expect(expectValue(await api.sessions.models(request({ sessionId }))).current)
       .toEqual({ provider: 'deepseek-official', model: 'deepseek-chat' })
-    expect((await ctx.systemPrompt.assemble()).variables)
-      .toMatchObject({ provider: 'deepseek-official', model: 'deepseek-chat' })
 
     const selected = expectValue(await api.sessions.selectModel(request({
       sessionId,
@@ -328,20 +310,15 @@ describe('Web session model selection', () => {
       model: 'private-preview',
       reasoningEffort: 'max',
     })
-    await expect(agentEvents(ctx, agent).waterfall(
-      'agent/request', { turn: 1, step: 0, signal }, () => Promise.resolve(seed),
-    )).resolves.toMatchObject({ provider: 'deepseek-official', model: 'deepseek-chat' })
-
-    expect((await ctx.systemPrompt.assemble()).variables)
-      .toMatchObject({ provider: 'deepseek-official', model: 'private-preview' })
-    await expect(agentEvents(ctx, agent).waterfall(
-      'agent/request', { turn: 1, step: 1, signal }, () => Promise.resolve(seed),
-    )).resolves.toMatchObject({
-      provider: 'deepseek-official',
-      model: 'private-preview',
-      reasoningEffort: 'max',
+    expect(agent.session.events.at(-1)).toMatchObject({
+      type: 'model/selected',
+      data: {
+        provider: 'deepseek-official',
+        model: 'private-preview',
+        reasoningEffort: 'max',
+        source: 'user',
+      },
     })
-
     const unsupported = await api.sessions.selectModel(request({
       sessionId,
       provider: 'deepseek-official',
@@ -375,8 +352,8 @@ describe('Web session model selection', () => {
   })
 
   it('reads the Agent default live for a session whose log names no selection', async () => {
-    const { ctx, sessionId } = await harness()
     let stored = { provider: 'deepseek-official', model: 'deepseek-chat' }
+    const { ctx, sessionId } = await harness(() => stored)
     const api = createApiProxy(ctx, {
       defaultModelSelection: () => stored,
       cwd: '/tmp',
@@ -395,61 +372,29 @@ describe('Web session model selection', () => {
     await ctx.fiber.dispose()
   })
 
-  it('keeps a session on its logged selection when the Agent default differs', async () => {
-    const { ctx, sessionId } = await harness({
-      provider: 'deepseek-official',
-      model: 'deepseek-chat',
-    })
-    let stored = { provider: 'deepseek-official', model: 'deepseek-chat' }
-    const api = createApiProxy(ctx, {
-      defaultModelSelection: () => stored,
-      cwd: '/tmp',
-    })
-
-    stored = { provider: 'duplicate', model: 'same' }
-    expect(expectValue(await api.sessions.models(request({ sessionId }))).current)
-      .toEqual({ provider: 'deepseek-official', model: 'deepseek-chat' })
-    await ctx.fiber.dispose()
-  })
-
-  it('saves an accepted selection as the default and survives a storage failure', async () => {
+  it('keeps an accepted selection on its Session instead of changing the deployment default', async () => {
     const { ctx, sessionId } = await harness()
-    const saved: unknown[] = []
-    let reject = false
     const api = createApiProxy(ctx, {
       defaultModelSelection: () => ({ provider: 'deepseek-official', model: 'deepseek-chat' }),
-      saveDefaultModelSelection: (selection) => {
-        saved.push(selection)
-        return reject ? Promise.reject(new Error('read-only document')) : Promise.resolve()
-      },
       cwd: '/tmp',
     })
 
     expectValue(await api.sessions.selectModel(request({
       sessionId, provider: 'deepseek-official', model: 'deepseek-reasoner', reasoningEffort: 'max',
     })))
-    expect(saved).toEqual([
-      { provider: 'deepseek-official', model: 'deepseek-reasoner', reasoningEffort: 'max' },
-    ])
-
-    // A refused selection never becomes anyone's default.
+    expect(expectValue(await api.sessions.models(request({ sessionId }))).current).toEqual({
+      provider: 'deepseek-official', model: 'deepseek-reasoner', reasoningEffort: 'max',
+    })
+    // A refused selection never changes the addressed Session or the default.
     await api.sessions.selectModel(request({ sessionId, provider: 'missing', model: 'model' }))
-    expect(saved).toHaveLength(1)
-
-    // Storage failing is not the selection failing: the switch already applies
-    // to this session, so the call still succeeds.
-    reject = true
-    const stillAccepted = expectValue(await api.sessions.selectModel(request({
-      sessionId, provider: 'deepseek-official', model: 'deepseek-chat',
-    })))
-    expect(stillAccepted.selected).toEqual({ provider: 'deepseek-official', model: 'deepseek-chat', reasoningEffort: 'high' })
-    expect(expectValue(await api.sessions.models(request({ sessionId }))).current)
-      .toEqual({ provider: 'deepseek-official', model: 'deepseek-chat', reasoningEffort: 'high' })
+    expect(expectValue(await api.sessions.models(request({ sessionId }))).current).toEqual({
+      provider: 'deepseek-official', model: 'deepseek-reasoner', reasoningEffort: 'max',
+    })
     await ctx.fiber.dispose()
   })
 
   it('refuses a prompt no adapter can route, and reports it on the directory', async () => {
-    const { ctx, sessionId } = await harness()
+    const { ctx, sessionId } = await harness(() => ({ provider: 'deleted-gateway', model: 'deleted-model' }))
     const api = createApiProxy(ctx, {
       defaultModelSelection: () => ({ provider: 'deleted-gateway', model: 'deleted-model' }),
       cwd: '/tmp',
@@ -479,7 +424,7 @@ describe('Web session model selection', () => {
   })
 
   it('serves a session and its catalog when the stored default names a route that is gone', async () => {
-    const { ctx, sessionId } = await harness()
+    const { ctx, sessionId } = await harness(() => ({ provider: 'deleted-gateway', model: 'deleted-model' }))
     const api = createApiProxy(ctx, {
       // What a Models-page removal leaves behind: the settings document still
       // names the route the user last picked, and nothing serves it.

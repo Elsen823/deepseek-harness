@@ -9,7 +9,7 @@
  * @module @deepseek-ai/dsh-sdk-client
  */
 
-export { DeepSeekHarness, HarnessSession } from './api.ts'
+export { DeepSeekHarness, HarnessSession, selectedModelSelection } from './api.ts'
 export type { RunOptions } from './api.ts'
 export {
   HarnessClient,
@@ -19,7 +19,14 @@ export {
 } from './client.ts'
 export type { NotificationSubscription } from './client.ts'
 export { JsonRpcResponseError } from '@deepseek-ai/dsh-sdk-protocol'
-export type { AgentDriverCatalogItem, AgentDriverCatalogResult, SessionRuntimeResult } from '@deepseek-ai/dsh-sdk-protocol'
+export type {
+  AgentDriverCatalogItem,
+  AgentDriverCatalogResult,
+  ModelSelection,
+  ModelSelectionSource,
+  SelectedModelSelection,
+  SessionRuntimeResult,
+} from '@deepseek-ai/dsh-sdk-protocol'
 export type {
   ContentBlock,
   DeepSeekHarnessOptions,

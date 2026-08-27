@@ -19,6 +19,12 @@ const OPTIONS: SelectOption[] = [
   { id: 'light', label: 'Light', active: true },
   { id: 'sepia', label: 'Sepia', detail: 'warm' },
 ]
+const DISABLED: SelectOption = {
+  id: 'disabled',
+  label: 'Disabled route',
+  detail: 'Provider unavailable',
+  disabledReason: 'Codex Driver does not support this route',
+}
 const GATED: SelectOption = {
   id: 'full',
   label: 'Full access',
@@ -155,6 +161,20 @@ describe('open and options load', () => {
 })
 
 describe('search / move / highlight over the filtered list', () => {
+  it('keeps incompatible rows visible but skips them and never settles them', async () => {
+    const onSelect = vi.fn()
+    const { popup, deps } = await readyPopup({ options: () => Promise.resolve([OPTIONS[0]!, DISABLED, OPTIONS[1]!]), onSelect })
+    expect(popup.state.getSnapshot().active).toBe(0)
+    popup.move(1)
+    expect(popup.state.getSnapshot().active).toBe(2)
+    popup.move(1)
+    expect(popup.state.getSnapshot().active).toBe(0)
+    await popup.select(1)
+    expect(onSelect).not.toHaveBeenCalled()
+    expect(deps.consume).not.toHaveBeenCalled()
+    expect(popup.state.getSnapshot().open).toBe(true)
+  })
+
   it('setSearch rebases the highlight to 0 and ignores closed shells and identical text', async () => {
     const { popup } = await readyPopup()
     popup.move(1)

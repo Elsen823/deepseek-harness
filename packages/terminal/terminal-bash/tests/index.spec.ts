@@ -4,7 +4,7 @@ import { resolve } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
 import SessionStore, { AgentDriverId, Session, SessionId } from '@deepseek-ai/dsh-session'
-import AgentRegistry, { Inbox, type Agent } from '@deepseek-ai/dsh-agent'
+import AgentRegistry, { createModelSelectionOwner, Inbox, type Agent } from '@deepseek-ai/dsh-agent'
 import SandboxProvider from '@deepseek-ai/dsh-sandbox'
 import type { ConfinedArgv, SandboxPolicy } from '@deepseek-ai/dsh-sandbox'
 import SandboxPolicyService, { setSandboxMode } from '@deepseek-ai/dsh-sandbox-policy'
@@ -51,7 +51,11 @@ function agent(ctx: Context, cwd?: string): Agent {
   const id = SessionId('agent')
   const session = Session.create(id, undefined, { version: 0, driverId: AgentDriverId('dsh'), id, createdAt: 0, ...cwd === undefined ? {} : { cwd } })
   return {
-    id, options: {}, session, inbox: new Inbox(session, { inserted: () => {}, discarded: () => {}, claimed: () => {} }),
+    id,
+    options: {},
+    session,
+    modelSelection: createModelSelectionOwner(session),
+    inbox: new Inbox(session, { inserted: () => {}, discarded: () => {}, claimed: () => {} }),
     status: 'idle',
     ctx,
     send: () => {},
@@ -520,7 +524,11 @@ describe('terminal-bash plugin shape', () => {
     const session = ctx.sessions.create(SessionId('mode-owner'), { meta: { driverId: AgentDriverId('dsh') } })
     const ownerFiber = await ctx.plugin(() => {})
     const owner: Agent = {
-      id: session.id, options: {}, session, inbox: new Inbox(session, { inserted: () => {}, discarded: () => {}, claimed: () => {} }),
+      id: session.id,
+      options: {},
+      session,
+      modelSelection: createModelSelectionOwner(session),
+      inbox: new Inbox(session, { inserted: () => {}, discarded: () => {}, claimed: () => {} }),
       status: 'idle',
       ctx: ownerFiber.ctx,
       send: () => {},
@@ -569,7 +577,11 @@ describe('terminal-bash plugin shape', () => {
     const session = ctx.sessions.create(SessionId('pending-mode-owner'), { meta: { driverId: AgentDriverId('dsh') } })
     const ownerFiber = await ctx.plugin(() => {})
     const owner: Agent = {
-      id: session.id, options: {}, session, inbox: new Inbox(session, { inserted: () => {}, discarded: () => {}, claimed: () => {} }),
+      id: session.id,
+      options: {},
+      session,
+      modelSelection: createModelSelectionOwner(session),
+      inbox: new Inbox(session, { inserted: () => {}, discarded: () => {}, claimed: () => {} }),
       status: 'idle',
       ctx: ownerFiber.ctx,
       send: () => {},

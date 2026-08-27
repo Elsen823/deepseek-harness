@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
-import AgentRegistry, { Inbox } from '@deepseek-ai/dsh-agent'
+import AgentRegistry, { createModelSelectionOwner, Inbox } from '@deepseek-ai/dsh-agent'
 import type { Agent, AgentStatus } from '@deepseek-ai/dsh-agent'
 import CommandRuntime from '@deepseek-ai/dsh-commands'
 import GoalService from '@deepseek-ai/dsh-goal'
@@ -26,6 +26,7 @@ function stubAgent(ctx: Context, id: string): { agent: Agent; session: Session }
     id: session.id,
     options: {},
     session,
+    modelSelection: createModelSelectionOwner(session),
     inbox,
     ctx: new Context(),
     get status() { return status },

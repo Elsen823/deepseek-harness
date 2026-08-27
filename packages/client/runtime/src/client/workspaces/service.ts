@@ -8,7 +8,7 @@ import type {
 import type { SnapshotStore } from '../contract/store.ts'
 import { createSnapshotStore } from '../contract/store.ts'
 import type { SessionsPort, SessionsPortList } from '../contract/sessions-port.ts'
-import type { IWorkspaces } from '../contract/workspaces.ts'
+import type { IWorkspaces, WorkspaceConnectOptions } from '../contract/workspaces.ts'
 import { WorkspaceManager, type WorkspaceListPhase } from './manager.ts'
 
 /** Workspace list plus the two-baseline readiness and default-target projection. */
@@ -53,8 +53,8 @@ export class WorkspaceRuntime implements IWorkspaces {
   readonly list: SnapshotStore<WorkspaceListState>
   /** Workspace baseline and frame owner. */
   private readonly manager: WorkspaceManager
-  /** In-flight blank-session creates keyed by workspace (connectWorkspace coalescing). */
-  private readonly connecting = new Map<WorkspaceId, Promise<SessionId>>()
+  /** In-flight blank-session creates keyed by the Workspace and requested Driver pair. */
+  private readonly connecting = new Map<string, Promise<SessionId>>()
   /** Guards the runtime-owned one-shot initial-selection subscription. */
   private initialSelectionStarted = false
 
@@ -84,15 +84,20 @@ export class WorkspaceRuntime implements IWorkspaces {
    * store and `sessions.binding(id)` resolves synchronously — draft hand-off
    * may write the new scope's machine before opening.
    * @param workspaceId - chosen Workspace (must be in the workspace list).
+   * @param options - optional Driver binding that narrows reuse and creation.
    * @returns the reused or newly created session id.
    */
-  async connectWorkspace(workspaceId: WorkspaceId): Promise<SessionId> {
+  async connectWorkspace(
+    workspaceId: WorkspaceId,
+    options: WorkspaceConnectOptions = {},
+  ): Promise<SessionId> {
     const workspace = this.list.getSnapshot().items.find(item => item.workspaceId === workspaceId)
     if (workspace === undefined) throw new Error(`workspaces.connectWorkspace: unknown workspace ${workspaceId}`)
     // Coalesce concurrent connects: a create's summary lands without cwd
     // until the host frame arrives, so a second call inside that window
     // would miss the reuse scan and mint another hidden blank session.
-    const inflight = this.connecting.get(workspaceId)
+    const connectionKey = JSON.stringify([workspaceId, options.driverId ?? null])
+    const inflight = this.connecting.get(connectionKey)
     if (inflight !== undefined) return inflight
     // Reuse requires workspace membership (id in sessionIds AND same
     // canonical cwd — the host's own membership rule), never cwd alone:
@@ -107,11 +112,14 @@ export class WorkspaceRuntime implements IWorkspaces {
       const summary = sessions.byId[id]
       if (summary !== undefined && summary.blank && summary.cwd === workspace.path
         && workspace.sessionIds.includes(summary.id)
+        && (options.driverId === undefined || summary.driverId === options.driverId)
         && !archived.includes(summary.id)) return summary.id
     }
-    const attempt = this.sessions.create({ workspaceId })
-      .finally(() => { this.connecting.delete(workspaceId) })
-    this.connecting.set(workspaceId, attempt)
+    const attempt = this.sessions.create({
+      workspaceId,
+      ...(options.driverId === undefined ? {} : { driverId: options.driverId }),
+    }).finally(() => { this.connecting.delete(connectionKey) })
+    this.connecting.set(connectionKey, attempt)
     return attempt
   }
 

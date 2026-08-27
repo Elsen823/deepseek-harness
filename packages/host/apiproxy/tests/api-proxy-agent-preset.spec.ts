@@ -9,7 +9,7 @@ import { mkdtempSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
-import AgentRegistry from '@deepseek-ai/dsh-agent'
+import AgentRegistry, { createModelSelectionOwner } from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import SessionStore, { AgentDriverId, SessionId, type Session } from '@deepseek-ai/dsh-session'
 import UserQuestionService from '@deepseek-ai/dsh-user-questions'
@@ -31,7 +31,7 @@ function request<P>(payload: P): RpcRequest<P> {
 
 /** Minimal live agent; the gateway only needs identity and its session. */
 function stubAgent(session: Session): Agent {
-  return { id: session.id, session, status: 'idle' } as unknown as Agent
+  return { id: session.id, session, modelSelection: createModelSelectionOwner(session), status: 'idle' } as unknown as Agent
 }
 
 /**

@@ -91,6 +91,8 @@ turn/end
 
 `agent/pre-step` 决定模型看到什么。监听器可以改写已领取的消息，也可以直接拒绝它们；首次领取被拒绝或被改写为空时，仍会关闭一个不含步骤的持久轮次，因此日志会记录这次尝试。每个步骤读取插件注册的提示词片段和工具 schema。
 
+内置 `dsh` Driver 会在首个 prompt 被接纳后、提示词组装前捕获一个不可变的 Turn Model Selection。该 Turn 的每个步骤和 retry 都使用该 provider/model 与已解析的 reasoning effort；Turn 运行中接受的选择应用于下一 Turn，而 steering 保持捕获的值。已接受的 `model/selected` intent 与 `request/header` 或 `agent-driver/model-request` 中的生效请求证据分开保存。
+
 详情见[时序图](agent-lifecycle.zh.md)、[工具流水线](tool-execution-pipeline.zh.md)和[取消与错误恢复](subsystems/core.zh.md#the-agent-handle)。
 
 ## 会话日志
@@ -98,6 +100,8 @@ turn/end
 会话日志是模型所见上下文的来源。`deriveMessages()` 从中投影出模型历史，原始 `assistant/chunk` 事件则保证回放和 UI 保真。fork、恢复、transcript（文本记录）、遥测和持久化都派生自该事件流。
 
 **模型可见即已记录。** 抵达模型请求的一切都必须能从日志重建，并由一项运行时不变量断言这一点。因此，新增一项模型可见输入就需要新增一个会话事件：扩展 `SessionEventMap` 并从日志渲染。
+
+进程替换属于独立的通用生命周期：显式重启交接会在模型可见日志之外发布带版本的采用状态，等待常驻 Session 与已接受的持久写入在配置的时限内停稳；拒绝时让旧代际继续提供服务。兼容的新代际只重新挂接明确选择常驻的 Session，并向客户端提供新的进程本地 handle；普通停止、提供方卸载和显式 Agent 释放仍保持释放语义。详见[重启交接 Agent Note](../.agents/notes/implemented/architecture/2026-08-26-process-generation-restart-handoff.zh.md)。
 
 ## 能力 seam
 

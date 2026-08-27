@@ -1,0 +1,9 @@
+# Test/example-only Web composition for the optional Claude Agent Driver.
+# The shipped web-app bundle deliberately does not load this provider; tests
+# opt in here so assembled and browser evidence exercises the same public
+# plugin rows a deployment would add in its own profile patch.
+- insert:
+    - id: claude-agent-driver
+      name: '@deepseek-ai/dsh-claude-agent-driver'
+    - id: ui-claude-agent-driver
+      name: '@deepseek-ai/dsh-client-ui-claude-agent-driver'

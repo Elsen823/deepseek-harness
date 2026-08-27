@@ -21,6 +21,14 @@ export const hostDescribeValueSchema = z.object({
   canOpenPath: z.boolean(),
 }) satisfies z.ZodType<Wire<ResponseValue<'host.describe'>>>
 
+/** host.restart request payload (empty object literal). */
+export const hostRestartRequestSchema = z.object({}) satisfies z.ZodType<Wire<RequestPayload<'host.restart'>>>
+
+/** host.restart response value. */
+export const hostRestartValueSchema = z.object({
+  accepted: z.literal(true),
+}) satisfies z.ZodType<Wire<ResponseValue<'host.restart'>>>
+
 /** host.pickDirectory request payload (empty object literal). */
 export const hostPickDirectoryRequestSchema = z.object({}) satisfies z.ZodType<Wire<RequestPayload<'host.pickDirectory'>>>
 

@@ -12,14 +12,23 @@ import type {
   AgentStatus,
   CancelOptions,
   InboxTarget,
+  ModelSelection,
+  ModelSelectionOwner,
   PreStepDecision,
   RequestErrorAction,
+  TurnModelSelection,
 } from '@deepseek-ai/dsh-agent'
-import { Inbox, agentEvents, assembleContextFor } from '@deepseek-ai/dsh-agent'
-import type { GenerateOptions, LlmCallConfig, Message, PreparedLlmCall } from '@deepseek-ai/dsh-llm'
+import { Inbox, agentEvents, assembleContextFor, createModelSelectionOwner } from '@deepseek-ai/dsh-agent'
+import type {
+  GenerateOptions,
+  LlmCallConfig,
+  Message,
+  PreparedLlmCall,
+} from '@deepseek-ai/dsh-llm'
 import {
   BlockAssembler,
   LlmError,
+  callConfigEquals,
   createAssistantMessage,
   deepFreeze,
   errorChain,
@@ -43,13 +52,50 @@ type Phase =
     lastTurn: number
     wakeRequested: boolean
   }
-  | { kind: 'running'; abort: AbortController; turn: number; step: number; wakeRequested: boolean }
+  | {
+    kind: 'running'
+    abort: AbortController
+    turn: number
+    step: number
+    wakeRequested: boolean
+    /** Final turn-end check is in progress; wakeups must survive the idle handoff. */
+    closing: boolean
+  }
 
 type StepEndReason = Extract<TurnEndReason, { kind: 'completed' | 'max-tokens' }>
 
 type PreparedStep =
   | { kind: 'reject' }
   | { kind: 'enter'; messages: UserMessage[]; assembly: PromptAssembly }
+
+/** Project one resolved call config onto the fields owned by Model Selection. */
+function selectionFromConfig(config: LlmCallConfig): ModelSelection {
+  return {
+    provider: config.provider,
+    model: config.model,
+    ...config.reasoningEffort === undefined ? {} : { reasoningEffort: config.reasoningEffort },
+  }
+}
+
+/** Build the provider lookup config without admitting unrelated request settings. */
+function selectionCallConfig(selection: ModelSelection): LlmCallConfig {
+  return {
+    provider: selection.provider,
+    model: selection.model,
+    ...selection.reasoningEffort === undefined ? {} : { reasoningEffort: selection.reasoningEffort },
+  }
+}
+
+/** Apply the immutable Turn selection after request middleware runs. */
+function applyTurnSelection(config: LlmCallConfig, selection: TurnModelSelection): LlmCallConfig {
+  const { reasoningEffort: _ignoredEffort, ...withoutEffort } = config
+  return {
+    ...withoutEffort,
+    provider: selection.provider,
+    model: selection.model,
+    ...selection.reasoningEffort === undefined ? {} : { reasoningEffort: selection.reasoningEffort },
+  }
+}
 
 /** Remove adapter-derived values before plugins propose the next request config. */
 function requestProposal(header: EpochHeader): LlmCallConfig {
@@ -63,8 +109,15 @@ function requestProposal(header: EpochHeader): LlmCallConfig {
 /** Drives one session through turn and step boundaries. */
 export class ReactLoopAgent implements Agent {
   readonly inbox: Inbox
+  readonly modelSelection: ModelSelectionOwner
   private phase: Phase
   private activityDone: Promise<void> = Promise.resolve()
+  /** Immutable selection captured for every step in the current Turn. */
+  private turnSelection: TurnModelSelection | undefined
+  /** One exact-model preparation retained from Turn start through the first request. */
+  private pendingPreparedCall: PreparedLlmCall | undefined
+  /** Whether Turn-start resolution materialized an omitted reasoning effort. */
+  private turnReasoningEffortDefaulted = false
 
   /** The agent-scoped registration boundary; the lifecycle owner unwinds it after the driver exits. */
   readonly scope: Scope
@@ -83,6 +136,29 @@ export class ReactLoopAgent implements Agent {
     public readonly options: AgentOptions,
     public readonly session: Session,
   ) {
+    this.modelSelection = createModelSelectionOwner(session, {
+      defaultSelection: () => options.provider === undefined || options.model === undefined
+        ? undefined
+        : { provider: options.provider, model: options.model },
+      validate: async (selection) => {
+        await this.loopCtx.llm.resolveCallConfig(selectionCallConfig(selection))
+      },
+      resolve: async (selection, signal) => {
+        const selected = this.modelSelection.selected
+        const resolvedSelection = selected?.source === 'default'
+          && options.provider !== undefined
+          && options.model !== undefined
+          ? {
+            provider: options.provider,
+            model: options.model,
+            ...selection.reasoningEffort === undefined ? {} : { reasoningEffort: selection.reasoningEffort },
+          }
+          : selection
+        const prepared = await this.loopCtx.llm.prepareCall(selectionCallConfig(resolvedSelection), signal)
+        this.pendingPreparedCall = prepared
+        return selectionFromConfig(prepared.config)
+      },
+    })
     this.dispatch = agentEvents(loopCtx, this)
     this.inbox = new Inbox(session, {
       inserted: (message) => { this.dispatch.emit('agent/inbox/inserted', { message }) },
@@ -116,7 +192,7 @@ export class ReactLoopAgent implements Agent {
     const wakingAfterAbort = wakeup && this.phase.kind !== 'idle' && this.phase.abort.signal.aborted
     const resolvedTarget = wakingAfterAbort ? 'next-turn' : target
     this.inbox.splice(resolvedTarget, Infinity, 0, [message])
-    if (wakeup) this.wakeDriver(wakingAfterAbort)
+    if (wakeup) this.wakeDriver(true, wakingAfterAbort)
   }
 
   followup(input: UserMessage): void {
@@ -166,16 +242,18 @@ export class ReactLoopAgent implements Agent {
    * activity. A wake sent while idle always opens its turn boundary, even
    * when its message was cleared; only a latched replay is suppressed when
    * the queue no longer holds the wake.
-   * @param wakeAfterAbort - the {@link send} classification, captured before
-   *   the inbox insertion so a reentrant cancel cannot reclassify it.
+   * @param wakeup - whether a caller requested an activity wake.
+   * @param wakeAfterAbort - whether the wake was redirected past an aborted activity.
    */
-  private wakeDriver(wakeAfterAbort = false): void {
+  private wakeDriver(wakeup = false, wakeAfterAbort = false): void {
     if (this.phase.kind !== 'idle') {
-      // Maintenance and aborted drivers cannot deliver the wake: latch it for
-      // replay at convergence. Live drivers claim queued work themselves;
-      // disposal never latches, so teardown waits on no model turn.
+      // A live driver usually claims queued work itself. Retain a wake only
+      // during the final turn-end check or after cancellation, so a message
+      // admitted across the idle handoff cannot be stranded. Disposal never
+      // latches, so teardown waits on no model turn.
       const reason = this.phase.abort.signal.reason as AgentCancelCause | undefined
-      if (reason?.kind !== 'disposed' && (this.phase.kind === 'maintenance' || wakeAfterAbort)) {
+      if (reason?.kind !== 'disposed' && wakeup
+        && (this.phase.kind === 'maintenance' || this.phase.closing || wakeAfterAbort)) {
         this.phase.wakeRequested = true
       }
       return
@@ -188,6 +266,7 @@ export class ReactLoopAgent implements Agent {
       turn: this.phase.lastTurn,
       step: 0,
       wakeRequested: false,
+      closing: false,
     })
     this.loopCtx.agents.withInitiator(this, () => this.kick()).then(driver.resolve, driver.reject)
   }
@@ -227,7 +306,15 @@ export class ReactLoopAgent implements Agent {
     if (this.phase.kind !== 'running') throw new Error(`agent "${this.id}": pre-step outside running phase`)
     const signal = this.phase.abort.signal
     const claimed = this.inbox.claim(target, position.turn)
-    const assembly = await this.loopCtx.systemPrompt.assemble(assembleContextFor(this, signal))
+    if (position.step === 1 && claimed.length > 0) {
+      const requested = this.modelSelection.selected === undefined
+        ? this.modelSelection.defaultSelection
+        : this.modelSelection.selected
+      const hadExplicitEffort = requested?.reasoningEffort !== undefined
+      this.turnSelection = await this.modelSelection.beginTurn(signal)
+      this.turnReasoningEffortDefaulted = !hadExplicitEffort && this.turnSelection.reasoningEffort !== undefined
+    }
+    const assembly = await this.loopCtx.systemPrompt.assemble(assembleContextFor(this, signal, this.turnSelection))
     signal.throwIfAborted()
     const sections = renderContextSections(assembly)
     const context = this.runtimeContext.project(joinContextSections(sections), sections)
@@ -250,6 +337,9 @@ export class ReactLoopAgent implements Agent {
     const phase = this.phase
     const { signal } = phase.abort
     signal.throwIfAborted()
+    this.turnSelection = undefined
+    this.turnReasoningEffortDefaulted = false
+    this.pendingPreparedCall = undefined
     const turn = phase.turn + 1
     try {
       this.session.append('turn/start', { turn })
@@ -314,6 +404,7 @@ export class ReactLoopAgent implements Agent {
       }
       this.throwError(error)
     } finally {
+      this.pendingPreparedCall = undefined
       try {
         // oxlint-disable-next-line typescript/no-non-null-assertion -- every exit assigns a turn ending
         this.session.append('turn/end', { turn, reason: turnEnds! })
@@ -321,7 +412,12 @@ export class ReactLoopAgent implements Agent {
         this.throwError(error)
       }
     }
+    // Mark the narrow handoff window before checking the inbox. A wake can
+    // arrive from a microtask scheduled by the turn-end append after this
+    // check but before kick() publishes idle; wakeDriver retains that request.
+    phase.closing = true
     if (!this.inbox.hasPending) return false
+    phase.closing = false
     phase.abort = new AbortController()
     // A fresh controller makes a latch set on the old one stale: the live driver claims the queue itself.
     phase.wakeRequested = false
@@ -433,16 +529,14 @@ export class ReactLoopAgent implements Agent {
   ): Promise<{ request: GenerateOptions; preparedCall?: PreparedLlmCall }> {
     const { session } = this
 
-    // A loop instance starts from its declared route, restoring only an explicit
-    // effort owned by that exact model. Later steps re-resolve marked defaults.
+    if (this.turnSelection === undefined) {
+      throw new Error(`agent "${this.id}" has no immutable Turn Model Selection`)
+    }
+    // Every request in a Turn starts from the captured route. Request headers
+    // still carry unrelated envelope fields and adapter-default markers.
     const persistedHeader = session.requestHeader()
-    const persistedConfig = persistedHeader?.config
-    const route = { provider: this.options.provider ?? '', model: this.options.model ?? '' }
-    const reasoningEffort = persistedConfig?.provider === route.provider
-      && persistedConfig.model === route.model
-      && persistedHeader?.adapterDefaults?.reasoningEffort !== true
-      ? persistedConfig.reasoningEffort
-      : undefined
+    const route = { provider: this.turnSelection.provider, model: this.turnSelection.model }
+    const reasoningEffort = this.turnSelection.reasoningEffort
     const maxTokens = this.options.maxTokens
     const seedConfig = deepFreeze(structuredClone(
       this.requestHeaderLogged
@@ -454,29 +548,45 @@ export class ReactLoopAgent implements Agent {
           ...maxTokens === undefined ? {} : { maxTokens },
         },
     ))
-    const proposedConfig = await this.dispatch.waterfall(
+    const waterfallConfig = await this.dispatch.waterfall(
       'agent/request', { turn, step, signal },
       () => Promise.resolve(seedConfig),
     )
     signal.throwIfAborted()
+    const proposedConfig = applyTurnSelection(waterfallConfig, this.turnSelection)
     if (!proposedConfig.provider || !proposedConfig.model) {
-      throw new Error(`agent "${this.id}" has no provider/model: set AgentOptions.provider and AgentOptions.model or supply both via the agent/request waterfall`)
+      throw new Error(`agent "${this.id}" has no provider/model in its immutable Turn Model Selection`)
     }
     let config: LlmCallConfig
     let preparedCall: PreparedLlmCall | undefined
-    try {
+    const pending = this.pendingPreparedCall
+    const pendingProposal = pending === undefined ? undefined : { ...pending.config }
+    if (pendingProposal !== undefined) {
+      const pendingDefaults = pending?.adapterDefaults
+      if (pendingDefaults?.reasoningEffort === true) delete pendingProposal.reasoningEffort
+      if (pendingDefaults?.maxTokens === true) delete pendingProposal.maxTokens
+    }
+    if (pending !== undefined && (callConfigEquals(proposedConfig, pending.config)
+      || pendingProposal !== undefined && callConfigEquals(proposedConfig, pendingProposal))) {
+      preparedCall = pending
+      this.pendingPreparedCall = undefined
+      config = preparedCall.config
+    } else {
+      this.pendingPreparedCall = undefined
       preparedCall = await this.loopCtx.llm.prepareCall(proposedConfig, signal)
       config = preparedCall.config
-    } catch (error: unknown) {
-      // Middleware may serve an unregistered route; terminal dispatch still requires an adapter.
-      if (!(error instanceof LlmError) || error.code !== 'NO_ADAPTER') throw error
-      config = proposedConfig
     }
+    const adapterDefaults = preparedCall.adapterDefaults
+    const effectiveAdapterDefaults = this.turnReasoningEffortDefaulted
+      && config.reasoningEffort !== undefined
+      && adapterDefaults.reasoningEffort !== true
+      ? { ...adapterDefaults, reasoningEffort: true as const }
+      : adapterDefaults
     signal.throwIfAborted()
 
     const header = canonicalHeader({
       config,
-      ...preparedCall === undefined ? {} : { adapterDefaults: preparedCall.adapterDefaults },
+      adapterDefaults: effectiveAdapterDefaults,
       ...system ? { system } : {},
       ...tools.length > 0 ? { tools } : {},
     })
@@ -488,7 +598,7 @@ export class ReactLoopAgent implements Agent {
       this.session.append('request/header', { header, reason: 'change' })
     }
 
-    const contextWindow = preparedCall?.context?.contextWindow
+    const contextWindow = preparedCall.context?.contextWindow
     const requestContext: RequestContext = {
       provider: config.provider,
       model: config.model,
@@ -510,6 +620,7 @@ export class ReactLoopAgent implements Agent {
       sessionId: this.session.id,
       signal,
     }))
-    return { request, ...preparedCall === undefined ? {} : { preparedCall } }
+    return { request, preparedCall }
   }
+
 }

@@ -81,6 +81,8 @@ export interface ISessions {
     cwd?: string
     sessionId?: SessionId
     driverId?: AgentDriverId
+    /** Explicitly retain this Session for a process-generation handoff. */
+    resident?: boolean
   }): Promise<SessionId>
   /**
    * Search the Host's visible message-content index. Results stay

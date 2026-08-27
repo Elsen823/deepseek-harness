@@ -154,6 +154,9 @@ function fakeApi(overrides: Partial<{ muxFrames: MuxFrame[]; hostFrames: HostFra
           },
         }
       },
+      async restart(request) {
+        return { rpcId: request.rpcId, result: { ok: true, value: { accepted: true as const } } }
+      },
       async pickDirectory(request) {
         return { rpcId: request.rpcId, result: { ok: true, value: { path: null } } }
       },
@@ -404,6 +407,11 @@ describe('unary round trip (handler ⇄ client, no network)', () => {
     }
     const response = await client(api, 1).host.pickDirectory({})
     expect(response.result).toEqual({ ok: true, value: { path: '/tmp/project' } })
+  })
+
+  it('round-trips the explicit host restart request', async () => {
+    const response = await client().host.restart({})
+    expect(response.result).toEqual({ ok: true, value: { accepted: true } })
   })
 
   it('round-trips the browse listing and creation calls through the wire form', async () => {

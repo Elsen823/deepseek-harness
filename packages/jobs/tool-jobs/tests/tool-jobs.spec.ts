@@ -3,9 +3,10 @@ import { Context } from '@deepseek-ai/cordis'
 import { CallId } from '@deepseek-ai/dsh-llm'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
-import AgentRegistry, { emitAgentEvent } from '@deepseek-ai/dsh-agent'
+import AgentRegistry, { createModelSelectionOwner, emitAgentEvent } from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import type { Session } from '@deepseek-ai/dsh-session'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { bindScopeParent, createScope, scopeOf } from '@deepseek-ai/dsh-scope'
 import { JobId } from '@deepseek-ai/dsh-jobs'
@@ -44,13 +45,15 @@ interface FakeDelivery {
 function fakeAgent(ctx: Context, sessionId: string, delivery: FakeDelivery = {}): Agent {
   const scopeFiber = ctx.plugin(() => {})
   const id = SessionId(sessionId)
+  const session = { id, header: { version: 0, id, createdAt: 0 } } as unknown as Session
   const agent = {
     id,
     ctx: scopeFiber.ctx,
+    modelSelection: createModelSelectionOwner(session),
     inject: delivery.inject ?? (() => {}),
     followup: delivery.followup ?? (() => {}),
     status: delivery.status ?? 'running',
-    session: { id, header: { version: 0, id, createdAt: 0 } },
+    session,
   } as unknown as Agent
   agentRegistryDisposers.set(agent, ctx.agents.register(agent))
   agentScopeFibers.set(agent, scopeFiber)
@@ -530,11 +533,14 @@ describe('completion notices across scoped mounts', () => {
     bindScopeParent(agentKey, scopeOf(standingA.ctx) as object)
 
     const inject = vi.fn()
+    const sessionId = SessionId('sess-scoped')
+    const session = { id: sessionId, header: { version: 0, id: sessionId, createdAt: 0 } } as unknown as Session
     const owner = {
-      id: SessionId('sess-scoped'),
+      id: session.id,
       ctx: agentScope.ctx,
       inject,
-      session: { id: SessionId('sess-scoped'), header: { version: 0, id: SessionId('sess-scoped'), createdAt: 0 } },
+      modelSelection: createModelSelectionOwner(session),
+      session,
     } as unknown as Agent
     const dispose = ctx.agents.register(owner)
 

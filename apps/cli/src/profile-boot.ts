@@ -30,6 +30,7 @@ import {
   type Profile,
 } from '@deepseek-ai/dsh-app-boot'
 import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
+import type {} from '@deepseek-ai/dsh-agent'
 
 /** Shipped agent-preset root: beside this app's own config, in both source and built layouts. */
 const SHIPPED_PRESET_ROOT = fileURLToPath(new URL('../config/agent-presets/', import.meta.url))
@@ -207,7 +208,17 @@ function suppressShutdownError(ctx: Context, signal: AbortSignal, error: unknown
 export async function runProfile(options: RunProfileOptions): Promise<{ ctx: Context; shutdown: ProcessShutdown }> {
   const composed = composeProfile(options.profile, options.patchFiles)
   const app: { current?: Context } = {}
-  const shutdown = createProcessShutdown(async () => { await app.current?.fiber.dispose() })
+  const shutdown = createProcessShutdown(
+    async () => { await app.current?.fiber.dispose() },
+    undefined,
+    undefined,
+    undefined,
+    async () => {
+      const agents = app.current?.get('agents')
+      if (agents === undefined) throw new Error('restart handoff is unavailable: AgentRegistry is not mounted')
+      await agents.restartHandoff()
+    },
+  )
   const signalShutdown = new AbortController()
   const interrupt = (code: number): void => {
     signalShutdown.abort()
@@ -255,6 +266,7 @@ export async function runProfile(options: RunProfileOptions): Promise<{ ctx: Con
     provideCmdline(hostCtx, {
       args: options.args,
       exit: code => void shutdown.shutdown(code),
+      restart: code => shutdown.restart(code),
     })
   })
   app.current = ctx

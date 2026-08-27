@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-08-25-agent-owned-turn-model-selection.md
+2026-08-25-agent-owned-turn-model-selection.md: 998c140251c94dda64772ad895e9a8c6d914d109
+2026-08-25-agent-owned-turn-model-selection.zh.md: 56a90ce236ac6fe1f17622aa4b1a1228de5705fe

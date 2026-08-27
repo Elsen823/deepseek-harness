@@ -1,0 +1,1 @@
+Claude Code Agent DriverAvailable for new SessionsNative capabilitiesNative ownershipInstructions, skills, tools, hooks, approvals, and execution remain owned by Claude Code.Explicit incompatibilityProvider, model, and effort selections that Claude cannot represent are rejected before the turn.Grok remains a reserved blank adapter.

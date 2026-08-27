@@ -208,6 +208,13 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         parameters: [],
       },
       {
+        signature: 'admitRestartOperation(): () => void',
+        description: 'Admit one process-local operation before a restart handoff closes the generation. The returned idempotent release must run after the complete asynchronous operation settles; handoff waits for every admitted release.',
+        parameters: [],
+        returns: 'a release callback for the admitted operation.',
+        throws: ['{@link RestartHandoffAdmissionError} after admission closes.'],
+      },
+      {
         signature: 'currentInitiator(): Agent | undefined',
         description: 'Read the Agent that initiated the inherited asynchronous driver chain. Use this optional form for logging, tracing, metrics, or host attribution that also supports agentless calls. When a parent creates a child, setup reports the causal parent while `agentCtx.agent` identifies the child.',
         parameters: [],
@@ -236,7 +243,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         throws: ['when the initiator scope is closing/disposed, or when `operation` throws.'],
       },
       {
-        signature: 'registerDriver(driver: AgentDriver): () => void',
+        signature: 'registerDriver(driver: AgentDriver): () => Promise<void>',
         description: 'Register one named Agent Driver as a reversible provider contribution. Discovery metadata is detached, frozen, and returned in Driver-id order. Provider unload aborts unpublished work, drains every live Agent prepared by this generation, and only then removes the registration.',
         parameters: [{ name: 'driver', description: 'Driver implementation and immutable discovery metadata.' }],
         returns: 'the exact Cordis effect disposer for the registration.',
@@ -252,6 +259,30 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'List registered Drivers deterministically by id.',
         parameters: [],
         returns: 'a fresh array of frozen discovery records.',
+      },
+      {
+        signature: 'registerDriverContribution(contribution: AgentDriverContribution): () => void',
+        description: 'Register one consumer-defined contribution owned by an Agent Driver. Contributions are deliberately opaque to this service: the Agent layer only provides effect-scoped storage and deterministic discovery, leaving settings, management, and presentation vocabularies to their consumers.',
+        parameters: [{ name: 'contribution', description: 'stable key, owning Driver, and consumer value.' }],
+        returns: 'a synchronous disposer that removes the contribution.',
+      },
+      {
+        signature: 'listDriverContributions(driverId?: AgentDriverId): AgentDriverContribution[]',
+        description: 'List opaque Driver contributions in stable key order.',
+        parameters: [{ name: 'driverId', description: 'optional Driver filter.' }],
+        returns: 'detached contribution records owned by active Driver providers.',
+      },
+      {
+        signature: 'async restartHandoff(options: RestartHandoffOptions = {}): Promise<RestartHandoffResult>',
+        description: 'Quiesce explicitly resident Agents and atomically publish a next-generation adoption manifest. Ordinary provider unload and Agent disposal retain their existing semantics; this method is the only restart handoff entry point.',
+        parameters: [{ name: 'options', description: 'explicit generation and cancellation values.' }],
+        returns: 'the committed generation and its resident Session records.',
+      },
+      {
+        signature: 'async adoptRestartHandoffs(options: AdoptRestartHandoffsOptions = {}): Promise<AgentHandoffAdoption<AgentHandle>>',
+        description: 'Discover and adopt only resident Sessions explicitly committed by a prior generation. Failed claims are released for retry and never dispose a replacement Agent or delete the native Driver state.',
+        parameters: [{ name: 'options', description: 'claimant, generation filter, cancellation, and Driver options.' }],
+        returns: 'successful handles plus records whose adoption remains retryable.',
       },
       {
         signature: 'async create(options: CreateAgentOptions): Promise<AgentHandle>',
@@ -384,19 +415,13 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
   },
   {
     key: 'apiProxy',
-    summary: 'Root interface of the unified API.',
-    description: 'Root interface of the unified API. New client-request domain = one new file pair + one field here + one map row.',
+    summary: 'Wire API plus the Host-only lifecycle capability held by its implementation.',
+    description: 'Wire API plus the Host-only lifecycle capability held by its implementation.',
     methods: [
       {
-        signature: 'downloads: DownloadsApi',
-        description: 'Host-only download surfaces (GET, no wire envelope); absent from IApiClient.',
+        signature: 'readonly sessionLifecycles: ApiProxySessionLifecycles',
+        description: 'Lifecycle control for Agents whose exclusive handles this proxy retains.',
         parameters: [],
-      },
-      {
-        signature: 'respond(message: ClientResponse): Promise<RpcReceipt>',
-        description: 'Response entry for server requests; not a domain method.',
-        parameters: [{ name: 'message', description: 'Client response carrying the server request\'s rpcId.' }],
-        returns: 'Transport receipt for the response delivery.',
       },
     ],
   },
@@ -2913,8 +2938,12 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface AdapterRegistrationHandle {\n    (): void;\n    replace(providers: string[]): void;\n}',
   },
   {
+    name: 'AdoptRestartHandoffsOptions',
+    declaration: 'export interface AdoptRestartHandoffsOptions {\n    readonly claimant?: string;\n    readonly generation?: string;\n    readonly signal?: AbortSignal;\n    readonly agentOptions?: (record: AgentHandoffRecord) => AgentOptions | undefined;\n    readonly retainHandle?: (handle: AgentHandle) => void;\n}',
+  },
+  {
     name: 'Agent',
-    declaration: 'export interface Agent {\n    readonly id: SessionId;\n    readonly options: AgentOptions;\n    readonly session: Session;\n    readonly inbox: Inbox;\n    readonly status: AgentStatus;\n    readonly ctx: Context;\n    cancel(cause: AgentCancelCause, options?: CancelOptions): void;\n    whenIdle(): Promise<void>;\n    runMaintenance<T>(task: (signal: AbortSignal) => Promise<T>): Promise<T>;\n    send(message: UserMessage, target: InboxTarget, wakeup: boolean): void;\n    followup(message: UserMessage): void;\n    steer(message: UserMessage): void;\n    inject(message: UserMessage): void;\n}',
+    declaration: 'export interface Agent {\n    readonly id: SessionId;\n    readonly options: AgentOptions;\n    readonly modelSelection: ModelSelectionOwner;\n    readonly session: Session;\n    readonly inbox: Inbox;\n    readonly status: AgentStatus;\n    readonly ctx: Context;\n    cancel(cause: AgentCancelCause, options?: CancelOptions): void;\n    whenIdle(): Promise<void>;\n    runMaintenance<T>(task: (signal: AbortSignal) => Promise<T>): Promise<T>;\n    send(message: UserMessage, target: InboxTarget, wakeup: boolean): void;\n    followup(message: UserMessage): void;\n    steer(message: UserMessage): void;\n    inject(message: UserMessage): void;\n}',
   },
   {
     name: 'AgentCancelCause',
@@ -2922,7 +2951,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'AgentDriver',
-    declaration: 'export interface AgentDriver {\n    readonly info: AgentDriverInfo;\n    prepare(session: Session, options: AgentOptions, signal: AbortSignal): PreparedAgentDriver | Promise<PreparedAgentDriver>;\n}',
+    declaration: 'export interface AgentDriver {\n    readonly info: AgentDriverInfo;\n    validateModelSelection?(selection: ModelSelection, signal?: AbortSignal): void | Promise<void>;\n    prepare(session: Session, options: AgentOptions, signal: AbortSignal, handoff?: AgentHandoffRecord): PreparedAgentDriver | Promise<PreparedAgentDriver>;\n}',
   },
   {
     name: 'AgentDriverActivationId',
@@ -2961,6 +2990,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface AgentDriverCompatibility {\n    readonly runtime: string;\n    readonly format?: string;\n    readonly status: \'same\' | \'certified\' | \'reconstructed\' | \'incompatible\' | \'unknown\';\n    readonly previousRuntime?: string;\n    readonly detail?: AgentDriverDetail;\n}',
   },
   {
+    name: 'AgentDriverContribution',
+    declaration: 'export interface AgentDriverContribution {\n    readonly id: string;\n    readonly driverId: AgentDriverId;\n    readonly kind: string;\n    readonly value: unknown;\n}',
+  },
+  {
     name: 'AgentDriverDetail',
     declaration: 'export interface AgentDriverDetail {\n    readonly kind: string;\n    readonly payload?: JsonValue;\n}',
   },
@@ -2971,6 +3004,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'AgentDriverFailure',
     declaration: 'export interface AgentDriverFailure {\n    readonly code: string;\n    readonly message: string;\n    readonly retryable?: boolean;\n    readonly detail?: AgentDriverDetail;\n}',
+  },
+  {
+    name: 'AgentDriverHandoff',
+    declaration: 'export interface AgentDriverHandoff {\n    readonly state?: JsonValue;\n    commit(): void;\n}',
   },
   {
     name: 'AgentDriverId',
@@ -3041,6 +3078,18 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface AgentHandle {\n    agent: Agent;\n    dispose(): Promise<void>;\n}',
   },
   {
+    name: 'AgentHandoffAdoption',
+    declaration: 'export interface AgentHandoffAdoption<T = unknown> {\n    readonly handles: readonly T[];\n    readonly failures: readonly AgentHandoffFailure[];\n}',
+  },
+  {
+    name: 'AgentHandoffFailure',
+    declaration: 'export interface AgentHandoffFailure {\n    readonly record: AgentHandoffRecord;\n    readonly error: unknown;\n}',
+  },
+  {
+    name: 'AgentHandoffRecord',
+    declaration: 'export interface AgentHandoffRecord {\n    readonly version: typeof AGENT_HANDOFF_FORMAT_VERSION;\n    readonly generation: string;\n    readonly resident: true;\n    readonly sessionId: SessionId;\n    readonly driverId: AgentDriverId;\n    readonly eventSeq: number;\n    readonly eventDigest: string;\n    readonly leaseExpiresAt: number;\n    readonly state?: JsonValue;\n    readonly claimedBy?: string;\n    readonly claimedAt?: number;\n    readonly adoptedBy?: string;\n    readonly adoptedAt?: number;\n}',
+  },
+  {
     name: 'AgentOptions',
     declaration: 'export interface AgentOptions {\n    provider?: string;\n    model?: string;\n    maxTokens?: number;\n}',
   },
@@ -3063,6 +3112,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'ApiKeyRecord',
     declaration: 'export interface ApiKeyRecord {\n    readonly kind: \'api-key\';\n    readonly key?: string;\n    readonly env?: Readonly<Record<string, string>>;\n}',
+  },
+  {
+    name: 'ApiProxySessionLifecycles',
+    declaration: 'export interface ApiProxySessionLifecycles {\n    retain(handle: AgentHandle): Agent;\n    activate(sessionId: SessionId): Promise<void>;\n    owns(sessionId: SessionId): boolean;\n    release(sessionId: SessionId): Promise<void>;\n}',
   },
   {
     name: 'ApprovalOutcome',
@@ -3106,7 +3159,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'AssembleContext',
-    declaration: 'export interface AssembleContext {\n    scope?: ScopeKey;\n    signal?: AbortSignal;\n}',
+    declaration: 'export interface AssembleContext {\n    scope?: ScopeKey;\n    signal?: AbortSignal;\n    modelSelection?: {\n        readonly provider: string;\n        readonly model: string;\n        readonly reasoningEffort?: ReasoningEffortId;\n    };\n}',
   },
   {
     name: 'AssembledContext',
@@ -3199,10 +3252,6 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'CancelOptions',
     declaration: 'export interface CancelOptions {\n    keepInbox?: boolean | undefined;\n}',
-  },
-  {
-    name: 'ClientResponse',
-    declaration: 'export interface ClientResponse {\n    type: \'client-response\';\n    rpcId: RpcId;\n    result: RpcResult<unknown>;\n}',
   },
   {
     name: 'CodeBindingErrorClass',
@@ -3362,7 +3411,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'CreateAgentOptions',
-    declaration: 'export interface CreateAgentOptions {\n    readonly sessionId: SessionId;\n    readonly driverId?: AgentDriverId;\n    readonly meta?: {\n        readonly cwd?: string;\n        readonly parentSession?: SessionId;\n        readonly seedLength?: number;\n        readonly origin?: \'subagent\';\n        readonly delegationDepth?: number;\n        readonly agentPreset?: string;\n    };\n    readonly seed?: readonly SessionEvent[];\n    readonly agentOptions?: AgentOptions;\n    readonly signal?: AbortSignal;\n    readonly setup?: AgentSetup;\n}',
+    declaration: 'export interface CreateAgentOptions {\n    readonly sessionId: SessionId;\n    readonly driverId?: AgentDriverId;\n    readonly resident?: boolean;\n    readonly meta?: {\n        readonly cwd?: string;\n        readonly parentSession?: SessionId;\n        readonly seedLength?: number;\n        readonly origin?: \'subagent\';\n        readonly delegationDepth?: number;\n        readonly agentPreset?: string;\n    };\n    readonly seed?: readonly SessionEvent[];\n    readonly agentOptions?: AgentOptions;\n    readonly signal?: AbortSignal;\n    readonly setup?: AgentSetup;\n}',
   },
   {
     name: 'CreateGoalRequest',
@@ -3477,10 +3526,6 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface DomainTableSpec<K extends string = string, V = unknown> {\n    readonly valueSchema: ZodType<V>;\n    readonly __key?: K;\n}',
   },
   {
-    name: 'DownloadsApi',
-    declaration: 'export interface DownloadsApi {\n    sessionLog(request: {\n        sessionId: SessionId;\n        includeDescendants?: boolean;\n    }, signal: AbortSignal): Promise<Response>;\n}',
-  },
-  {
     name: 'DshEnvironment',
     declaration: 'export type DshEnvironment = Readonly<Record<DshEnvironmentKey, string>>;',
   },
@@ -3582,7 +3627,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'GenerateOptions',
-    declaration: 'export interface GenerateOptions {\n    provider: string;\n    model: string;\n    reasoningEffort?: ReasoningEffortId;\n    messages: Message[];\n    system?: string;\n    tools?: ToolSchema[];\n    temperature?: number;\n    maxTokens?: number;\n    stop?: string[];\n    signal?: AbortSignal;\n    sessionId?: Branded<\'SessionId\'>;\n    purpose?: \'compaction\' | \'session-title\';\n}',
+    declaration: 'export interface GenerateOptions {\n    provider: string;\n    model: string;\n    reasoningEffort?: ReasoningEffortId;\n    serviceTier?: ServiceTierId;\n    messages: Message[];\n    system?: string;\n    tools?: ToolSchema[];\n    temperature?: number;\n    maxTokens?: number;\n    stop?: string[];\n    signal?: AbortSignal;\n    sessionId?: Branded<\'SessionId\'>;\n    purpose?: \'compaction\' | \'session-title\';\n}',
   },
   {
     name: 'GenericCallView',
@@ -3778,7 +3823,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'LlmCallConfig',
-    declaration: 'export interface LlmCallConfig {\n    provider: string;\n    model: string;\n    reasoningEffort?: ReasoningEffortId;\n    temperature?: number;\n    maxTokens?: number;\n    stop?: string[];\n}',
+    declaration: 'export interface LlmCallConfig {\n    provider: string;\n    model: string;\n    reasoningEffort?: ReasoningEffortId;\n    serviceTier?: ServiceTierId;\n    temperature?: number;\n    maxTokens?: number;\n    stop?: string[];\n}',
   },
   {
     name: 'LlmCallConfigAdapterDefaults',
@@ -3977,6 +4022,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface ModelModalityMap {\n    text: \'text\';\n    image: \'image\';\n}',
   },
   {
+    name: 'ModelSelectionOwner',
+    declaration: 'export interface ModelSelectionOwner {\n    readonly selected: SelectedModelSelection | undefined;\n    readonly effective: ModelSelection | undefined;\n    readonly defaultSelection: ModelSelection | undefined;\n    accept(selection: ModelSelection, source?: ModelSelectionSource, signal?: AbortSignal): Promise<SelectedModelSelection>;\n    validate(selection: ModelSelection, signal?: AbortSignal): Promise<void>;\n    setDefaultSelection(selection: ModelSelection | undefined): void;\n    setDefaultSource(source: (() => ModelSelection | undefined) | undefined): void;\n    beginTurn(signal?: AbortSignal): Promise<TurnModelSelection>;\n    recordEffective(selection: ModelSelection): void;\n}',
+  },
+  {
     name: 'ObjectJsonSchema',
     declaration: 'export type ObjectJsonSchema = JsonSchemaNode & {\n    type: \'object\';\n};',
   },
@@ -3998,7 +4047,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'PreparedAgentDriver',
-    declaration: 'export interface PreparedAgentDriver {\n    readonly agent: Agent;\n    start(source: SessionStartSource): void;\n    dispose(): Promise<void>;\n}',
+    declaration: 'export interface PreparedAgentDriver {\n    readonly agent: Agent;\n    start(source: SessionStartSource): void;\n    handoff?(signal: AbortSignal): AgentDriverHandoff | Promise<AgentDriverHandoff>;\n    dispose(): Promise<void>;\n}',
   },
   {
     name: 'PreparedLlmCall',
@@ -4141,12 +4190,20 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface ResolvedSubagentStartRequest extends SubagentStartRequest {\n    readonly descriptor: SubagentDescriptorData;\n}',
   },
   {
+    name: 'RestartHandoffOptions',
+    declaration: 'export interface RestartHandoffOptions {\n    readonly generation?: string;\n    readonly signal?: AbortSignal;\n}',
+  },
+  {
+    name: 'RestartHandoffResult',
+    declaration: 'export interface RestartHandoffResult {\n    readonly generation: string;\n    readonly records: readonly AgentHandoffRecord[];\n}',
+  },
+  {
     name: 'RestoredSessionOptions',
     declaration: 'export interface RestoredSessionOptions {\n    readonly seed: SessionEvent[];\n    readonly meta: SessionHeader;\n    readonly seedSource: \'persistence\';\n}',
   },
   {
     name: 'ResumeAgentOptions',
-    declaration: 'export interface ResumeAgentOptions {\n    readonly resumeSessionId: SessionId;\n    readonly agentOptions?: AgentOptions;\n    readonly signal?: AbortSignal;\n    readonly setup?: AgentSetup;\n}',
+    declaration: 'export interface ResumeAgentOptions {\n    readonly resumeSessionId: SessionId;\n    readonly resident?: boolean;\n    readonly handoff?: AgentHandoffRecord;\n    readonly agentOptions?: AgentOptions;\n    readonly signal?: AbortSignal;\n    readonly setup?: AgentSetup;\n}',
   },
   {
     name: 'RpcError',
@@ -4163,10 +4220,6 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'RpcId',
     declaration: 'export type RpcId = Branded<\'rpc-id\'>;',
-  },
-  {
-    name: 'RpcReceipt',
-    declaration: 'export type RpcReceipt = {\n    accepted: true;\n} | {\n    accepted: false;\n    reason: \'not-pending\' | \'bad-response\';\n};',
   },
   {
     name: 'RpcResult',
@@ -4251,6 +4304,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'ServerResponse',
     declaration: 'export interface ServerResponse {\n    type: \'server-response\';\n    rpcId: RpcId;\n    result: RpcResult<unknown>;\n}',
+  },
+  {
+    name: 'ServiceTierId',
+    declaration: 'export type ServiceTierId = Branded<\'ServiceTierId\'>;',
   },
   {
     name: 'SessionAvailability',
@@ -5079,6 +5136,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'TurnEndReasonMap',
     declaration: 'export interface TurnEndReasonMap {\n    completed: {\n        kind: \'completed\';\n    };\n    aborted: {\n        kind: \'aborted\';\n        reason: TurnEndCancelCause;\n    };\n    blocked: {\n        kind: \'blocked\';\n    };\n    error: {\n        kind: \'error\';\n        error: LlmFailure;\n    };\n    \'max-tokens\': {\n        kind: \'max-tokens\';\n    };\n    interrupted: {\n        kind: \'interrupted\';\n    };\n}',
+  },
+  {
+    name: 'TurnModelSelection',
+    declaration: 'export type TurnModelSelection = ModelSelection;',
   },
   {
     name: 'TypertCodec',

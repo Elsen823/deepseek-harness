@@ -6,9 +6,17 @@
  * the concrete class. Widening this interface is the explicit act of
  * widening what features may do to the workspaces domain.
  */
-import type { DirectoryListing, SessionId, WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-api-remotes/client'
+import type {
+  AgentDriverId, DirectoryListing, SessionId, WorkspaceId, WorkspaceView,
+} from '@deepseek-ai/dsh-api-remotes/client'
 import type { WorkspaceListState } from '../workspaces/service.ts'
 import type { ObservableSnapshot } from './store.ts'
+
+/** Optional binding selected before a Workspace materializes the next Session. */
+export interface WorkspaceConnectOptions {
+  /** Reuse or create only a Session bound to this Agent Driver. */
+  driverId?: AgentDriverId
+}
 
 /** The workspaces-service face injected as `ctx.workspaces`. */
 export interface IWorkspaces {
@@ -17,9 +25,10 @@ export interface IWorkspaces {
   /**
    * Connect a Workspace to its reusable or freshly created blank session.
    * @param workspaceId - target workspace.
+   * @param options - optional immutable Session binding to preserve while connecting.
    * @returns the connected session id.
    */
-  connectWorkspace(workspaceId: WorkspaceId): Promise<SessionId>
+  connectWorkspace(workspaceId: WorkspaceId, options?: WorkspaceConnectOptions): Promise<SessionId>
   /**
    * The New Session flow: connect the explicit, current-Session, or recent
    * Workspace and open the resulting session; failures surface on the session

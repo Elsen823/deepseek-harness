@@ -7,7 +7,7 @@
 //
 // Keyless and deterministic: the fixture is the fake server, so nothing here
 // reaches a model or the network.
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -40,6 +40,10 @@ interface ComposedEntry {
   disabled?: unknown
 }
 
+interface OverlayPatch {
+  insert?: unknown
+}
+
 interface BootComposition {
   loadOverlayPatches(binName: string, file: string): unknown[]
   composeEntries(layers: readonly unknown[][]): ComposedEntry[]
@@ -61,6 +65,19 @@ const webBundleResolver = bundleResolvers[1]
 if (webBundleResolver === undefined) throw new Error('assembled boot: web bundle resolver missing')
 const appBoot = await import(pathToFileURL(webBundleResolver.resolve('@deepseek-ai/dsh-app-boot')).href) as unknown as BootComposition
 
+const workspaceManifests = new Map<string, string>()
+for (const group of readdirSync(join(REPO_ROOT, 'packages'), { withFileTypes: true })) {
+  if (!group.isDirectory()) continue
+  const groupRoot = join(REPO_ROOT, 'packages', group.name)
+  for (const packageDirectory of readdirSync(groupRoot, { withFileTypes: true })) {
+    if (!packageDirectory.isDirectory()) continue
+    const manifest = join(groupRoot, packageDirectory.name, 'package.json')
+    if (!existsSync(manifest)) continue
+    const name = (JSON.parse(readFileSync(manifest, 'utf8')) as { name?: unknown }).name
+    if (typeof name === 'string') workspaceManifests.set(name, manifest)
+  }
+}
+
 function resolvePackageManifest(specifier: string): string | undefined {
   for (const require of bundleResolvers) {
     try {
@@ -69,7 +86,7 @@ function resolvePackageManifest(specifier: string): string | undefined {
       continue
     }
   }
-  return undefined
+  return workspaceManifests.get(specifier)
 }
 
 function resolveClientExport(packagePath: string, pkg: ClientPackageManifest): string {
@@ -81,45 +98,74 @@ function resolveClientExport(packagePath: string, pkg: ClientPackageManifest): s
   return resolve(dirname(packagePath), relative)
 }
 
-/** Derive the assembled browser graph from the same bundle patches and package declarations as `dsh web`. */
-function loadAssembledPlugins(): readonly AssembledPlugin[] {
-  const entries = appBoot.composeEntries(BUNDLE_LAYERS.map(layer =>
-    appBoot.loadOverlayPatches('assembled boot', layer.patch)))
-  const plugins = new Map<string, AssembledPlugin>()
-  for (const entry of entries) {
-    if (entry.disabled === true || typeof entry.name !== 'string') continue
-    const packagePath = resolvePackageManifest(entry.name)
-    if (packagePath === undefined) continue
-    const pkg = JSON.parse(readFileSync(packagePath, 'utf8')) as ClientPackageManifest
-    const declaration = pkg.dsh?.client
-    if (declaration?.platform !== 'web') continue
-    if (pkg.name !== entry.name) {
-      throw new Error(`assembled boot: ${entry.name} resolved package ${pkg.name ?? '<unnamed>'}`)
-    }
-    plugins.set(entry.name, {
-      id: entry.name,
-      bundlePath: resolveClientExport(packagePath, pkg),
-      url: `/plugins/${entry.name}/client.js?rev=fx`,
-      rev: 'fx',
-      ...(declaration.inject === undefined ? {} : { inject: declaration.inject }),
-      ...(declaration.external === undefined ? {} : { external: declaration.external }),
-      ...(declaration.immediately === true ? { immediately: true } : {}),
-    })
-  }
-  return orderByModuleGraph([...plugins.values()]).map(({ id }) => {
-    const plugin = plugins.get(id)
+function orderAssembledPlugins(plugins: readonly AssembledPlugin[]): AssembledPlugin[] {
+  const pluginsById = new Map(plugins.map(plugin => [plugin.id, plugin]))
+  return orderByModuleGraph(plugins).map(({ id }) => {
+    const plugin = pluginsById.get(id)
     /* v8 ignore next -- orderByModuleGraph returns the input row identities */
     if (plugin === undefined) throw new Error(`assembled boot: ordered unknown client package ${id}`)
     return plugin
   })
 }
 
-const PLUGINS = loadAssembledPlugins()
+function pluginFromEntry(entry: ComposedEntry): AssembledPlugin | undefined {
+  if (entry.disabled === true || typeof entry.name !== 'string') return undefined
+  const packagePath = resolvePackageManifest(entry.name)
+  if (packagePath === undefined) return undefined
+  const pkg = JSON.parse(readFileSync(packagePath, 'utf8')) as ClientPackageManifest
+  const declaration = pkg.dsh?.client
+  if (declaration?.platform !== 'web') return undefined
+  if (pkg.name !== entry.name) {
+    throw new Error(`assembled boot: ${entry.name} resolved package ${pkg.name ?? '<unnamed>'}`)
+  }
+  return {
+    id: entry.name,
+    bundlePath: resolveClientExport(packagePath, pkg),
+    url: `/plugins/${entry.name}/client.js?rev=fx`,
+    rev: 'fx',
+    ...(declaration.inject === undefined ? {} : { inject: declaration.inject }),
+    ...(declaration.external === undefined ? {} : { external: declaration.external }),
+    ...(declaration.immediately === true ? { immediately: true } : {}),
+  }
+}
 
-const bundles = new Map(PLUGINS.map(plugin => [
+/** Derive the assembled browser graph from the shipped layers. */
+function loadAssembledPlugins(): readonly AssembledPlugin[] {
+  const entries = appBoot.composeEntries(BUNDLE_LAYERS.map(layer =>
+    appBoot.loadOverlayPatches('assembled boot', layer.patch)))
+  const plugins = new Map<string, AssembledPlugin>()
+  for (const entry of entries) {
+    const plugin = pluginFromEntry(entry)
+    if (plugin !== undefined) plugins.set(plugin.id, plugin)
+  }
+  return orderAssembledPlugins([...plugins.values()])
+}
+
+/** Add browser rows from an insert-only test/example overlay to the shipped graph. */
+function loadOverlayPlugins(extraOverlayPaths: readonly string[]): readonly AssembledPlugin[] {
+  const plugins = new Map<string, AssembledPlugin>()
+  for (const file of extraOverlayPaths) {
+    for (const patch of appBoot.loadOverlayPatches('assembled boot', file) as OverlayPatch[]) {
+      const entries = Array.isArray(patch.insert) ? patch.insert : [patch]
+      for (const entry of entries) {
+        const plugin = pluginFromEntry(entry as ComposedEntry)
+        if (plugin !== undefined) plugins.set(plugin.id, plugin)
+      }
+    }
+  }
+  return [...plugins.values()]
+}
+
+const DEFAULT_PLUGINS = loadAssembledPlugins()
+
+const defaultBundles = new Map(DEFAULT_PLUGINS.map(plugin => [
   plugin.url,
   readFileSync(plugin.bundlePath, 'utf8'),
 ]))
+
+function bundlesFor(plugins: readonly AssembledPlugin[]): ReadonlyMap<string, string> {
+  return new Map(plugins.map(plugin => [plugin.url, readFileSync(plugin.bundlePath, 'utf8')]))
+}
 
 interface FixtureWindow extends Window {
   __DSH_BOOT__?: { rev: string; entries: WebBootEntry[] }
@@ -187,19 +233,24 @@ export function installAssembledBootEnv(): void {
  * Mount the assembled application on the fixture transport; the teardown
  * registered by installAssembledBootEnv disposes it.
  * @param search - fixture query string used to select deterministic host behavior.
+ * @param extraOverlayPaths - test/example-only composition overlays.
  */
-export function mountAssembledApp(search = '?fixture'): void {
+export function mountAssembledApp(search = '?fixture', extraOverlayPaths: readonly string[] = []): void {
+  const plugins = extraOverlayPaths.length === 0
+    ? DEFAULT_PLUGINS
+    : orderAssembledPlugins([...DEFAULT_PLUGINS, ...loadOverlayPlugins(extraOverlayPaths)])
+  const bundles = extraOverlayPaths.length === 0 ? defaultBundles : bundlesFor(plugins)
   history.replaceState(null, '', `/${search}`)
   const root = document.createElement('div')
   root.id = 'root'
   document.body.appendChild(root)
-  win.__DSH_BOOT__ = { rev: 'fx', entries: PLUGINS.map(({ bundlePath: _bundlePath, ...plugin }) => plugin) }
+  win.__DSH_BOOT__ = { rev: 'fx', entries: plugins.map(({ bundlePath: _bundlePath, ...plugin }) => plugin) }
   const [facadeRow] = bootInjections(win.__DSH_BOOT__)
   if (facadeRow?.kind !== 'script') throw new Error('missing injected ModuleLoader facade row')
   ;(0, eval)(facadeRow.text)
   // Mirror the blocking Host-injected scripts before the Vite entry calls create().
   for (const id of ['@deepseek-ai/dsh-client-modules', '@deepseek-ai/dsh-client-runtime']) {
-    const plugin = PLUGINS.find(candidate => candidate.id === id)
+    const plugin = plugins.find(candidate => candidate.id === id)
     if (plugin === undefined) throw new Error(`missing parser-preloaded fixture row ${id}`)
     const code = bundles.get(plugin.url)
     if (code === undefined) throw new Error(`missing built bundle ${plugin.url}`)

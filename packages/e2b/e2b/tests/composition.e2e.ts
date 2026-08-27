@@ -3,7 +3,7 @@ import { join, posix } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import { describe, expect, it } from 'vitest'
-import { Inbox } from '@deepseek-ai/dsh-agent'
+import { createModelSelectionOwner, Inbox } from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { runLoaderSmoke } from '@deepseek-ai/dsh-loader-smoke'
 import {
@@ -85,6 +85,7 @@ describe.skipIf(!process.env.E2B_API_KEY)('E2B live Loader composition', () => {
         id: ownerId,
         options: {},
         session: ownerSession,
+        modelSelection: createModelSelectionOwner(ownerSession),
         inbox: new Inbox(ownerSession, { inserted: () => {}, discarded: () => {}, claimed: () => {} }),
         status: 'idle',
         ctx,

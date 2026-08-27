@@ -111,6 +111,8 @@ export interface ModelReasoningEffort {
   name: string
   /** Optional adapter-supplied description. */
   description?: string
+  /** Driver-specific incompatibility reason; the row remains visible but cannot be selected. */
+  disabledReason?: string
 }
 
 /** Selectable reasoning metadata for one exact model route. */
@@ -131,6 +133,8 @@ export interface ModelCatalogModel {
   description?: string
   /** Exact-route reasoning metadata when the adapter exposes it. */
   reasoning?: ModelReasoning
+  /** Driver-specific incompatibility reason; the row remains visible but cannot be selected. */
+  disabledReason?: string
 }
 
 /** One provider and the models it advertised successfully. */
@@ -277,6 +281,9 @@ export interface SessionsApi {
    *
    * `driverId` selects one active Agent Driver; omission lets the Host resolve
    * its configured default. The exact result is immutable in the Session header.
+   * `resident` explicitly opts the new Session into restart handoff. Omission
+   * keeps the ordinary process-local lifecycle; residency is never inferred
+   * from the selected Driver or an existing Session log.
    *
    * `agentPreset` names the composition the new session's agent is built
    * from; omitted, the effective default applies — the user's stored choice
@@ -290,6 +297,7 @@ export interface SessionsApi {
     cwd?: string
     sessionId?: SessionId
     driverId?: AgentDriverId
+    resident?: boolean
     agentPreset?: string
   }>): Promise<RpcResponse<{ sessionId: SessionId; driverId: AgentDriverId; agentPreset?: string }>>
 

@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-08-25-next-step-steering-idle-handoff.md
+2026-08-25-next-step-steering-idle-handoff.md: 904204bda68b430d40a3c51516b85dda00128fc0
+2026-08-25-next-step-steering-idle-handoff.zh.md: 751f8d1f70fd18f13d134156ff97216fa741445f

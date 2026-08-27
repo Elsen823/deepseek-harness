@@ -20,8 +20,9 @@ import SystemPrompt, { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime, { TOOL_ABORTED, TOOL_ABORTED_BEFORE_DISPATCH } from '@deepseek-ai/dsh-tools'
 import LocalJobRegistry from '@deepseek-ai/dsh-jobs-local'
 import * as ToolTasks from '@deepseek-ai/dsh-tool-jobs'
-import AgentRegistry from '@deepseek-ai/dsh-agent'
+import AgentRegistry, { createModelSelectionOwner } from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
+import type { Session } from '@deepseek-ai/dsh-session'
 import { AgentDriverId, SessionId } from '@deepseek-ai/dsh-session'
 import ApprovalService from '@deepseek-ai/dsh-user-approval'
 import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
@@ -232,20 +233,22 @@ function sandboxAgent(
   const events: Array<{ type: string; data?: Record<string, unknown> }> = [{ type: 'turn/start' }]
   if (mode !== undefined) events.push({ type: 'sandbox/mode', data: { mode } })
   const id = SessionId('sandbox-session')
+  const session = {
+    id,
+    header: { version: 0, driverId: AgentDriverId('dsh'), id, createdAt: 0 },
+    events,
+    append: (type: string, data: Record<string, unknown>) => {
+      const event = { type, data }
+      events.push(event)
+      onAppend?.(type)
+      return event
+    },
+  } as unknown as Session
   return {
     id,
     ...ctx === undefined ? {} : { ctx: ctx.plugin(() => {}).ctx },
-    session: {
-      id,
-      header: { version: 0, driverId: AgentDriverId('dsh'), id, createdAt: 0 },
-      events,
-      append: (type: string, data: Record<string, unknown>) => {
-        const event = { type, data }
-        events.push(event)
-        onAppend?.(type)
-        return event
-      },
-    },
+    modelSelection: createModelSelectionOwner(session),
+    session,
   } as unknown as Agent
 }
 
@@ -258,10 +261,12 @@ function sandboxAgent(
 function registerFakeAgent(ctx: Context, sessionId: string): Agent {
   const scopeFiber = ctx.plugin(() => {})
   const id = SessionId(sessionId)
+  const session = { id, header: { version: 0, driverId: AgentDriverId('dsh'), id, createdAt: 0 }, events: [] } as unknown as Session
   const agent = {
     id,
     ctx: scopeFiber.ctx,
-    session: { id, header: { version: 0, driverId: AgentDriverId('dsh'), id, createdAt: 0 }, events: [] },
+    modelSelection: createModelSelectionOwner(session),
+    session,
   } as unknown as Agent
   ctx.agents.register(agent)
   return agent

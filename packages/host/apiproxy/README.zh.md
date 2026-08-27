@@ -4,13 +4,17 @@
 
 所有客户端共用的 API 网关由三部分组成：TypeScript API 约定（`src/api/`，不依赖 Node，可从浏览器导入）、fetch 载体对（`src/fetch/`：宿主侧的 `toFetchHandler`，以及客户端侧的 `AbstractApiClient` 与平台子类）和宿主侧实现（`src/api-proxy.ts`：`createApiProxy` 加上默认导出的 `ApiProxyService` 网关插件，其配置为 `{nativeOpen?, sessionExportCompressionLevel?, coldBlankProbeMaxBytes?}`，提供 `ctx.apiProxy`）。该包不注册任何路由；HTTP 等载体自行包装 `ctx.apiProxy`。随发行版交付的 Web 组合位于 [`packages/bundle/web-app/cordis.patch.yml`](../../bundle/web-app/cordis.patch.yml)，其默认 Agent（智能体）模型选择属于 base 组合包中的 [`@deepseek-ai/dsh-agent-default-model`](../../core/agent-default-model/README.zh.md)。
 
+仅限 Host 的 `ctx.apiProxy.sessionLifecycles` 能力会保留该网关创建、恢复或 fork 的每个 Agent 的独占 `AgentHandle`。`activate(sessionId)` 会发布可提供服务的冷 Session Agent，但不会插入消息或打开模型 Turn；`owns(sessionId)` 确认保留的 handle 仍指向已注册的确切 Agent；`release(sessionId)` 只释放由当前网关持有且处于空闲状态的 Agent，同时保留其持久 Session。并发激活共用普通的逐 Session 创建 Promise；由其他 owner 发布的 live Agent 可被观察，但不能通过此能力释放。借此，同一进程内的 Host 插件可以管理 API 持有的 live Agent，而不会获得处置无关 Agent 的权限。
+
+在显式进程代际交接期间，proxy 会关闭新的生命周期与变更准入，并将跨过屏障的请求映射为可重试的代际响应。重新挂接后，它会为相同 Session id 保留替代 handle；陈旧 handle 或请求不能释放或修改该替代 Agent。浏览器客户端按 Session id 重连，并从新代际的基线重建投影。[重启交接决策](../../../.agents/notes/implemented/architecture/2026-08-26-process-generation-restart-handoff.zh.md)负责 sidecar 与停稳协议。
+
 ## 共享 Agent 默认值（`agent-default-model` Settings 分节）
 
 `ApiProxyService` 消费 `ctx.agentDefaultModel`；它不持有提供方／模型配置或 Settings 分节。共享服务在 `agent-default-model` 下注册 `{provider, model, reasoningEffort?}`：base 组合包的组合条目是底层，`settings.yaml` 把用户选择叠加其上。
 
-会话每次访问时都按三级解析模型选择：本进程内作出的选择，其次是该会话日志中最新的 `request/header`，最后是这个默认值。已经跑过一轮的会话从自己的日志推导选择，空白会话则能观察到创建之后保存的默认值。
+会话会从 Agent 所有的 intent 或未提交的 Agent 默认值解析模型选择。已接受的 intent 会在请求之前持久化；空白会话在其 Agent 首次开始 Turn 时实体化该默认值。请求 header 仍是生效请求证据，不再作为模型选择 fallback。
 
-`session.selectModel` 会把接受的切换保存为部署默认值；没有单独的选择动作。它存储已解析的 `ModelSelection`，包括适配器实体化的默认推理（reasoning）强度。完整分节写入会在所选模型没有推理强度时清除已存值。存储失败只记日志，不会撤销会话选择。没有设置提供方的部署保留组合条目，切换只对当前会话生效。
+`session.selectModel` 会在被寻址的 Agent／Session 上接受并持久化完整的 `ModelSelection`，包括适配器实体化的默认推理（reasoning）强度。它不会更改部署默认值；`agent-default-model` Settings 分节仍是未来会话或尚未提交的空白会话的唯一所有者。没有设置提供方的部署仍使用组合条目作为该默认值。
 
 Settings 分节中的 `reasoningEffort` 在 agent-default-model 插件配置中刻意没有对应字段：seam 按字段把用户层合并到组合条目之上，因此缺席的键无法覆盖已有键，组合层中的推理强度会在以后选择没有推理强度的模型时继续存在。推理强度的部署默认值属于按模型解析的适配器 profile。
 

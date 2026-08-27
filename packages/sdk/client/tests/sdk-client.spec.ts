@@ -21,6 +21,8 @@ import {
   type HarnessNotification,
 } from '../src/index.ts'
 import { finalResponse, normalizeInput } from '../src/api.ts'
+import { selectedModelSelection } from '../src/api.ts'
+import type { SessionEvent } from '@deepseek-ai/dsh-session/types'
 
 const fakeRuntime = fileURLToPath(new URL('./fake-runtime.ts', import.meta.url))
 
@@ -54,6 +56,33 @@ async function tempDir(prefix: string): Promise<string> {
 }
 
 describe('DeepSeekHarness', () => {
+  it('projects the latest accepted Model Selection separately from effective request evidence', () => {
+    const events = [
+      {
+        type: 'model/selected',
+        seq: 0,
+        time: 1,
+        data: { provider: 'route-a', model: 'model-a', source: 'user' },
+      },
+      {
+        type: 'request/header',
+        seq: 1,
+        time: 2,
+        data: { header: { config: { provider: 'route-a', model: 'model-a' } }, reason: 'initial' },
+      },
+      {
+        type: 'model/selected',
+        seq: 2,
+        time: 3,
+        data: { provider: 'route-b', model: 'model-b', reasoningEffort: 'high', source: 'user' },
+      },
+    ] as unknown as SessionEvent[]
+
+    expect(selectedModelSelection(events)).toEqual({
+      provider: 'route-b', model: 'model-b', reasoningEffort: 'high', source: 'user',
+    })
+  })
+
   it('ignores notifications that precede the submitted message receipt', async () => {
     const notifications = [
       { method: 'session.status', params: { sessionId: 'owned', status: 'running' } },

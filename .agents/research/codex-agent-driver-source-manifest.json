@@ -1,0 +1,331 @@
+{
+  "schemaVersion": 1,
+  "packageName": "@dsh-external/dsh-codex-agent-driver",
+  "packageVersion": "0.0.1",
+  "reviewedRoots": [
+    "src",
+    "tests",
+    "scripts"
+  ],
+  "reviewedFiles": [
+    ".gitignore",
+    "README.md",
+    "cordis.patch.yml",
+    "package.json",
+    "tsconfig.json",
+    "tsdown.config.ts"
+  ],
+  "files": [
+    {
+      "path": ".gitignore",
+      "sha256": "220b50eb627bbc4053c68961b00cacad02f7fea2b80c119e6f5517e0e7df2a8a",
+      "bytes": 39
+    },
+    {
+      "path": "cordis.patch.yml",
+      "sha256": "aa57ce17e698e7208a1c38e8a235c7629f6528fdda105703d176a43bc51657e2",
+      "bytes": 1015
+    },
+    {
+      "path": "package.json",
+      "sha256": "08ffbc25682b01e7a0c54fb817dd68a90b7704fb09fe62318dd3f0d0e2130481",
+      "bytes": 4341
+    },
+    {
+      "path": "README.md",
+      "sha256": "8acff7ad84e2bedd44aac5eeb155b11cf23d729ca1f3a49121e9856892addb3d",
+      "bytes": 44747
+    },
+    {
+      "path": "scripts/build.sh",
+      "sha256": "5feacf97188ea4ec5904218497b1e10e19f93b04c44d68ff2cc99c5bd16468d7",
+      "bytes": 5816
+    },
+    {
+      "path": "scripts/codex-resident-host-wizard.sh",
+      "sha256": "53f883df221bc698c1fa9c5276757b9db0d9358a9512eaa9d2c32a7ecfc67442",
+      "bytes": 20229
+    },
+    {
+      "path": "scripts/link-assembled-test-dependencies.mjs",
+      "sha256": "692ebe6263df102b550257b8df5d67fe70f2b3afaf12343f1e92f34f3620d07d",
+      "bytes": 3396
+    },
+    {
+      "path": "scripts/verify-baseline.mjs",
+      "sha256": "fcc29d80473ee1861857b1a257d654af1c0b0bb1270b1dce593fd7fd1d4bc551",
+      "bytes": 17282
+    },
+    {
+      "path": "src/activity-identity.ts",
+      "sha256": "bbe4022cb2a3d5c503b22c44315bbff77dced0519dfa2dac3b5bb1e3d1f22bef",
+      "bytes": 1867
+    },
+    {
+      "path": "src/bridge/auth.ts",
+      "sha256": "c614471e37da5aa285b8bfedeba5f019fd0b33365f7b312870a3e2fbd019d1e5",
+      "bytes": 2621
+    },
+    {
+      "path": "src/bridge/call.ts",
+      "sha256": "c4ac35aa745fe61929d8a6e6a1620f1cf2e8428190eb0d0bb75af9e763d6b4f5",
+      "bytes": 5842
+    },
+    {
+      "path": "src/bridge/http.ts",
+      "sha256": "e26cf85387d3cb22b2ded7bce58c3343dbc1b7f08ff38444d68bb199b616c5cf",
+      "bytes": 14293
+    },
+    {
+      "path": "src/bridge/request.ts",
+      "sha256": "ce999b58e9baec08fff844045528f31a7527b17ed8c86f59d608d127fee60bc2",
+      "bytes": 17424
+    },
+    {
+      "path": "src/bridge/sse.ts",
+      "sha256": "b802c7f503ec75a454359a3f4360611165d1a2c5c7ebf8771af05fe2702fed62",
+      "bytes": 14554
+    },
+    {
+      "path": "src/client/activity.ts",
+      "sha256": "7aa508b0622de98582a62fcf35fa48e7ac732685e84e695a38782be083b37db4",
+      "bytes": 5887
+    },
+    {
+      "path": "src/client/ActivityView.tsx",
+      "sha256": "afb5cb06269d45daf2928d02a42efeb89c3ea1c6f053941a7883cd2f80ecbc93",
+      "bytes": 7862
+    },
+    {
+      "path": "src/client/controls.tsx",
+      "sha256": "3ac2c4a4634aa1d54650ffbd00ae80965aa27ecfd5e1a02aa9d1f9d6722969e5",
+      "bytes": 11914
+    },
+    {
+      "path": "src/client/index.ts",
+      "sha256": "d2d9e084049ea8b73b410d8ab43f9c549266669d46bd43e10279786d5a113579",
+      "bytes": 7760
+    },
+    {
+      "path": "src/client/locales.ts",
+      "sha256": "51c040244ec334cf450b62d9954d1bd0b1f9eec981461cec8888e32c4f501a0f",
+      "bytes": 7887
+    },
+    {
+      "path": "src/client/OtherCliSettings.tsx",
+      "sha256": "922b1b2190f80f0a211839a99d218875fca5c1f05c9719a8ef4d52c35a9eeba3",
+      "bytes": 12804
+    },
+    {
+      "path": "src/client/styles.ts",
+      "sha256": "2db48cb3be811b70632e0dc95b0cf0b6ccc10b8186843c1ba1877676a5941e8a",
+      "bytes": 18835
+    },
+    {
+      "path": "src/client/TuiView.tsx",
+      "sha256": "b05016ca49dbdb2353baa97fa787ad4a3af1c41c8bb794f53798a3e7a3192f98",
+      "bytes": 10138
+    },
+    {
+      "path": "src/codex-identity.ts",
+      "sha256": "cd90dd35b4256f013d89b0120fc96eeb67e20a19dbb369fee5845bd0538b67fd",
+      "bytes": 5594
+    },
+    {
+      "path": "src/codex/codex-host-client.ts",
+      "sha256": "c3d794c9872d7ec90ff64f2da0f00a68107009ed89eed3f8a554f790bee3f3dd",
+      "bytes": 34612
+    },
+    {
+      "path": "src/codex/compatibility.ts",
+      "sha256": "75fb2455ae49a0f45c34bd80011bf23ce4b334e79a27c42427e2fe5b17c931cb",
+      "bytes": 33240
+    },
+    {
+      "path": "src/codex/host-catalog.ts",
+      "sha256": "b52c08577bca76bb40aef4ca510bf2f02f12452863dc6bd1fcfcda6632464e8d",
+      "bytes": 15286
+    },
+    {
+      "path": "src/codex/host-rpc.ts",
+      "sha256": "80f1c8046d43974384e59010d1a187bbe9a78dccd83040c06732b3430c3264b4",
+      "bytes": 2954
+    },
+    {
+      "path": "src/codex/index.ts",
+      "sha256": "85de0769896516860b963525af1262d121dd095e94f71e6410fa0fdd03d3b037",
+      "bytes": 1364
+    },
+    {
+      "path": "src/codex/types.ts",
+      "sha256": "bce2401857646b00c13a9cd6118e2408fa0179f1d75168c03addb606960e143e",
+      "bytes": 3488
+    },
+    {
+      "path": "src/driver/codex-agent.ts",
+      "sha256": "71317738c7bad3de460d62bb1cae09908c6794d8dca974b61584a7a9f61ecc29",
+      "bytes": 44547
+    },
+    {
+      "path": "src/driver/codex-driver.ts",
+      "sha256": "e51ee0af543cd6c221a8e164a264bde070c97a80a6b83bf2cf1060d2657c53f9",
+      "bytes": 33277
+    },
+    {
+      "path": "src/driver/interactions.ts",
+      "sha256": "9a073559288532174b62e9035cfa86770ea17ed2cfe964edb82a804a7e05bfcf",
+      "bytes": 15172
+    },
+    {
+      "path": "src/driver/model-route.ts",
+      "sha256": "23a3d10533bfa4eeaca70d5c7afa7b5c6c102bd49314eac6744b00394b4f96a5",
+      "bytes": 7142
+    },
+    {
+      "path": "src/driver/projection.ts",
+      "sha256": "a6ddabbb969f0a5e9e8ff5c1bcf604c13b7420c11b5f80f04e48ac6d670f33c4",
+      "bytes": 6558
+    },
+    {
+      "path": "src/index.ts",
+      "sha256": "90d64396d7e43e924aadab861e5ef2b09438a9b9fb5bf12e1efa3290aa90c8f5",
+      "bytes": 15208
+    },
+    {
+      "path": "src/protocol/json-rpc-websocket-peer.ts",
+      "sha256": "6152cf45b31eaa0a39c851bc1725288f9ddcad0c4624b37d5d41b37d7a5272e5",
+      "bytes": 17997
+    },
+    {
+      "path": "tests/bridge/bridge-wire.spec.ts",
+      "sha256": "23e79ed2cf2333d07f196df67580044f45de261723725e1ce96c97e8515e3a1c",
+      "bytes": 21098
+    },
+    {
+      "path": "tests/bridge/http-bridge.spec.ts",
+      "sha256": "78a229aba407d973cc7afb875715e2321074296c9019f4383735ccf965ddf62f",
+      "bytes": 5699
+    },
+    {
+      "path": "tests/codex-client/codex-host-client.test.ts",
+      "sha256": "bf7ab7b5b4d0e8a52d088aa27956c60b8bf373475f7117691068fc353aa5c475",
+      "bytes": 22221
+    },
+    {
+      "path": "tests/codex-client/compatibility.test.ts",
+      "sha256": "cb522632bbcdac1128d1f08b200efb2dfc47ddf5cc012b537532e1e8163ec2dd",
+      "bytes": 7544
+    },
+    {
+      "path": "tests/codex-client/daemon-lifecycle.test.ts",
+      "sha256": "ec172843b48b93a87e7845b35f0040b6f0133f8f38722ec416b887705d922f23",
+      "bytes": 10663
+    },
+    {
+      "path": "tests/codex-client/host-catalog.test.ts",
+      "sha256": "8587e7167a50f289483c1eb7d6cfcd3ef3dfaba32965a1fd17ad743dd61aeb82",
+      "bytes": 12114
+    },
+    {
+      "path": "tests/codex-client/host-rpc.test.ts",
+      "sha256": "425deb26f001e83b559f971eda77d54f98981d670adfbc4efc243fadc4006a23",
+      "bytes": 2086
+    },
+    {
+      "path": "tests/codex-client/json-rpc-peer.test.ts",
+      "sha256": "a0623060c5dd439e081f5a2030d3c4fb26c3198d88bb4c162c33aa6b80a32aba",
+      "bytes": 6368
+    },
+    {
+      "path": "tests/codex-client/live-probe.test.ts",
+      "sha256": "649e9b2242534aab4c6159e7c07aed8f5fe1aec4a2f587f0ac574ef5d05a6bf1",
+      "bytes": 975
+    },
+    {
+      "path": "tests/codex-client/unix-websocket-fixture.ts",
+      "sha256": "7bd5fd1652abe5fd34f70004635ee54bc672b22ddc0474635259f2106877f63b",
+      "bytes": 2929
+    },
+    {
+      "path": "tests/driver/activity-view.spec.ts",
+      "sha256": "c6d32988dbbd3ba0ba27e274e7550937c91cb4c401de8d0773ad42758457198a",
+      "bytes": 5850
+    },
+    {
+      "path": "tests/driver/codex-agent.spec.ts",
+      "sha256": "c95fd4eada5fdc3a6607e87988b6e455063cf410cd76b93171956a6efc99348b",
+      "bytes": 19054
+    },
+    {
+      "path": "tests/driver/codex-driver.spec.ts",
+      "sha256": "0cb67b0b5eee50acda397f5f778df60a962e5df03c58c6fb8d1e4edcb9040aaa",
+      "bytes": 43674
+    },
+    {
+      "path": "tests/driver/codex-identity.spec.ts",
+      "sha256": "6922473c4c5ba002dc1ee08351728b91fd9cb54a60129d50f820e4c340560ccd",
+      "bytes": 1818
+    },
+    {
+      "path": "tests/driver/codex-session-ui.spec.tsx",
+      "sha256": "abe28c305f6ab291fee6732c2ceb0a2840d9a764dce58b5175399e0d45797329",
+      "bytes": 4542
+    },
+    {
+      "path": "tests/driver/codex-tui-view.spec.tsx",
+      "sha256": "d27a681071aed65fd157d79be753ef4d210c8875d4e7e4bb40f4fed0c50d8189",
+      "bytes": 5436
+    },
+    {
+      "path": "tests/driver/interactions.spec.ts",
+      "sha256": "1445014442aad3559c366ca5a532dfb492d32df07a99e97f452087f4a8ab92f6",
+      "bytes": 6325
+    },
+    {
+      "path": "tests/driver/model-route.spec.ts",
+      "sha256": "abedddb86436b226ce7bcfbaff7a519078916abbaf3600472e96526f16e799ef",
+      "bytes": 2871
+    },
+    {
+      "path": "tests/driver/other-cli-settings.spec.tsx",
+      "sha256": "be4f65171093cdb59ff291d3a4226893ebc75a617831c4f2e6b9f89dd08e45a8",
+      "bytes": 5283
+    },
+    {
+      "path": "tests/integration/resident-assembled.test.ts",
+      "sha256": "50c292d4598560bd08660c41a664bfb77afc6008fd608d270e84185fe0e88e2b",
+      "bytes": 25553
+    },
+    {
+      "path": "tests/integration/restart-handoff-assembled.test.ts",
+      "sha256": "de8c12b25b9756c2f985deaf31a124a5a13db5bd3c8851ad69bb8c2f7547fe0b",
+      "bytes": 16998
+    },
+    {
+      "path": "tests/package/baseline.spec.ts",
+      "sha256": "63c13efda08542613705f7183c372b68f1061c217027250e709731a009fb5df0",
+      "bytes": 9297
+    },
+    {
+      "path": "tests/package/package.spec.ts",
+      "sha256": "3d16a772bc8c67083f15f09ff3ac82ef6d84aea5054256599c617e3651e23997",
+      "bytes": 5793
+    },
+    {
+      "path": "tests/package/wizard.spec.ts",
+      "sha256": "2da240223e2f777f3d533ff2aeec810688be7dd195706fb51624654db76b5efd",
+      "bytes": 2074
+    },
+    {
+      "path": "tsconfig.json",
+      "sha256": "a42957de88e70517e573802d1451529d473733259c59b705708260250e360862",
+      "bytes": 478
+    },
+    {
+      "path": "tsdown.config.ts",
+      "sha256": "04fb8c92c1c40412f7133da553244f3a8926c85534fd7b5b1f2f0e09b428f6d3",
+      "bytes": 1239
+    }
+  ],
+  "treeSha256": "17d61bb5ad7d31459922797ce8fffdadd9038e65e599063ba275c7a4ec85f1b8"
+}

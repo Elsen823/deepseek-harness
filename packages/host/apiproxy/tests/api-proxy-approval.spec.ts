@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import AgentRegistry from '@deepseek-ai/dsh-agent'
+import AgentRegistry, { createModelSelectionOwner } from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import SessionStore, { AgentDriverId } from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
@@ -35,7 +35,7 @@ async function harness(): Promise<{ ctx: Context; api: ApiProxy }> {
 function agentOf(ctx: Context): Agent {
   const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
   session.append('turn/start', { turn: 1 })
-  return { session } as unknown as Agent
+  return { session, modelSelection: createModelSelectionOwner(session) } as unknown as Agent
 }
 
 /** Open a mux stream and capture frames into an array (returns an on-demand waiter). */
@@ -187,7 +187,7 @@ describe('approval pending registry', () => {
     const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', { turn: 1 })
     session.append('approval/asked', { id: 'pre-aborted' as ApprovalRequestId, toolName: 'bash' })
-    const agent = { session } as unknown as Agent
+    const agent = { session, modelSelection: createModelSelectionOwner(session) } as unknown as Agent
     const cancelled = new AbortController()
     cancelled.abort()
     const outcome = await ctx.waterfall(
@@ -311,7 +311,7 @@ describe('approval pending registry', () => {
     session.append('turn/start', { turn: 1 })
     session.append('approval/asked', { id: 'stale-ask' as ApprovalRequestId, toolName: 'bash' })
     session.append('approval/decided', { id: 'stale-ask' as ApprovalRequestId, outcome: 'rejected' })
-    const agent = { session } as unknown as Agent
+    const agent = { session, modelSelection: createModelSelectionOwner(session) } as unknown as Agent
     const outcome = await ctx.waterfall('approval/request', { agent, toolName: 'bash' }, () => Promise.resolve('unavailable' as const))
     expect(outcome).toBe('unavailable')
   })
@@ -323,7 +323,7 @@ describe('approval pending registry', () => {
     // that has no approval/asked event — the proxy answerer must call next().
     const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', { turn: 1 })
-    const agent = { session } as unknown as Agent
+    const agent = { session, modelSelection: createModelSelectionOwner(session) } as unknown as Agent
     const outcome = await ctx.waterfall('approval/request', { agent, toolName: 'x' }, () => Promise.resolve('unavailable' as const))
     expect(outcome).toBe('unavailable')
   })

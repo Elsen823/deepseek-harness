@@ -12,7 +12,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import AgentRegistry from '@deepseek-ai/dsh-agent'
+import AgentRegistry, { createModelSelectionOwner } from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import SessionStore from '@deepseek-ai/dsh-session'
 import type { Session } from '@deepseek-ai/dsh-session'
@@ -40,7 +40,7 @@ async function harness(withPlanMode: boolean): Promise<Bench> {
   await ctx.plugin(SessionProjectionRegistry)
   if (withPlanMode) await ctx.plugin(PlanModeController, { section: 'plan policy' })
   const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
-  ctx.agents.register({ id: session.id, session, status: 'idle', ctx } as Agent)
+  ctx.agents.register({ id: session.id, session, modelSelection: createModelSelectionOwner(session), status: 'idle', ctx } as Agent)
   return {
     ctx,
     session,

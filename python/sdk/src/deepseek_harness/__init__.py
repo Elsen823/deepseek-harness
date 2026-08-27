@@ -1,4 +1,4 @@
-from .api import DeepSeekHarness, DeepSeekHarnessConfig, RunResult, Session
+from .api import DeepSeekHarness, DeepSeekHarnessConfig, RunResult, Session, selected_model_selection
 from .client import HarnessClient, HarnessConfig
 from .errors import SdkProtocolError
 from .models import (
@@ -7,6 +7,7 @@ from .models import (
     IncomingRequest,
     InitializeResponse,
     JsonObject,
+    ModelSelection,
     Notification,
     ServerInfo,
     SessionRuntimeActivating,
@@ -18,6 +19,7 @@ from .models import (
     SessionRuntimeStatus,
     SessionRuntimeUnavailable,
     SessionRuntimeUnavailableReason,
+    SelectedModelSelection,
 )
 
 __all__ = [
@@ -28,11 +30,13 @@ __all__ = [
     "HarnessClient",
     "HarnessConfig",
     "SdkProtocolError",
+    "selected_model_selection",
     "AgentDriverCatalog",
     "AgentDriverCatalogItem",
     "IncomingRequest",
     "InitializeResponse",
     "JsonObject",
+    "ModelSelection",
     "Notification",
     "ServerInfo",
     "SessionRuntimeActivating",
@@ -44,4 +48,5 @@ __all__ = [
     "SessionRuntimeStatus",
     "SessionRuntimeUnavailable",
     "SessionRuntimeUnavailableReason",
+    "SelectedModelSelection",
 ]

@@ -10,7 +10,7 @@ import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import SessionStore, { AgentDriverId } from '@deepseek-ai/dsh-session'
-import AgentRegistry from '@deepseek-ai/dsh-agent'
+import AgentRegistry, { createModelSelectionOwner } from '@deepseek-ai/dsh-agent'
 import { TypertLookupFailure } from '@deepseek-ai/dsh-typert-protocol'
 import TypertRegistry from '@deepseek-ai/dsh-typert-registry'
 import { createUserMessage, MessageId } from '@deepseek-ai/dsh-llm'
@@ -199,7 +199,7 @@ describe('sessions.list cold merge', () => {
         createdAt: meta.createdAt,
       },
     })
-    ctx.agents.register({ id: session.id, session, status: 'running', ctx } as Agent)
+    ctx.agents.register({ id: session.id, session, modelSelection: createModelSelectionOwner(session), status: 'running', ctx } as Agent)
     release.resolve(undefined)
 
     const response = await listing
@@ -237,7 +237,7 @@ describe('attached updatedAt tracks human prompts', () => {
       ],
       meta: { driverId: AgentDriverId('dsh'), cwd: '/proj', createdAt: 500 },
     })
-    ctx.agents.register({ id: resumed.id, session: resumed, status: 'idle', ctx } as Agent)
+    ctx.agents.register({ id: resumed.id, session: resumed, modelSelection: createModelSelectionOwner(resumed), status: 'idle', ctx } as Agent)
     const boundary = resumed.events.at(-1)
     expect(boundary?.type).toBe('session/end-seed')
     expect(boundary?.time).toBeGreaterThan(worked)
@@ -341,10 +341,11 @@ describe('Remote Agent and Session lookup policy', () => {
       locate: () => undefined,
     } as never)
     const resumedSession = { id: sessionId, header: meta, events: [] } as unknown as import('@deepseek-ai/dsh-session').Session
-    const resumedAgent = { id: sessionId, session: resumedSession, status: 'idle', ctx } as Agent
+    const resumedAgent = { id: sessionId, session: resumedSession, modelSelection: createModelSelectionOwner(resumedSession), status: 'idle', ctx } as Agent
     const release = Promise.withResolvers<undefined>()
     const resume = vi.spyOn(ctx.agents, 'resume').mockImplementation(async () => {
       await release.promise
+      ctx.agents.register(resumedAgent)
       return { agent: resumedAgent, dispose: () => Promise.resolve() }
     })
     const defaultAgentLookup = ctx.typert.lookups.get('agent')
@@ -388,7 +389,7 @@ describe('Remote Agent and Session lookup policy', () => {
     const liveSession = ctx.sessions.create(sid('session-remote-live-child'), {
       meta: { driverId: AgentDriverId('dsh'), cwd: '/proj', parentSession: sid('session-parent'), origin: 'subagent' },
     })
-    const liveAgent = { id: liveSession.id, session: liveSession, status: 'idle', ctx } as Agent
+    const liveAgent = { id: liveSession.id, session: liveSession, modelSelection: createModelSelectionOwner(liveSession), status: 'idle', ctx } as Agent
     ctx.agents.register(liveAgent)
     const resume = vi.spyOn(ctx.agents, 'resume')
     const defaultAgentLookup = ctx.typert.lookups.get('agent')
@@ -532,7 +533,7 @@ describe('subagent ownership fence', () => {
     await ctx.plugin(AgentRegistry)
     await ctx.plugin(UserQuestionService)
     const parentSession = ctx.sessions.create(sid('session-parent'), { meta: { driverId: AgentDriverId('dsh'), cwd: '/proj' } })
-    const parent = { id: parentSession.id, session: parentSession, status: 'idle', ctx } as Agent
+    const parent = { id: parentSession.id, session: parentSession, modelSelection: createModelSelectionOwner(parentSession), status: 'idle', ctx } as Agent
     ctx.agents.register(parent)
 
     const originSession = ctx.sessions.create(sid('session-origin-child'), {
@@ -543,6 +544,7 @@ describe('subagent ownership fence', () => {
     const originChild = {
       id: originSession.id,
       session: originSession,
+      modelSelection: createModelSelectionOwner(originSession),
       status: 'idle',
       ctx,
       cancel,
@@ -553,7 +555,7 @@ describe('subagent ownership fence', () => {
     const startingSession = ctx.sessions.create(sid('session-starting-child'), {
       meta: { driverId: AgentDriverId('dsh'), cwd: '/proj', parentSession: parent.id },
     })
-    const startingChild = { id: startingSession.id, session: startingSession, status: 'idle', ctx } as Agent
+    const startingChild = { id: startingSession.id, session: startingSession, modelSelection: createModelSelectionOwner(startingSession), status: 'idle', ctx } as Agent
     ctx.agents.enter(startingChild, parent)
     const api = createApiProxy(ctx, { defaultModelSelection: () => ({ provider: 'p', model: 'm' }), cwd: '/tmp' })
 
@@ -599,7 +601,7 @@ describe('subagent ownership fence', () => {
       meta: { driverId: AgentDriverId('dsh'), cwd: '/proj', parentSession: sid('session-source'), seedLength: 1 },
     })
     const followup = vi.fn()
-    const agent = { id: session.id, session, status: 'idle', ctx, followup } as unknown as Agent
+    const agent = { id: session.id, session, modelSelection: createModelSelectionOwner(session), status: 'idle', ctx, followup } as unknown as Agent
     ctx.agents.register(agent)
     const api = createApiProxy(ctx, { defaultModelSelection: () => ({ provider: 'p', model: 'm' }), cwd: '/tmp' })
 
@@ -619,7 +621,7 @@ describe('subagent ownership fence', () => {
     await ctx.plugin(UserQuestionService)
     const session = ctx.sessions.create(sid('session-browser-zone'), { meta: { driverId: AgentDriverId('dsh'), cwd: '/proj' } })
     const followup = vi.fn()
-    const agent = { id: session.id, session, status: 'idle', ctx, followup } as unknown as Agent
+    const agent = { id: session.id, session, modelSelection: createModelSelectionOwner(session), status: 'idle', ctx, followup } as unknown as Agent
     ctx.agents.register(agent)
     const api = createApiProxy(ctx, {
       defaultModelSelection: () => ({ provider: 'p', model: 'm' }),
@@ -739,6 +741,7 @@ describe('sessions.prompt synchronous rejection', () => {
     ctx.agents.register({
       id: session.id,
       session,
+      modelSelection: createModelSelectionOwner(session),
       status: 'idle',
       ctx,
       followup: () => { throw new Error('agent "session-throwing" lifecycle disposed') },
@@ -776,12 +779,12 @@ describe('sessions.prompt synchronous rejection', () => {
     // The raced winner: a live parent-owned subagent publishes the identity
     // while the generic cold resume is in flight, so the resume collides.
     const parentSession = ctx.sessions.create(sid('race-parent'), { meta: { driverId: AgentDriverId('dsh'), cwd: '/proj' } })
-    const parent = { id: parentSession.id, session: parentSession, status: 'idle', ctx } as Agent
+    const parent = { id: parentSession.id, session: parentSession, modelSelection: createModelSelectionOwner(parentSession), status: 'idle', ctx } as Agent
     ctx.agents.register(parent)
     const childSession = ctx.sessions.create(sessionId, {
       meta: { driverId: AgentDriverId('dsh'), cwd: '/proj', parentSession: parent.id, origin: 'subagent' },
     })
-    const child = { id: sessionId, session: childSession, status: 'idle', ctx } as unknown as Agent
+    const child = { id: sessionId, session: childSession, modelSelection: createModelSelectionOwner(childSession), status: 'idle', ctx } as unknown as Agent
     vi.spyOn(ctx.agents, 'resume').mockImplementationOnce(async () => {
       // The parent's `enter()` wins the identity between the pre-resume
       // re-check and publication; the generic resume then collides.

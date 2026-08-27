@@ -187,6 +187,20 @@ describe('provideCmdline', () => {
     expect(ctx.cmdlineArgs?.get()).toEqual(['--resume', 'abc'])
   })
 
+  it('exposes an optional explicit restart controller to the app tree', async () => {
+    const ctx = new Context()
+    const codes: Array<number | undefined> = []
+    const restart = (code?: number): Promise<void> => {
+      codes.push(code)
+      return Promise.resolve()
+    }
+    provideCmdline(ctx, { args: [], exit: () => {}, restart })
+
+    expect(ctx.appRestart).toBe(restart)
+    await ctx.appRestart?.(7)
+    expect(codes).toEqual([7])
+  })
+
   it('refuses at load a program in which no command declares an action', async () => {
     const { ctx } = await bootFixture([], resolveDemo, { withoutProvider: true })
     expect(() => { parseCmdline(ctx, demoCommand()) })

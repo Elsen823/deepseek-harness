@@ -8,7 +8,7 @@ Source: [`packages/core/system-prompt/src/index.ts`](../../packages/core/system-
 
 ## Assembly context
 
-`AssembleContext` identifies the scope layer one assembly resolves and may carry the explicit control signal for that request. It is merge-extensible: `dsh-agent` adds the optional live `agent` field, and `assembleContextFor(agent, signal)` sets the explicit fields together. A bare assembly has neither scope nor signal.
+`AssembleContext` identifies the scope layer one assembly resolves and may carry the explicit control signal for that request. It is merge-extensible: `dsh-agent` adds the optional live `agent` field and the immutable current-Turn `modelSelection`, and `assembleContextFor(agent, signal, modelSelection)` sets the explicit fields together. A bare assembly has neither scope, signal, nor model selection.
 
 ```ts type-equiv
 /** Merge-extensible context for one prompt assembly. */
@@ -20,6 +20,12 @@ interface AssembleContext {
   scope?: ScopeKey
   /** Explicit control signal for the turn that requested this assembly, when any. */
   signal?: AbortSignal
+  /** Immutable Model Selection captured for the current Turn, when a Driver supplies one. */
+  modelSelection?: {
+    readonly provider: string
+    readonly model: string
+    readonly reasoningEffort?: ReasoningEffortId
+  }
 }
 ```
 

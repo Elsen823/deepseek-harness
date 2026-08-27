@@ -87,6 +87,8 @@ Input reaches the driver through one inbox. Some messages wake it immediately; i
 
 `agent/pre-step` decides what the model sees. Listeners may rewrite the claimed messages or reject them outright; a rejected or empty first claim still closes a durable turn that spent no step, so the log records the attempt. Each step reads the prompt sections and tool schemas that plugins registered.
 
+The built-in `dsh` Driver captures one immutable Turn Model Selection after the first prompt is admitted and before prompt assembly. It uses that provider/model and resolved reasoning effort for every step and retry in the Turn; a selection accepted while the Turn runs applies to the next Turn, and steering stays on the captured value. The accepted `model/selected` intent is separate from effective request evidence in `request/header` or `agent-driver/model-request`.
+
 Details: the [sequence diagram](agent-lifecycle.md), the [tool pipeline](tool-execution-pipeline.md), and [cancellation and error recovery](subsystems/core.md#the-agent-handle).
 
 ## Session log
@@ -94,6 +96,8 @@ Details: the [sequence diagram](agent-lifecycle.md), the [tool pipeline](tool-ex
 The session log is the source of the context the model sees. `deriveMessages()` projects model history from it, and raw `assistant/chunk` events preserve replay and UI fidelity. Fork, resume, transcripts, telemetry, and persistence all derive from this stream.
 
 **Model-visible means logged.** Anything that reaches a model request must be reconstructable from the log, and a runtime invariant asserts it. This is why a new model-visible input requires a new session event: extend `SessionEventMap` and render from the log.
+
+Process replacement is a separate generic lifecycle: an explicit restart handoff publishes versioned adoption state outside the model-visible log, waits for resident Sessions and accepted persistence to quiesce within the configured bound, and leaves the old generation serving when it refuses. A compatible next generation reattaches only explicitly opted-in Sessions and gives clients new process-local handles; ordinary stop, provider unload, and explicit Agent release retain disposal semantics. See the [restart-handoff Agent Note](../.agents/notes/implemented/architecture/2026-08-26-process-generation-restart-handoff.md).
 
 ## Capability seams
 

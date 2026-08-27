@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, createEvent, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { bindSnapshotSelector } from '@deepseek-ai/dsh-client-test-runtime'
 import type {
-  SessionId, SessionListState, SessionSummary, WorkspaceId, WorkspaceListState, WorkspaceView,
+  AgentDriverId, SessionId, SessionListState, SessionRuntimeStatus, SessionSummary,
+  WorkspaceId, WorkspaceListState, WorkspaceView,
 } from '@deepseek-ai/dsh-client-runtime/client'
 import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
 import { zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/zh.ts'
@@ -22,6 +23,17 @@ const t: WorkspaceBrowserProps['t'] = makeTranslate(zh, commonZh)
 
 const sid = (id: string) => id as SessionId
 const wid = (id: string) => id as WorkspaceId
+const driverId = (id: string) => id as AgentDriverId
+const runtime = (sessionId: SessionId): SessionRuntimeStatus => ({
+  sessionId,
+  driverId: driverId('codex'),
+  availability: { kind: 'available' },
+  activity: 'idle',
+  attention: { approvals: 0, userInputs: 0 },
+  operation: 'conversation',
+  revision: 1,
+  updatedAt: 1,
+})
 const summary = (id: string, updatedAt: number, overrides: Partial<SessionSummary> = {}): SessionSummary => ({
   id: sid(id), displayTitle: id, running: false, blank: false, updatedAt, ...overrides,
 })
@@ -178,6 +190,38 @@ describe('WorkspaceBrowser', () => {
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(screen.queryByRole('menu')).toBeNull()
     expect(b.store.getSnapshot().groupBy).toBe('workspace')
+  })
+
+  it('renders each Session trailing slot with its Driver binding and live runtime', () => {
+    const sessionId = sid('codex-session')
+    const status = runtime(sessionId)
+    const trailingOwners: unknown[] = []
+    mount({
+      useSessions: hook(sessionState([
+        summary('codex-session', 1, { driverId: driverId('codex'), runtime: status }),
+      ])),
+      useWorkspaces: hook(workspaceState([workspace('alpha', ['codex-session'])])),
+      renderSlot: ((name: string, owner: Record<string, unknown>) => {
+        if (name === 'sidebar.workspaces.session.trailing') {
+          trailingOwners.push(owner)
+          return <span data-testid="codex-session-trailing" />
+        }
+        return owner.open === true ? <div data-testid="directory-flow" /> : null
+      }) as never,
+    })
+
+    fireEvent.click(screen.getByText('alpha'))
+    expect(screen.getByTestId('codex-session-trailing')).toBeTruthy()
+    expect(trailingOwners.at(-1)).toEqual({
+      sessionId,
+      driverId: driverId('codex'),
+      runtime: status,
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: '视图选项' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '单列表' }))
+    expect(screen.getByTestId('codex-session-trailing')).toBeTruthy()
+    expect(trailingOwners.length).toBeGreaterThan(1)
   })
 
   it('persists flat-list drag order locally and applies Last updated within that account', async () => {

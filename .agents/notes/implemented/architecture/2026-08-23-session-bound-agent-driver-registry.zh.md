@@ -18,11 +18,15 @@ Status: implemented
 
 内置 Driver id 为 `dsh`，由现有 DSH agent loop 支持。Driver 身份与 [逐会话 agent preset](2026-08-03-per-session-agent-presets.zh.md)保持独立：Driver 选择执行实现，preset 选择该会话的作用域组合。更换执行实现需要创建不同的会话或 fork，并且不会重写源绑定。
 
+Web 创建控件只出现在 New Session Hero 中。它在连接或创建空白 Session 时一并提交所选 Driver 与 Workspace；活跃 Session 的控件不能更改绑定，也不能发起隐式 fork。编程式 fork 仍是独立且显式的 Session 操作（[决策](../bug-fix/2026-08-24-new-session-driver-workspace-pair.zh.md)）。
+
 ### effect 作用域的具名世代
 
 `AgentRegistry` 按 `AgentDriverId` 存储具名 `AgentDriver` 注册。每项注册都是可逆的 Cordis effect，并代表一个确切的提供方世代。释放该世代会中止未发布的准备工作、停止并排空它创建的所有存活 agent，并在注册消失前等待生命周期包装操作结算。同一组合中的其他 Driver 可以继续保持注册和活跃。
 
 Driver 发布不可变的发现元数据，并实现一个通用 `prepare(session, options, signal)` 操作。准备结果包含未发布的 agent 以及窄化的 `start` 和 `dispose` 钩子；产品专属生命周期方法不会进入注册表 API。
+
+Core 会传递带 source 标记的 `UserMessage` 内容，而不解释提供方原生 command、skill、mention 或 prompt 语义。每个 Driver 在自身 Agent 实现内部拥有原生结构化输入扩展。
 
 ### 未发布准备与发布事务
 
@@ -33,6 +37,8 @@ Driver 发布不可变的发现元数据，并实现一个通用 `prepare(sessio
 ### 运行时与工作状态依赖
 
 Driver 绑定不会重新定义整体 agent 完全停稳，也不会创建共享的提供方原生 Goal 状态机。[Driver 无关的会话运行时与工作状态投影](2026-08-23-driver-neutral-session-runtime-and-work-state.zh.md)负责进程本地可用性和注意力，以及以此不可变 Driver 身份为键的可移植持久投影。
+
+进程替换使用独立的通用[进程代际重启交接](2026-08-26-process-generation-restart-handoff.zh.md)。Driver 可以提供 `PreparedAgentDriver.handoff()` 来实现有界停稳和不释放的采用；普通提供方卸载与 `AgentHandle.dispose()` 仍是唯一调用 `dispose()` 并发出释放生命周期边的路径。
 
 ## 考虑过的替代方案
 

@@ -8,7 +8,7 @@ import { Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { AnonymousEntries, NamedEntries, ScopedLayers, scopeTarget } from '@deepseek-ai/dsh-scope'
 import type { ScopeKey, ScopeLayer, Scoped } from '@deepseek-ai/dsh-scope'
-import type { ContextSnapshotSection, ToolSchema } from '@deepseek-ai/dsh-llm'
+import type { ContextSnapshotSection, ReasoningEffortId, ToolSchema } from '@deepseek-ai/dsh-llm'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -47,6 +47,12 @@ export interface AssembleContext {
   scope?: ScopeKey
   /** Explicit control signal for the turn that requested this assembly, when any. */
   signal?: AbortSignal
+  /** Immutable Model Selection captured for the current Turn, when a Driver supplies one. */
+  modelSelection?: {
+    readonly provider: string
+    readonly model: string
+    readonly reasoningEffort?: ReasoningEffortId
+  }
 }
 
 /** One contributed section of the system prompt (registry input). */

@@ -257,6 +257,70 @@ describe('live event path', () => {
     return { api, session }
   }
 
+  it('publishes Selected, Next turn, and Effective identity transitions while a Session runs', async () => {
+    const { session } = await opened([])
+    const append = (type: string, seq: number, data: unknown): void => {
+      session.handleMuxEnvelope(`identity-${String(seq)}` as never, {
+        type: 'session/event', sessionId: SID,
+        event: { type, seq, time: seq, data } as SessionEvent,
+      })
+    }
+    append('model/selected', 0, { provider: 'deepseek', model: 'flash', source: 'user' })
+    append('request/header', 1, {
+      header: { config: { provider: 'deepseek', model: 'flash', reasoningEffort: 'off' } }, reason: 'initial',
+    })
+    append('model/selected', 2, { provider: 'deepseek', model: 'pro', reasoningEffort: 'max', source: 'user' })
+    expect(session.getSnapshot().modelSelection).toMatchObject({
+      selected: { selection: { model: 'pro' }, seq: 2 },
+      nextTurn: { provider: 'deepseek', model: 'pro', reasoningEffort: 'max' },
+      effective: { selection: { model: 'flash', reasoningEffort: 'off' }, seq: 1 },
+    })
+    append('request/header', 3, {
+      header: { config: { provider: 'deepseek', model: 'pro', reasoningEffort: 'max' } }, reason: 'change',
+    })
+    expect(session.getSnapshot().modelSelection?.nextTurn).toBeUndefined()
+    expect(session.getSnapshot().modelSelection?.effective?.selection).toEqual({
+      provider: 'deepseek', model: 'pro', reasoningEffort: 'max',
+    })
+  })
+
+  it('publishes first-turn native identity when checkpoint provenance follows the request', async () => {
+    const { session } = await opened([])
+    const append = (type: string, seq: number, data: unknown): void => {
+      session.handleMuxEnvelope(`claude-identity-${String(seq)}` as never, {
+        type: 'session/event', sessionId: SID,
+        event: { type, seq, time: seq, data } as SessionEvent,
+      })
+    }
+    append('agent-driver/activation', 0, {
+      owner: 'claude', activationId: 'activation', phase: 'active',
+    })
+    append('model/selected', 1, { provider: 'anthropic', model: 'sonnet', source: 'user' })
+    append('agent-driver/model-request', 2, {
+      owner: 'claude', activationId: 'activation', requestId: 'request', turn: 1, step: 1,
+      messages: [], config: { provider: 'anthropic', model: 'sonnet' },
+      driver: {
+        kind: 'claude/native-request',
+        payload: {
+          nativeSelection: { model: 'claude-sonnet-4-6', effort: 'high' },
+          nativeOptions: { model: 'claude-sonnet-4-6', sessionId: 'native-1' },
+        },
+      },
+    })
+    expect(session.getSnapshot().modelSelection).toMatchObject({
+      selected: { selection: { provider: 'anthropic', model: 'sonnet' } },
+      effective: { selection: { provider: 'anthropic', model: 'sonnet' } },
+      native: { model: 'claude-sonnet-4-6', effort: 'high' },
+    })
+    expect(session.getSnapshot().modelSelection).not.toHaveProperty('nativeConversationId')
+
+    append('agent-driver/checkpoint', 3, {
+      owner: 'claude', activationId: 'activation', checkpointId: 'checkpoint', phase: 'captured',
+      provenance: { kind: 'created', nativeConversationId: 'native-1' },
+    })
+    expect(session.getSnapshot().modelSelection?.nativeConversationId).toBe('native-1')
+  })
+
   it('drops replayed frames at or below the window tail', async () => {
     const { session } = await opened()
     const before = session.getSnapshot()

@@ -20,12 +20,15 @@ export type {
   SdkRunStatus,
   SessionCreatedNotification,
   SessionEventNotification,
+  SessionModelSelectedEvent,
   SessionRuntimeNotification,
   SessionRuntimeParams,
   SessionRuntimeResult,
   SessionStatusNotification,
   SessionPromptParams,
   SessionPromptResult,
+  SelectedModelSelection,
   SubagentFinishedNotification,
   SubagentStartedNotification,
 } from './types.ts'
+export type { ModelSelection, ModelSelectionSource } from './types.ts'

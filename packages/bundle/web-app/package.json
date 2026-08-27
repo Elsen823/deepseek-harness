@@ -122,6 +122,8 @@
     "@deepseek-ai/cordis": "workspace:^"
   },
   "devDependencies": {
+    "@deepseek-ai/dsh-claude-agent-driver": "workspace:^",
+    "@deepseek-ai/dsh-client-ui-claude-agent-driver": "workspace:^",
     "@deepseek-ai/cordis-plugin-loader": "workspace:^",
     "@deepseek-ai/dsh-shell-env": "workspace:^",
     "@deepseek-ai/dsh-invariants": "workspace:^",

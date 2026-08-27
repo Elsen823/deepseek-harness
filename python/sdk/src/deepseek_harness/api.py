@@ -7,7 +7,7 @@ from typing import Callable
 
 from .client import HarnessClient, HarnessConfig
 from .errors import SdkProtocolError
-from .models import AgentDriverCatalog, JsonObject, Notification, SessionRuntimeResponse
+from .models import AgentDriverCatalog, JsonObject, Notification, SelectedModelSelection, SessionRuntimeResponse
 
 
 @dataclass(slots=True)
@@ -220,6 +220,26 @@ class Session:
             notifications=notifications,
             session_root=self.harness.config.session_root,
         )
+
+
+def selected_model_selection(events: list[JsonObject]) -> SelectedModelSelection | None:
+    """Project the latest accepted Model Selection from one event interval.
+
+    Request/header and agent-driver/model-request events remain effective
+    evidence and are intentionally not folded into this accepted-intent view.
+    """
+
+    for event in reversed(events):
+        if event.get("type") != "model/selected":
+            continue
+        data = event.get("data")
+        if not isinstance(data, dict):
+            raise SdkProtocolError("model/selected event carried malformed data")
+        try:
+            return SelectedModelSelection.model_validate(data)
+        except ValueError as error:
+            raise SdkProtocolError(f"model/selected event carried malformed selection: {data!r}") from error
+    return None
 
 
 def _is_inbox_receipt(notification: Notification, session_id: str, message_id: str) -> bool:

@@ -4,8 +4,9 @@
  * remains visible.
  */
 import {
-  indexSubagentDescendants, type PendingInteractionStatus, type SessionId, type SessionListState,
-  type SessionSearchResultItem, type SessionSummary, type SubagentDescendantSummary,
+  indexSubagentDescendants, type AgentDriverId, type PendingInteractionStatus, type SessionId,
+  type SessionListState, type SessionRuntimeStatus, type SessionSearchResultItem, type SessionSummary,
+  type SubagentDescendantSummary,
   type WorkspaceId, type WorkspaceView,
 } from '@deepseek-ai/dsh-client-runtime/client'
 
@@ -18,6 +19,10 @@ export const UNGROUPED_LABEL = 'Ungrouped'
 /** One top-level session row in a group or the flat list. */
 export interface SessionNode {
   id: SessionId
+  /** Immutable Agent Driver binding retained for row extension slots. */
+  driverId?: AgentDriverId
+  /** Latest connected-Host process-local runtime retained for row extension slots. */
+  runtime?: SessionRuntimeStatus
   /** Stored display title; the renderer substitutes the localized New Session label for blank rows. */
   title: string
   /** The provisional blank session (renderer shows the localized New Session title). */
@@ -217,6 +222,8 @@ function sessionNode(
 ): SessionNode {
   return {
     id: s.id,
+    ...(s.driverId === undefined ? {} : { driverId: s.driverId }),
+    ...(s.runtime === undefined ? {} : { runtime: s.runtime }),
     title: sessionTitle(s),
     blank: s.blank,
     running: s.running,

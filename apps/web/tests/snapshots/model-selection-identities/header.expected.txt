@@ -1,0 +1,6 @@
+DSH Session: fx-alpha
+Selected: deepseek-official / deepseek-v4-flash
+Reasoning Effort: max
+Next turn: deepseek-official / deepseek-v4-flash
+Effective: deepseek-official / deepseek-v4-flash
+Reasoning Effort: high

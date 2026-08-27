@@ -9,7 +9,14 @@ from pathlib import Path
 
 import pytest
 
-from deepseek_harness import DeepSeekHarness, HarnessClient, HarnessConfig, Notification, SdkProtocolError
+from deepseek_harness import (
+    DeepSeekHarness,
+    HarnessClient,
+    HarnessConfig,
+    Notification,
+    SdkProtocolError,
+    selected_model_selection,
+)
 
 
 def test_high_level_sdk_runs_turn_and_collects_final_response(tmp_path: Path) -> None:
@@ -124,6 +131,28 @@ for line in sys.stdin:
         "maxTokens": 4096,
         "driverId": "codex",
     }
+
+
+def test_python_sdk_projects_selected_model_intent_separately() -> None:
+    events = [
+        {"type": "model/selected", "data": {"provider": "route-a", "model": "model-a", "source": "user"}},
+        {"type": "request/header", "data": {"header": {"config": {"provider": "route-a", "model": "model-a"}}}},
+        {"type": "model/selected", "data": {
+            "provider": "route-b", "model": "model-b", "reasoningEffort": "high", "source": "default",
+        }},
+    ]
+
+    assert selected_model_selection(events).model_dump(exclude_none=True) == {
+        "provider": "route-b",
+        "model": "model-b",
+        "reasoningEffort": "high",
+        "source": "default",
+    }
+    with pytest.raises(SdkProtocolError, match="model/selected"):
+        selected_model_selection([{
+            "type": "model/selected",
+            "data": {"provider": "route", "model": "model", "serviceTier": "priority", "source": "user"},
+        }])
 
 
 def test_python_sdk_projects_driver_catalog_runtime_lookup_and_session_binding(tmp_path: Path) -> None:

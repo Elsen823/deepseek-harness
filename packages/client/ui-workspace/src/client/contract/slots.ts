@@ -29,7 +29,7 @@ import type { HostObservable, PropsHooks, PropsLocale, PropsRenderSlots, PropsRu
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {
-  SessionId, SessionSearchResultItem, WorkspaceId, WorkspaceView,
+  AgentDriverId, SessionId, SessionRuntimeStatus, SessionSearchResultItem, WorkspaceId, WorkspaceView,
 } from '@deepseek-ai/dsh-client-runtime/client'
 import type { createWorkspaceViewStore } from '../stores.ts'
 
@@ -51,12 +51,24 @@ export interface DirectoryFlowOwnerProps {
   onError: (message: string) => void
 }
 
+/** Session identity and process-local Driver state supplied to trailing row contributions. */
+export interface SessionTrailingOwnerProps {
+  /** Durable DSH Session identity for this exact row. */
+  sessionId: SessionId
+  /** Immutable Agent Driver binding, absent only for a catalog-only address. */
+  driverId?: AgentDriverId
+  /** Latest connected-Host runtime state for this Session. */
+  runtime?: SessionRuntimeStatus
+}
+
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface SlotMap {
     /** Directory-flow hole under the conversation empty-state picker (declared by the WorkspacePicker entry). */
     'conversation.hero.workspace.directoryFlow': { kind: 'single'; scope: 'root'; owner: DirectoryFlowOwnerProps }
     /** Directory-flow hole under the sidebar browsing region (declared by the WorkspaceBrowser entry). */
     'sidebar.workspaces.directoryFlow': { kind: 'single'; scope: 'root'; owner: DirectoryFlowOwnerProps }
+    /** Additive status or identity markers after one sidebar Session row's time label. */
+    'sidebar.workspaces.session.trailing': { kind: 'list'; scope: 'root'; owner: SessionTrailingOwnerProps }
   }
 }
 
@@ -142,7 +154,7 @@ export type WorkspaceBrowserInjected = {
 /** Full browser props: shell owner share + viewing store + injected actions + the locale seat. */
 export type WorkspaceBrowserProps =
   PropsRuntime<'sidebar.workspaces'>
-  & PropsRenderSlots<'sidebar.workspaces.directoryFlow'>
+  & PropsRenderSlots<'sidebar.workspaces.directoryFlow' | 'sidebar.workspaces.session.trailing'>
   & PropsStore<ReturnType<typeof createWorkspaceViewStore>>
   & Omit<WorkspaceBrowserInjected, 'hooks'>
   & PropsHooks<WorkspaceBrowserInjected['hooks']>

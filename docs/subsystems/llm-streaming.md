@@ -452,11 +452,16 @@ interface LlmModelContext {
 }
 ```
 
-Reasoning effort is another exact-route capability. The core brands identifiers but does not enumerate their values; each adapter owns the ordered set, display names, and optional deployment default.
+Reasoning effort is another exact-route capability. The core brands identifiers but does not enumerate their values; each adapter owns the ordered set, display names, and optional deployment default. Request service tiers use the same opaque-id rule but are call configuration rather than advertised model metadata: the producing plugin selects a tier, and the selected adapter maps or rejects it.
 
 ```ts type-equiv
 /** Adapter-owned identifier for one model's selectable reasoning effort. */
 type ReasoningEffortId = Branded<'ReasoningEffortId'>
+```
+
+```ts type-equiv
+/** Adapter-owned identifier for one provider request service tier. */
+type ServiceTierId = Branded<'ServiceTierId'>
 ```
 
 ```ts type-equiv
@@ -504,6 +509,8 @@ interface GenerateOptions {
   model: string
   /** Adapter-owned reasoning effort selected for this exact model. */
   reasoningEffort?: ReasoningEffortId
+  /** Adapter-owned request service tier, such as an accelerated provider route. */
+  serviceTier?: ServiceTierId
   /**
    * Ordered conversation messages, exactly as the provider sees them (after
    * the `system` slot). A loop-built request assembles them as
@@ -628,7 +635,7 @@ interface LlmDiscoveredModel {
 
 The loop builds each request from logged state. `EpochHeader` records call config, marks the fields supplied by adapter defaults, and records the rendered prompt and authoritative returned tool order (configured by `toolOrder`, or lexicographic when unset) through full `request/header` snapshots. Together with derived history, this makes the request reconstructable from the session log. See [session.md](session.md#the-request-header-event-requestheader) and the [reconstructability Agent Note](../../.agents/notes/implemented/architecture/2026-07-05-reconstructable-requests.md).
 
-`agent/request` receives a frozen call-config seed and may return a replacement to switch provider, model, reasoning effort, or sampling. Before the waterfall, the loop removes values marked as adapter defaults so exact-model preparation materializes the selected route's current values; unmarked explicit settings remain in the proposal. After the waterfall, preparation rejects unsupported explicit effort ids without clamping and logs the effective config plus the fields supplied by adapter defaults under the turn signal. The prepared call keeps one adapter registration through dispatch. Requests reaching `llm/stream` are deep-frozen, so mutation throws, and carry a process-local loop identity so observers do not confuse separately logged frozen auxiliary calls with conversation requests.
+`agent/request` receives a frozen call-config seed and may return a replacement to switch provider, model, reasoning effort, service tier, or sampling. Before the waterfall, the loop removes values marked as adapter defaults so exact-model preparation materializes the selected route's current values; unmarked explicit settings remain in the proposal. After the waterfall, preparation rejects unsupported explicit effort ids without clamping and logs the effective config plus the fields supplied by adapter defaults under the turn signal. Service tiers are explicit opaque ids with no adapter default; each adapter maps or rejects them before provider I/O. The prepared call keeps one adapter registration through dispatch. Requests reaching `llm/stream` are deep-frozen, so mutation throws, and carry a process-local loop identity so observers do not confuse separately logged frozen auxiliary calls with conversation requests.
 
 On the wire, a loop-built request reads the `system` slot (the rendered prompt assembly) followed by the derived history. The logged request snapshot ends with the newest `user/message` on a turn's first step and the previous step's tool results on later steps. The dev invariant recomputes exactly this equation against every loop-built request.
 
@@ -636,15 +643,16 @@ FIXME(call-config-shape): revisit which remaining fields are genuinely epoch-lev
 
 ```ts type-equiv
 /**
- * Provider, model, reasoning effort, and sampling scalars of one conversation's
- * requests. Every field maps 1:1 onto the same-named `GenerateOptions` field;
- * the loop builds requests from the logged header rather than accepting these
- * per call.
+ * Provider, model, reasoning effort, service tier, and sampling scalars of one
+ * conversation's requests. Every field maps 1:1 onto the same-named
+ * `GenerateOptions` field; the loop builds requests from the logged header
+ * rather than accepting these per call.
  */
 interface LlmCallConfig {
   provider: string
   model: string
   reasoningEffort?: ReasoningEffortId
+  serviceTier?: ServiceTierId
   temperature?: number
   maxTokens?: number
   stop?: string[]

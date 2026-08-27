@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
-import AgentRegistry, { Inbox } from '@deepseek-ai/dsh-agent'
+import AgentRegistry, { createModelSelectionOwner, Inbox } from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import TerminalSessionService from '@deepseek-ai/dsh-terminal'
 import type { TerminalSendOperation } from '@deepseek-ai/dsh-terminal'
@@ -38,7 +38,11 @@ function stubAgent(ctx: Context, rawId: string): Agent {
   const scope = ctx.plugin(() => {})
   const session = Session.create(id)
   return {
-    id, options: {}, session, inbox: new Inbox(session, { inserted: () => {}, discarded: () => {}, claimed: () => {} }),
+    id,
+    options: {},
+    session,
+    modelSelection: createModelSelectionOwner(session),
+    inbox: new Inbox(session, { inserted: () => {}, discarded: () => {}, claimed: () => {} }),
     status: 'idle',
     ctx: scope.ctx,
     send: () => {},

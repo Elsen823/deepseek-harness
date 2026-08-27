@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { scopeTarget } from '@deepseek-ai/dsh-scope'
 import { CallId } from '@deepseek-ai/dsh-llm'
-import SessionStore, { Session, SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { AgentDriverId, Session, SessionId } from '@deepseek-ai/dsh-session'
 import type { ToolExecution, ToolExecutionResult, ToolExecutionToken } from '@deepseek-ai/dsh-tools'
 import * as ToolsInvariant from '@deepseek-ai/dsh-tools/invariant'
 import InvariantRegistry from '@deepseek-ai/dsh-invariants'
@@ -91,7 +91,7 @@ describe('tool-pipeline invariants', () => {
 
   it('requires code-dispatch records to be turn-enclosed', async () => {
     const ctx = await setup()
-    const session = ctx.sessions.create()
+    const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     const data = {
       rootCallId: CallId('parent'),
       parentCallId: CallId('parent'),
@@ -107,7 +107,7 @@ describe('tool-pipeline invariants', () => {
 
   it('does not commit a rejected dispatch edge into the root index', async () => {
     const ctx = await setup()
-    const session = ctx.sessions.create()
+    const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     expect(() => session.append('tool/code-dispatch-start', {
       rootCallId: CallId('rejected-root'),
       parentCallId: CallId('rejected-root'),
@@ -128,7 +128,7 @@ describe('tool-pipeline invariants', () => {
 
   it('rejects a nested code dispatch that changes its parent chain root before append', async () => {
     const ctx = await setup()
-    const session = ctx.sessions.create()
+    const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', { turn: 1 })
     session.append('tool/code-dispatch-start', {
       rootCallId: CallId('root'),
@@ -158,7 +158,7 @@ describe('tool-pipeline invariants', () => {
 
   it('requires non-empty dispatch identities and keeps one subcall on one root', async () => {
     const ctx = await setup()
-    const session = ctx.sessions.create()
+    const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', { turn: 1 })
     expect(() => session.append('tool/code-dispatch-start', {
       rootCallId: CallId(''),
@@ -207,7 +207,7 @@ describe('tool-pipeline invariants', () => {
   it('replays enclosed code-dispatch records on late registration', async () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
-    const session = ctx.sessions.create()
+    const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
     session.append('turn/start', { turn: 1 })
     session.append('tool/code-dispatch', {
       rootCallId: CallId('parent'),
@@ -226,7 +226,7 @@ describe('tool-pipeline invariants', () => {
   it('rejects an unenclosed code-dispatch record on late registration', async () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
-    ctx.sessions.create().append('tool/code-dispatch-start', {
+    ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } }).append('tool/code-dispatch-start', {
       rootCallId: CallId('parent'),
       parentCallId: CallId('parent'),
       subCallId: CallId('child'),

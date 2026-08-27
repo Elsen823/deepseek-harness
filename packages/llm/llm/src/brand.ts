@@ -1,6 +1,6 @@
 /**
- * dsh-llm's owned branded ids: tool-call correlation and provider request
- * diagnostics.
+ * dsh-llm's owned branded ids for message/tool correlation, provider request
+ * diagnostics, and adapter-owned request controls.
  *
  * The `Branded<B>` primitive itself lives in `@deepseek-ai/dsh-brand` (a
  * zero-dependency type-only package) so every owner of a cross-boundary id can
@@ -61,4 +61,16 @@ export type ReasoningEffortId = Branded<'ReasoningEffortId'>
  */
 export function ReasoningEffortId(id: string): ReasoningEffortId {
   return id as ReasoningEffortId
+}
+
+/** Adapter-owned identifier for one provider request service tier. */
+export type ServiceTierId = Branded<'ServiceTierId'>
+
+/**
+ * Brand an adapter-owned service-tier identifier.
+ * @param id - the opaque identifier interpreted by the selected adapter.
+ * @returns the same string, branded; no validation is performed.
+ */
+export function ServiceTierId(id: string): ServiceTierId {
+  return id as ServiceTierId
 }

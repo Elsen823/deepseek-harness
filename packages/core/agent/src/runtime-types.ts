@@ -12,11 +12,14 @@ import type { AgentCancelCause, Session, SessionId, UserMessage } from '@deepsee
 export type { AgentCancelCause } from '@deepseek-ai/dsh-session'
 import type { Inbox } from './inbox.ts'
 import type { InboxTarget } from './types.ts'
+import type { ModelSelectionOwner, TurnModelSelection } from './model-selection.ts'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 declare module '@deepseek-ai/dsh-system-prompt' {
   interface AssembleContext {
     /** Agent for this assembly; absent on diagnostics. When present, `scope` must identify the same agent. */
     agent?: Agent
+    /** Immutable Model Selection captured for the current Turn. */
+    modelSelection?: TurnModelSelection
   }
 }
 
@@ -66,6 +69,8 @@ export interface Agent {
   readonly id: SessionId
   /** The provider route and model this agent's requests use. */
   readonly options: AgentOptions
+  /** Agent-owned Session-local model selection; state is never held by a Host or module registry. */
+  readonly modelSelection: ModelSelectionOwner
   /** The live session this agent drives; its log is the durable source of truth. */
   readonly session: Session
   /** The agent-owned projection of durable pending work. */

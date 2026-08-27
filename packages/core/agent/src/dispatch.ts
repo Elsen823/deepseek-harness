@@ -10,6 +10,7 @@ import type { Context, Events } from '@deepseek-ai/cordis'
 import { scopeTarget } from '@deepseek-ai/dsh-scope'
 import type { Scoped } from '@deepseek-ai/dsh-scope'
 import type { AssembleContext } from '@deepseek-ai/dsh-system-prompt'
+import type { TurnModelSelection } from './model-selection.ts'
 import type { Agent } from './runtime-types.ts'
 
 /** Extract the parameter tuple from an event handler type (its `this` is not part of the tuple). */
@@ -169,8 +170,14 @@ export function emitAgentEvent<K extends AgentSubjectEvent>(
  * agent-scoped prompt and tool contributions cannot be silently omitted.
  * @param agent - the agent the assembly is for.
  * @param signal - the current turn's explicit control signal, when assembly belongs to a turn.
+ * @param modelSelection - the immutable Model Selection captured for the current Turn, when one exists.
  * @returns the context to pass to `assemble()`.
  */
-export function assembleContextFor(agent: Agent, signal?: AbortSignal): AssembleContext {
-  return { agent, scope: agent, ...signal === undefined ? {} : { signal } }
+export function assembleContextFor(agent: Agent, signal?: AbortSignal, modelSelection?: TurnModelSelection): AssembleContext {
+  return {
+    agent,
+    scope: agent,
+    ...signal === undefined ? {} : { signal },
+    ...modelSelection === undefined ? {} : { modelSelection },
+  }
 }

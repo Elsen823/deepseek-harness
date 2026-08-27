@@ -18,11 +18,15 @@ Every `SessionHeader` contains a required branded `driverId`. The value is immut
 
 The built-in Driver id is `dsh`, backed by the existing DSH agent loop. Driver identity remains independent of the [per-Session Agent preset](2026-08-03-per-session-agent-presets.md): the Driver selects the execution implementation, while the preset selects scoped composition for that Session. Changing execution implementation requires a distinct Session or fork and does not rewrite the source binding.
 
+The Web creation control appears only in the New Session Hero. It submits the selected Driver with the selected Workspace when connecting or creating the blank Session; active-session controls cannot change the binding or initiate an implicit fork. Programmatic forking remains a separate explicit Session operation ([decision](../bug-fix/2026-08-24-new-session-driver-workspace-pair.md)).
+
 ### Effect-scoped named generations
 
 `AgentRegistry` stores named `AgentDriver` registrations by `AgentDriverId`. Each registration is a reversible Cordis effect and one exact provider generation. Disposing that generation aborts unpublished preparation, stops and drains every live Agent it created, and waits for lifecycle wrappers before the registration disappears. Another Driver can remain registered and active in the same composition.
 
 Drivers publish immutable discovery metadata and implement one generic `prepare(session, options, signal)` operation. Preparation returns an unpublished Agent plus narrow `start` and `dispose` hooks; product-specific lifecycle methods do not enter the registry API.
+
+Core delivers source-tagged `UserMessage` content without interpreting provider-native command, skill, mention, or prompt semantics. Each Driver owns any native structured-input expansion behind its Agent implementation.
 
 ### Unpublished preparation and publication transaction
 
@@ -33,6 +37,8 @@ The registry remains the sole owner of duplicate-live-Session prevention, public
 ### Runtime and work-state dependency
 
 Driver binding does not redefine whole-Agent quiescence or create a shared provider-native Goal state machine. [Driver-neutral Session runtime and work-state projections](2026-08-23-driver-neutral-session-runtime-and-work-state.md) owns process-local availability and attention plus portable durable projections keyed by this immutable Driver identity.
+
+Process replacement uses a separate generic [process-generation restart handoff](2026-08-26-process-generation-restart-handoff.md). A Driver may provide `PreparedAgentDriver.handoff()` for bounded quiescence and non-disposing adoption; ordinary provider unload and `AgentHandle.dispose()` remain the only paths that invoke `dispose()` and emit teardown lifecycle edges.
 
 ## Alternatives considered
 

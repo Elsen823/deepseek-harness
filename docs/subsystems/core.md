@@ -62,6 +62,8 @@ interface Agent {
   readonly id: SessionId
   /** The provider route and model this agent's requests use. */
   readonly options: AgentOptions
+  /** Agent-owned Session-local model selection; state is never held by a Host or module registry. */
+  readonly modelSelection: ModelSelectionOwner
   /** The live session this agent drives; its log is the durable source of truth. */
   readonly session: Session
   /** The agent-owned projection of durable pending work. */
@@ -541,6 +543,16 @@ Initiator methods provide same-process causal attribution only. Ambient presence
 
 ```ts cordis-catalog
 /**
+ * Admit one process-local operation before a restart handoff closes the
+ * generation. The returned idempotent release must run after the complete
+ * asynchronous operation settles; handoff waits for every admitted release.
+ *
+ * @returns a release callback for the admitted operation.
+ * @throws {@link RestartHandoffAdmissionError} after admission closes.
+ */
+admitRestartOperation(): () => void
+
+/**
  * Read the Agent that initiated the inherited asynchronous driver chain.
  * Use this optional form for logging, tracing, metrics, or host attribution
  * that also supports agentless calls. When a parent creates a child, setup
@@ -597,7 +609,7 @@ withoutInitiator<T>(operation: () => T): T
  * @param driver - Driver implementation and immutable discovery metadata.
  * @returns the exact Cordis effect disposer for the registration.
  */
-registerDriver(driver: AgentDriver): () => void
+registerDriver(driver: AgentDriver): () => Promise<void>
 
 /**
  * Look up immutable discovery information for one registered Driver.
@@ -611,6 +623,41 @@ getDriver(id: AgentDriverId): AgentDriverInfo | undefined
  * @returns a fresh array of frozen discovery records.
  */
 listDrivers(): AgentDriverInfo[]
+
+/**
+ * Register one consumer-defined contribution owned by an Agent Driver.
+ * Contributions are deliberately opaque to this service: the Agent layer
+ * only provides effect-scoped storage and deterministic discovery, leaving
+ * settings, management, and presentation vocabularies to their consumers.
+ * @param contribution - stable key, owning Driver, and consumer value.
+ * @returns a synchronous disposer that removes the contribution.
+ */
+registerDriverContribution(contribution: AgentDriverContribution): () => void
+
+/**
+ * List opaque Driver contributions in stable key order.
+ * @param driverId - optional Driver filter.
+ * @returns detached contribution records owned by active Driver providers.
+ */
+listDriverContributions(driverId?: AgentDriverId): AgentDriverContribution[]
+
+/**
+ * Quiesce explicitly resident Agents and atomically publish a next-generation
+ * adoption manifest. Ordinary provider unload and Agent disposal retain their
+ * existing semantics; this method is the only restart handoff entry point.
+ * @param options - explicit generation and cancellation values.
+ * @returns the committed generation and its resident Session records.
+ */
+async restartHandoff(options: RestartHandoffOptions = {}): Promise<RestartHandoffResult>
+
+/**
+ * Discover and adopt only resident Sessions explicitly committed by a prior
+ * generation. Failed claims are released for retry and never dispose a
+ * replacement Agent or delete the native Driver state.
+ * @param options - claimant, generation filter, cancellation, and Driver options.
+ * @returns successful handles plus records whose adoption remains retryable.
+ */
+async adoptRestartHandoffs(options: AdoptRestartHandoffsOptions = {}): Promise<AgentHandoffAdoption<AgentHandle>>
 
 /**
  * Create and publish a fresh Agent through an explicit or default Driver.

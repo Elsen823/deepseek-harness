@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { boot } from '@deepseek-ai/dsh-app-boot'
-import { Inbox } from '@deepseek-ai/dsh-agent'
+import { createModelSelectionOwner, Inbox } from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-fs-e2b'
@@ -20,6 +20,7 @@ const owner: Agent = {
   id: ownerId,
   options: {},
   session,
+  modelSelection: createModelSelectionOwner(session),
   inbox: new Inbox(session, { inserted: () => {}, discarded: () => {}, claimed: () => {} }),
   status: 'idle',
   ctx: ownerFiber.ctx,

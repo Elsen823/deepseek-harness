@@ -832,6 +832,38 @@ describe('JsonlSessionPersistence: write path (session/event → flush)', () => 
     await ctx.fiber.dispose()
   })
 
+  it('flushes one accepted handoff prefix once and keeps the durable bytes stable', async () => {
+    root = await freshRoot()
+    const ctx = new Context()
+    await ctx.plugin(SessionStore)
+    await ctx.plugin(JsonlSessionPersistence, {
+      root,
+      compression: 'none',
+      writeBatchMaxDelayMs: 1_000,
+    })
+
+    const session = ctx.sessions.create(SessionId('handoff-prefix'), {
+      meta: { driverId: AgentDriverId('dsh'), cwd: '/work' },
+    })
+    session.append('session/end-seed', {})
+    const accepted = session.events
+    const first = ctx.sessions.flush(session)
+    const second = ctx.sessions.flush(session)
+    await Promise.all([first, second])
+
+    const location = ctx.sessionPersistence.locate(session.header)
+    if (location === undefined) throw new Error('JSONL persistence did not provide a location')
+    const before = await readFile(location.path, 'utf8')
+    await expect(ctx.sessionPersistence.inspect(session.id)).resolves.toMatchObject({
+      meta: { id: session.id },
+      events: accepted,
+    })
+    expect(await readFile(location.path, 'utf8')).toBe(before)
+
+    await ctx.fiber.dispose()
+    expect(await readFile(location.path, 'utf8')).toBe(before)
+  })
+
 })
 
 

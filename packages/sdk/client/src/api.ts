@@ -10,7 +10,7 @@
 import { randomUUID } from 'node:crypto'
 import { resolve } from 'node:path'
 import type { SessionEvent } from '@deepseek-ai/dsh-session/types'
-import type { AgentDriverCatalogResult, SessionRuntimeResult } from '@deepseek-ai/dsh-sdk-protocol'
+import type { AgentDriverCatalogResult, SelectedModelSelection, SessionRuntimeResult } from '@deepseek-ai/dsh-sdk-protocol'
 import { HarnessClient, isRecord, SdkProtocolError } from './client.ts'
 import type { ContentBlock, DeepSeekHarnessOptions, HarnessClientOptions, HarnessNotification, RunResult } from './types.ts'
 
@@ -269,6 +269,22 @@ export function normalizeInput(input: string | ContentBlock[]): ContentBlock[] {
   return typeof input === 'string' ? [{ type: 'text', text: input }] : input
 }
 
+/**
+ * Fold the latest accepted Model Selection from one SDK event interval.
+ * Effective request evidence remains available as its own `request/header` or
+ * `agent-driver/model-request` event and is not confused with this intent.
+ * @param events - durable Session events projected by the runtime.
+ * @returns the latest accepted selection, or `undefined` before one is seen.
+ */
+export function selectedModelSelection(events: SessionEvent[]): SelectedModelSelection | undefined {
+  for (let index = events.length - 1; index >= 0; index--) {
+    const event = events[index]
+    if (event?.type !== 'model/selected') continue
+    return event.data
+  }
+  return undefined
+}
+
 /** Validate the fields in a wire `session.event` envelope before returning the typed result. */
 function validatedSessionEvent(value: unknown): SessionEvent {
   if (!isRecord(value) || typeof value.type !== 'string') {
@@ -282,6 +298,20 @@ function validatedSessionEvent(value: unknown): SessionEvent {
     const content = isRecord(message) ? message.content : undefined
     if (!Array.isArray(content) || !content.every(block => isRecord(block) && typeof block.type === 'string')) {
       throw new SdkProtocolError(`assistant/message event carried malformed content: ${JSON.stringify(value)}`)
+    }
+  }
+  if (value.type === 'model/selected') {
+    const data = isRecord(value.data)
+      ? value.data
+      : undefined
+    if (data === undefined
+      || typeof data.provider !== 'string' || data.provider.length === 0
+      || typeof data.model !== 'string' || data.model.length === 0
+      || (data.reasoningEffort !== undefined
+        && (typeof data.reasoningEffort !== 'string' || data.reasoningEffort.length === 0))
+      || (data.source !== 'user' && data.source !== 'default')
+      || Object.keys(data).some(key => !['provider', 'model', 'reasoningEffort', 'source'].includes(key))) {
+      throw new SdkProtocolError(`model/selected event carried malformed selection: ${JSON.stringify(value)}`)
     }
   }
   return value as unknown as SessionEvent

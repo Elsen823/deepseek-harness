@@ -136,6 +136,7 @@ loop 保留的响应块会追加到下一个请求，并保留其较早可复用
 ## 已知限制与暂缓事项
 
 - **settings 的 `models` 列表会整体替换组合列表**：settings 层按字段合并，而数组是单个字段；按条目合并 catalog 需要带键的形状。
+- **不支持 `GenerateOptions.serviceTier`**：DeepSeek chat completions 没有定义 service-tier 字段，因此适配器会在提供方 I/O 前以 `UNSUPPORTED_OPTION` 拒绝它。
 - **未映射 `tool_choice`**：它不属于核心词汇（MVP 取舍，与 pi-ai twin 共享）。
 - **请求使用原始 `fetch`，而非 `@cordisjs/plugin-http`**：没有共享 proxy／拦截配置；采用暂缓到第二个适配器需要该功能时（`TODO(http)`）。
 - **会跳过插件添加的内容块类型**：核心文本与支持的图片块会被序列化，空工具输出会以字面 `(no output)` 通过协议发送。

@@ -10,7 +10,7 @@
 
 import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import AgentRegistry, { Inbox } from '@deepseek-ai/dsh-agent'
+import AgentRegistry, { createModelSelectionOwner, Inbox } from '@deepseek-ai/dsh-agent'
 import type { Agent, AgentStatus } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { UserMessage } from '@deepseek-ai/dsh-session'
@@ -37,6 +37,7 @@ function liveAgent(ctx: Context, session: Session): Agent {
     id: session.id,
     options: {},
     session,
+    modelSelection: createModelSelectionOwner(session),
     inbox,
     ctx,
     get status() { return status },

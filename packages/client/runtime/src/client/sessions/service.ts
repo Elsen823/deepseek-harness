@@ -499,6 +499,8 @@ export class SessionRuntime implements ISessions {
     cwd?: string
     sessionId?: SessionId
     driverId?: AgentDriverId
+    /** Explicitly retain this Session for a process-generation handoff. */
+    resident?: boolean
   } = {}): Promise<SessionId> {
     const result = await this.manager.create(opts)
     if (!result.ok) throw new SessionCreateError(result.error, opts.sessionId)

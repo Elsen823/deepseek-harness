@@ -14,7 +14,7 @@ import { createScope } from '@deepseek-ai/dsh-client-runtime/client'
 import type { SessionId } from '@deepseek-ai/dsh-client-runtime/client'
 import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
 import { TestRemote } from '@deepseek-ai/dsh-client-test-runtime'
-import type { ModelSelection } from '@deepseek-ai/dsh-api-remotes/client'
+import type { ModelProviderGroup, ModelSelection } from '@deepseek-ai/dsh-api-remotes/client'
 import type { CommandContribution, SelectOption } from '@deepseek-ai/dsh-client-ui-commands/client'
 import type { ModelSelectInjected } from '../src/client/slots.ts'
 import { apply, inject } from '../src/client/index.ts'
@@ -54,18 +54,24 @@ const GROUPS = [{
 }]
 
 /** Boot the plugin over fake faces + a stateful fake host (current moves on selectModel). */
-async function bench() {
+async function bench(options: { groups?: readonly ModelProviderGroup[] } = {}) {
   const ctx = new Context()
   let current: ModelSelection = { provider: 'deepseek-official', model: 'deepseek-v4-flash' }
+  const sessionCurrent = new Map<SessionId, ModelSelection>()
   const calls = { models: 0, select: 0 }
   ctx.provide('connection', { api: { sessions: {
-    models: () => {
+    models: ({ sessionId }: { sessionId: SessionId }) => {
       calls.models += 1
+      const target = sessionCurrent.get(sessionId) ?? current
+      sessionCurrent.set(sessionId, target)
       return Promise.resolve({
-        result: { ok: true as const, value: { current, routable, groups: GROUPS, failures: [] } },
+        result: { ok: true as const, value: {
+          current: target,
+          routable, groups: options.groups ?? GROUPS, failures: [],
+        } },
       })
     },
-    selectModel: (payload: { provider: string; model: string; reasoningEffort?: string }) => {
+    selectModel: (payload: { sessionId: SessionId; provider: string; model: string; reasoningEffort?: string }) => {
       calls.select += 1
       current = {
         provider: payload.provider,
@@ -74,6 +80,7 @@ async function bench() {
           ? {}
           : { reasoningEffort: payload.reasoningEffort },
       }
+      sessionCurrent.set(payload.sessionId, current)
       return Promise.resolve({ result: { ok: true as const, value: { selected: current } } })
     },
   } } })
@@ -132,7 +139,8 @@ async function bench() {
     contribution: () => contribution!,
     seat: () => seats.get('conversation.input.model')!,
     hostCurrent: () => current,
-    setHostCurrent: (selection: ModelSelection) => { current = selection },
+    hostCurrentOf: (id: string) => sessionCurrent.get(sid(id)) ?? current,
+    setHostCurrent: (selection: ModelSelection) => { current = selection; sessionCurrent.clear() },
     address: (id: SessionId) => { addressed.add(id) },
     setRoutable: (next: boolean) => { routable = next },
     blockOf: (key: string) => blocks.get(sid(key)),
@@ -158,6 +166,25 @@ describe('ui-model-selection dual entry', () => {
     expect(options.map((o: SelectOption) => o.label)).toEqual(['DeepSeek-V4-Flash', 'DeepSeek-V4-Pro'])
     expect(options[0]).toMatchObject({ active: true, detail: 'DeepSeek' })
     expect(options[1]?.active).toBeUndefined()
+  })
+
+  it('keeps an incompatible popup model visible with its reason and refuses selection', async () => {
+    const groups = [{
+      ...GROUPS[0]!,
+      models: [...GROUPS[0]!.models, {
+        id: 'deepseek-v4-native-only',
+        name: 'Native-only',
+        disabledReason: 'Codex Driver does not support this model',
+      }],
+    }]
+    const b = await bench({ groups })
+    b.mint('s1')
+    const options = await b.contribution().ui.options(projection('s1'), new AbortController().signal)
+    const disabled = options.find((option: SelectOption) => option.label === 'Native-only')
+    expect(disabled).toMatchObject({ disabledReason: 'Codex Driver does not support this model' })
+    await expect(b.contribution().ui.onSelect(disabled!, projection('s1')))
+      .rejects.toThrow(/catalog failed to load/)
+    expect(b.hostCurrent()).toEqual({ provider: 'deepseek-official', model: 'deepseek-v4-flash' })
   })
 
   it('a seat selection is the current the popup marks active next — one shared state', async () => {
@@ -210,6 +237,24 @@ describe('ui-model-selection dual entry', () => {
     expect(faceA.directory).not.toBe(faceB.directory)
     // The service face resolves the same instance the seat inject handed out.
     expect(b.ctx.modelDirectories.directoryFor(sid('a')).store).toBe(faceA.directory)
+  })
+
+  it('keeps concurrent Session selections independent and addressed to the selecting Session', async () => {
+    const b = await bench()
+    b.mint('a')
+    b.mint('b')
+    const faceA = b.seat().inject!(sid('a'))
+    const faceB = b.seat().inject!(sid('b'))
+    // Establish each Session's reload baseline before either one changes.
+    faceB.load()
+    await Promise.resolve()
+    await Promise.resolve()
+    await faceA.select({ provider: 'deepseek-official', model: 'deepseek-v4-pro', reasoningEffort: 'max' })
+    expect(b.hostCurrentOf('a')).toMatchObject({ model: 'deepseek-v4-pro', reasoningEffort: 'max' })
+    expect(faceB.directory.getSnapshot().current).toEqual({ provider: 'deepseek-official', model: 'deepseek-v4-flash' })
+    const bOptions = await b.contribution().ui.options(projection('b'), new AbortController().signal)
+    expect(bOptions.find((option: SelectOption) => option.label === 'DeepSeek-V4-Flash')).toMatchObject({ active: true })
+    expect(bOptions.find((option: SelectOption) => option.label === 'DeepSeek-V4-Pro')?.active).toBeUndefined()
   })
 
   it('drops an unconsumed local selection and restores the Host target after reconnect', async () => {

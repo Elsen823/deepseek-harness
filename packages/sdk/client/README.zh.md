@@ -25,6 +25,8 @@ console.log(result.finalResponse)
 
 `run(input, { sessionId?, driverId?, onNotification? })` 拥有一个活动区间：它将提示词排入队列，等待其 `MessageId` 出现在持久的 `agent/inbox/spliced` 回执中，然后持续收集到整个 agent 下一次进入 `idle`。`driverId` 用于惰性创建；若具名 Session 已绑定另一 Driver，则调用会被拒绝。切换 Driver 需要新 Session，或在此 SDK 协议之外显式 fork。它返回 `RunResult { sessionId, finalResponse, events, notifications }`。`finalResponse` 是该区间内根会话最后提交的助手文本，并非因果上归属于该提示词的响应；steering（中途引导）、注入的上下文和其他排队工作都可能在 idle 前参与其中。`events` 包含根会话事件，`notifications` 还包含通过 `subagent.started` 发现的后代，均按协议传输顺序排列。结果不携带提示词级状态或轮次原因。传输丢失、超时和协议违例会导致 Promise 被拒绝；模型结果仍可在事件流中观察，但不会归属于某一输入。
 
+`selectedModelSelection(events)` 会从返回的事件区间折叠最新的持久 `model/selected` intent。它把已接受的 provider/model/effort intent 与 `request/header` 或 `agent-driver/model-request` 中的生效请求证据区分开，因此在首次请求前接受的选择仍可观察，却不会被误认为已完成模型调用。
+
 ## HarnessClient
 
 自有运行 API 之下的协议客户端：显式 `start()`/`initialize()`/`drivers()`/`runtime()`/`prompt()`/`request()`/`close()`，外加通知订阅。`prompt()` 在运行时接受排队消息后立即返回该消息的 ID，绝不等待 agent 活动。`subscribe(filter?)` 返回 `NotificationSubscription`（可等待的 `next()`、非阻塞 `tryNext()`、异步迭代）；`subscribeSessionTree(id)` 把范围限定到一个会话及从 `subagent.started` 发现的后代，并包含嵌套在 `session.runtime.status.sessionId` 中的通知。本包导出有明确类型的错误：`JsonRpcResponseError`（协议错误响应，保留 code/data）、`RequestTimeoutError`（配置的时限已到）、`SdkProtocolError`（响应超出文档化协议）与 `TransportClosedError`（运行时已消失，消息携带退出码与有界 stderr 尾部）。

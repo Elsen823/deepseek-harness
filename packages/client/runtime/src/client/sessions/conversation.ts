@@ -19,6 +19,7 @@ import type { ContextProvenanceView, KnownContextForm } from './context-provenan
 import type {
   ChatConversationViewNode, ConversationTimelineSnapshot, ConversationViewSnapshotStore,
 } from '../contract/conversation.ts'
+import type { ModelSelectionIdentity } from './model-selection.ts'
 export type { TodoItem }
 
 /** Request configuration recorded for one provider call. */
@@ -436,6 +437,8 @@ export const EMPTY_CHAT_SNAPSHOT: ChatSnapshot = {
 /** The immutable snapshot contract Session hands to uSES (see the web client architecture RFC). */
 export interface ConversationSnapshot {
   sessionId: SessionId
+  /** Durable Selected/Next turn/Effective and native identity evidence for this DSH Session. */
+  modelSelection?: ModelSelectionIdentity
   /** Registered target snapshots assembled from Session events. */
   views: ConversationViewSnapshotStore
   /** Final Chat target assembled from independently registered business Definitions. */

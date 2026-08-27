@@ -212,6 +212,14 @@
   color: var(--dsw-alias-label-tertiary);
 }
 
+.sessionTrailing {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  margin-left: 5px;
+}
+
 .dot {
   flex: none;
 }

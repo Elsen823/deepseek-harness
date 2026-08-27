@@ -136,6 +136,7 @@ Loop-retained response blocks append to the next request and preserve its earlie
 ## Known Limitations and Deferred Work
 
 - **A settings `models` list replaces the composition list wholesale** — settings-layer merging is per-field, and arrays are one field; per-entry catalog merging would need a keyed shape.
+- **`GenerateOptions.serviceTier` is unsupported** — DeepSeek chat completions define no service-tier field, so the adapter rejects it with `UNSUPPORTED_OPTION` before provider I/O.
 - **`tool_choice` is not mapped** — not part of the core vocabulary (MVP cut, shared with the pi-ai twin).
 - **Requests use raw `fetch`, not `@cordisjs/plugin-http`** — no shared proxy/interception configuration; adoption is deferred until a second adapter wants it (`TODO(http)`).
 - **Plugin-added content block types are skipped** — core text and supported image blocks are serialized, and empty tool output crosses the wire as the literal `(no output)`.

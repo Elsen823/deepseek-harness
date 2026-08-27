@@ -176,4 +176,62 @@ describe('process shutdown', () => {
     expect(exit).toHaveBeenCalledOnce()
     expect(exit).toHaveBeenCalledWith(130)
   })
+
+  it('keeps SIGTERM/SIGINT-style interrupts on ordinary stop when restart is configured', async () => {
+    const disposal = deferred()
+    const handoff = vi.fn(async () => {})
+    const dispose = vi.fn(() => disposal.promise)
+    const shutdown = createProcessShutdown(dispose, vi.fn(), vi.fn(), 25, handoff)
+
+    shutdown.interrupt(143)
+    await Promise.resolve()
+
+    expect(handoff).not.toHaveBeenCalled()
+    expect(dispose).toHaveBeenCalledOnce()
+    disposal.resolve()
+    await shutdown.shutdown(0)
+  })
+
+  it('runs an explicit restart handoff before ordinary disposal', async () => {
+    const order: string[] = []
+    const dispose = vi.fn(async () => { order.push('dispose') })
+    const handoff = vi.fn(async () => { order.push('handoff') })
+    const complete = vi.fn()
+    const shutdown = createProcessShutdown(dispose, vi.fn(), complete, 25, handoff)
+
+    await shutdown.restart(17)
+
+    // The accepted response must be able to leave the carrier before the
+    // root-fiber disposal starts on the next event-loop turn.
+    expect(order).toEqual(['handoff'])
+    expect(handoff).toHaveBeenCalledOnce()
+    expect(dispose).not.toHaveBeenCalled()
+
+    await new Promise<void>((resolve) => { setImmediate(resolve) })
+    await shutdown.shutdown(17)
+
+    expect(order).toEqual(['handoff', 'dispose'])
+    expect(dispose).toHaveBeenCalledOnce()
+    expect(complete).toHaveBeenCalledWith(17)
+  })
+
+  it('refuses a failed restart handoff without disposing the serving generation', async () => {
+    const handoff = vi.fn()
+      .mockRejectedValueOnce(new Error('turn did not quiesce'))
+      .mockResolvedValueOnce(undefined)
+    const dispose = vi.fn(() => Promise.resolve())
+    const shutdown = createProcessShutdown(dispose, vi.fn(), vi.fn(), 25, handoff)
+
+    await expect(shutdown.restart()).rejects.toThrow('turn did not quiesce')
+    expect(dispose).not.toHaveBeenCalled()
+
+    await shutdown.restart()
+    expect(handoff).toHaveBeenCalledTimes(2)
+    expect(dispose).not.toHaveBeenCalled()
+
+    await new Promise<void>((resolve) => { setImmediate(resolve) })
+    await shutdown.shutdown(0)
+
+    expect(dispose).toHaveBeenCalledOnce()
+  })
 })

@@ -21,10 +21,10 @@ Hard constraints: the host is the single source of truth; every registration goe
 
 ### The parity model: client and host share one root state axis
 
-Host-side `session.create(workspaceId)` produces Session + Agent + cwd in one piece (an atomic bundle, never split); the client side is the mirror of that birth — the instant a session row enters the list mirror, the client mints its Agent scope (actx + provide + the full input surface mounted):
+Host-side `session.create({ workspaceId, driverId? })` produces Session + Agent + cwd + immutable Driver binding in one piece (an atomic bundle, never split); the client side is the mirror of that birth — the instant a session row enters the list mirror, the client mints its Agent scope (actx + provide + the full input surface mounted):
 
 - Session identity is the host's true form from birth: the sessionId arrives via the `session.create` response / the `host/session-added` frame, and every client-side address (the scope tag, slot store keys, RPC addressing) uses that same id.
-- The materialization moment = the instant the user picks a Workspace (cwd settled): the client calls `session.create({workspaceId})` on the spot and receives the complete entity.
+- The materialization moment = the instant the user picks a Workspace (cwd settled): the client calls `session.create({ workspaceId, driverId? })` with any Driver staged in the New Session Hero and receives the complete entity.
 - "New Session with no workspace picked" is a **pure view state** (a navigation position) corresponding to no session/scope entity; until the pick, the composer is locked whole (no slash, no plain text).
 - A "blank session" is just an ordinary materialized session whose log is still empty; to every Agent-scope plugin on the host (goal/plan/skill/…) it is indistinguishable from any session, so slash/plan are all naturally live.
 
@@ -72,16 +72,16 @@ A session "materialized but with no first prompt" is governed by the summary-der
 
 ### connectWorkspace: the sole entry point of New Session
 
-`workspaces.connectWorkspace(workspaceId): Promise<SessionId>` (owned by WorkspaceRuntime — it holds both the workspace canonical path and the sessions reference):
+`workspaces.connectWorkspace(workspaceId, options?): Promise<SessionId>` (owned by WorkspaceRuntime — it holds the Workspace canonical path, Session summaries, and the optional creation-time Driver choice):
 
-- The reuse arm: the list mirror is searched for `blank && cwd == workspace.path && sessionIds.includes(id)` — the host's own membership rule, never cwd alone. A cwd match without the account slot (a CLI/TUI session birthed at the host cwd, or a deleted/recreated registration) would open a session no grouping surface can show under this Workspace, so it falls through to the create arm instead (see the [membership reuse fix](../bug-fix/2026-08-05-workspace-blank-session-reuse-membership.md)); a hit returns that id directly, creating nothing.
-- The create arm: on a miss, `session.create({workspaceId})` returns the new id.
+- The reuse arm: the list mirror is searched for `blank && cwd == workspace.path && sessionIds.includes(id)` — the host's own membership rule, never cwd alone — plus `summary.driverId === options.driverId` when a Driver was selected. A cwd match without the account slot (a CLI/TUI session birthed at the host cwd, or a deleted/recreated registration) would open a session no grouping surface can show under this Workspace, so it falls through to the create arm instead (see the [membership reuse fix](../bug-fix/2026-08-05-workspace-blank-session-reuse-membership.md)); a Driver mismatch likewise falls through because a Session binding is immutable ([Driver/Workspace decision](../bug-fix/2026-08-24-new-session-driver-workspace-pair.md)). A hit returns that id directly, creating nothing.
+- The create arm: on a miss, `session.create({ workspaceId, driverId? })` returns the new id.
 - An unknown workspaceId fails loud (never silently creating somewhere else).
 - The resolution guarantee (one contract for both arms): when the promise resolves, the returned id is already in the list store and `sessions.binding(id)` resolves synchronously — `SessionRuntime.create` projects the list synchronously after RPC success before resolving, so a draft mover can write text into the new scope's machine before open, without waiting for a notifier flush.
 - The caller takes the id and does its own `sessions.open`; sending the first prompt is an ordinary `session.prompt` — the session already exists, a failure is an ordinary prompt failure, the draft text is still in the machine, and a retry is simply sending again.
 - The global New Session button defaults to `recentWorkspaceId`: first comparing each Workspace's newest Session `updatedAt`, falling back to the Workspace `createdAt` when it has no Sessions, and keeping host order on ties; only with no Workspace at all does it `sessions.clear()` into the no-session view. Create actions inside a Workspace group still hit that Workspace explicitly.
 - At startup the runtime subscribes to the first complete baseline: a successfully restored current session is kept in place; otherwise it automatically calls `connectWorkspace(recentWorkspaceId)` and opens the returned blank session. The policy settles only once; a later user-initiated clear is never overridden by auto-selection again, and a connect failure waits for the next baseline projection to retry.
-- Re-picking the Workspace in the blank Hero also goes through `connectWorkspace`; when the target id differs from the current one, the current input machine's non-empty draft moves to the target scope first, then `sessions.open(nextId)`. The old blank entity is not deleted — it merely leaves the list by no longer being current.
+- Re-picking the Workspace in the blank Hero also goes through `connectWorkspace` with the staged or current blank Session Driver; when the target id differs from the current one, the current input machine's non-empty draft moves to the target scope first, then `sessions.open(nextId)`. The old blank entity is not deleted — it merely leaves the list by no longer being current.
 
 ### Per-session provisioning: the `sessions.provide` standard-kit channel
 
@@ -108,7 +108,7 @@ Slot scope is the closed set `root | session-maybe | session`:
 - The summary `blank` column and the `host/session-added` frame's `blank` field (see the blank bit above).
 - The SSE frame `host/commands-changed` (a pure invalidation signal); the client routes it into the typed events `commands/changed` and `connection/reset` (broadcast after each connection generation is established; wire-derived caches uniformly treat prior state as stale). The commands frame and its typed client event were later replaced by verbatim forwarding of `commands/change` through `ctx.remote.$on` ([forwarded Remote events](2026-08-10-remote-event-delivery.md)); `connection/reset` is unchanged, and the invalidation-not-diffing contract this bullet states still holds.
 - `command.list/execute` and `skill.list` are uniformly single-addressed by `sessionId` (a session always has an Agent; `agentFor`'s resume semantics come ready-made); the command-surface narrative lives in the [command surfaces note](2026-07-25-web-command-surfaces-and-assembly.md).
-- The `session.create` request shape: workspaceId/cwd as either-or, plus an optional caller-preallocated sessionId (a same-id same-cwd retry is idempotent; a different cwd reports `session-conflict`).
+- The `session.create` request shape: workspaceId/cwd as either-or, plus an optional caller-preallocated sessionId and optional immutable driverId (a same-id same-cwd retry is idempotent; a different cwd reports `session-conflict`, and a different Driver reports `agent-driver-conflict`).
 
 ## Alternatives considered
 

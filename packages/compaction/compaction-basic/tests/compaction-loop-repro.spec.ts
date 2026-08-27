@@ -215,15 +215,12 @@ function overflowHistorySeed(): SessionEvent[] {
 }
 
 describe('CBR-001: a real-loop checkpoint is a valid boundary on both sides', () => {
-  it('uses the model actually routed by agent/request for post-step pressure', async () => {
+  it('uses the immutable Turn Model Selection for post-step pressure', async () => {
     const { ctx } = await harness(8)
-    ctx.on('agent/request', async (_payload, next) => ({
-      ...await next(), provider: 'mock', model: 'mock',
-    }))
     try {
       const agent = await ctx.agentLoop.create(SessionId('routed-pressure'), {
-        provider: 'unconfigured-agent-fallback',
-        model: 'unconfigured-agent-fallback',
+        provider: 'mock',
+        model: 'mock',
       })
       agent.followup(createUserMessage({ content: [{ type: 'text', text: 'do a routed multi-step task' }], source: { kind: 'user' } }))
       await waitForIdle(ctx, agent)
@@ -315,9 +312,6 @@ describe('context-overflow recovery across the real loop and compaction-basic', 
       await ctx.plugin(AgentLoop, { agents: [] })
       await ctx.plugin(TokenMeter)
       ctx.llm.registerAdapter(['mock'], adapter)
-      ctx.on('agent/request', async (_payload, next) => ({
-        ...await next(), provider: 'mock', model: 'mock',
-      }))
       await ctx.plugin(BasicCompactionEngine, {
         thresholdRatio: 1,
         retainTokens: 100,
@@ -331,8 +325,8 @@ describe('context-overflow recovery across the real loop and compaction-basic', 
           sessionId: SessionId(`overflow-${delivery}`),
           seed: overflowHistorySeed(),
           agentOptions: {
-            provider: 'unconfigured-agent-fallback',
-            model: 'unconfigured-agent-fallback',
+            provider: 'mock',
+            model: 'mock',
           },
         })
 

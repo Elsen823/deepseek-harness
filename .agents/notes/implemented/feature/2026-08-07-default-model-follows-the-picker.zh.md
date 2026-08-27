@@ -16,17 +16,17 @@ Status: implemented
 
 `reasoningEffort` 属于 Settings 分节，但不属于插件配置。Settings 层按字段合并，因此已配置的强度会在用户选择省略它时继续存在。`saveSelection()` 写入完整的用户分节；因此，缺少该字段会清除已存强度。部署级强度默认值属于适配器 profile，并由它按模型解析。
 
-`session.selectModel` 把被接受的 `ModelSelection` 应用于所在会话，并调用 `saveDefaultModelSelection()` 保存共享的 Agent 默认值。存储失败只记日志，不撤销会话选择。没有 Settings 提供方的部署保留组合条目，被接受的选择只停留在该会话中。
+`session.selectModel` 只把被接受的 `ModelSelection` 应用于被寻址的 Agent 和 Session。共享 Agent 默认值仍由 `agent-default-model` Settings 分节所有，因此 Session 选择不会改道未来会话或尚未提交的空白会话。没有 Settings 提供方的部署仍保留组合条目作为默认值。
 
-`ApiProxyDefaults` 携带 `defaultModelSelection()` 与 `saveDefaultModelSelection()` 闭包，因此 `createApiProxy` 不依赖 Settings seam。`ApiProxyService` 将它们分别接到 `ctx.agentDefaultModel.currentSelection()` 与 `ctx.agentDefaultModel.saveSelection()`。
+`ApiProxyDefaults` 只携带 `defaultModelSelection()` 闭包，因此 `createApiProxy` 不依赖 Settings seam。`ApiProxyService` 将它接到 `ctx.agentDefaultModel.currentSelection()`。
 
-`selectionFor(agent)` 每次读取时都解析各层：先取进程内的会话选择，其次取会话最新记录的 `request/header`，最后取当前 Agent 默认值。已有请求日志的会话持续绑定到日志中持久化的选择。空白会话即使创建于偏好保存之前，也会观察到当前默认值；这与 New Session 界面可能复用空白会话的行为一致。
+`selectionFor(agent)` 读取 Agent 所有的已接受 intent，否则读取当前 Agent 默认值。已接受的 intent 会在请求之前持久化。空白 Session 会在其 Agent 首次开始 Turn 前观察当前默认值，并在该时刻实体化；这与 New Session 界面可能复用空白 Session 的行为一致。
 
 已存选择不要求属于目录。某条提供方路由可能服务其仅供参考的目录未列出的模型。因此，`session.models` 会在已公布分组之外单独报告已存选择，并另行报告适配器是否服务其提供方。
 
 ## 影响
 
-`host.describe` 报告当前 Agent 默认值。模型切换成功后，`settings.yaml` 中会存有一个 `agent-default-model:` 分节。网关不通过 Settings 页 allowlist 暴露该 namespace；模型选择器是它的编辑器。
+`host.describe` 报告当前 Agent 默认值。模型选择器只改变被寻址的 Session；`settings.yaml` 中的 `agent-default-model:` 分节仍是未来会话的显式编辑器。网关不通过 Settings 页 allowlist 暴露该 namespace。
 
 ## 无法发送消息的会话
 
@@ -43,5 +43,5 @@ Status: implemented
 | 已存提供方不可用时回落到组合条目 | 产品会静默切离用户选择。 |
 | 根据目录成员关系校验已存选择 | 目录仅供参考，可能省略仍可请求的模型。 |
 | 使用合并 patch 保存 | 省略的 `reasoningEffort` 无法清除已存字段。 |
-| 只保存空白会话中的选择 | 对话期间知情作出的选择不会成为部署默认值。 |
-| 增加单独的「设为默认」手势 | 会话选择器与未来会话偏好虽然代表同一用户选择，却仍可能分歧。 |
+| 把每个会话选择都保存为部署默认值 | 一个对话会静默改道无关的未来会话。 |
+| 在选择器中增加单独的「设为默认」手势 | 默认所有者会在 Session surface 中变成第二个模型选择控制。 |

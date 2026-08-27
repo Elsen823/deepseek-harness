@@ -72,6 +72,19 @@ describe('SessionStore.fork', () => {
     expect(child.header.driverId).toBe(AgentDriverId('codex'))
   })
 
+  it('retains an unconsumed Model Selection in a same-Driver fork', async () => {
+    const { ctx, sessions } = await setup()
+    const source = ctx.sessions.create(SessionId('selection-parent'), {
+      meta: { driverId: AgentDriverId('dsh') },
+    })
+    source.append('model/selected', { provider: 'mock', model: 'selected', source: 'user' })
+
+    const child = sessions.fork(source, undefined, SessionId('selection-child'))
+
+    expect(child.modelSelection()).toEqual({ provider: 'mock', model: 'selected', source: 'user' })
+    expect(inherited(child).some(event => event.type === 'model/selected')).toBe(true)
+  })
+
   it('forks an empty live session as an empty child with lineage metadata', async () => {
     const { ctx, sessions } = await setup()
     const source = ctx.sessions.create(SessionId('empty-parent'), { meta: { driverId: AgentDriverId('dsh'), cwd: '/workspace' } })

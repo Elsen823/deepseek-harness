@@ -13,6 +13,13 @@
 # file/override both default to their DSH_SNAPSHOT_* env vars.
 - id: replay
   name: '@deepseek-ai/dsh-llm-replay'
+  config:
+    providers:
+      - id: deepseek-official
+        name: DeepSeek
+        models:
+          - id: deepseek-v4-flash
+          - id: deepseek-v4-pro
 
 # This scenario probes the subagent catalog only, so the shell/filesystem
 # stacks are absent; the bundle must opt out of the tools that would wait

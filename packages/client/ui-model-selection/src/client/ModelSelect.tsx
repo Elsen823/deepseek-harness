@@ -34,6 +34,7 @@ interface EffortChoice {
   effort: string | undefined
   label: string
   description?: string
+  disabledReason?: string
 }
 
 /**
@@ -98,6 +99,7 @@ export function ModelSelect(
         effort: effort.id,
         label: effort.name,
         ...effort.description === undefined ? {} : { description: effort.description },
+        ...effort.disabledReason === undefined ? {} : { disabledReason: effort.disabledReason },
       })),
     ], [reasoning, t])
   const busy = state.status === 'selecting'
@@ -139,7 +141,7 @@ export function ModelSelect(
   }
 
   const moveFocus = (offset: number): void => {
-    const items = itemRefs.current.filter(item => item !== null)
+    const items = itemRefs.current.filter(item => item !== null && !item.disabled)
     if (items.length === 0) return
     const active = items.findIndex(item => item === document.activeElement)
     const next = (Math.max(active, 0) + offset + items.length) % items.length
@@ -299,14 +301,17 @@ export function ModelSelect(
                             aria-checked={selected}
                             className={clsx(css.option, selected && css.selected)}
                             key={model.id}
-                            title={model.name}
-                            disabled={busy}
+                            title={model.disabledReason ?? model.name}
+                            disabled={busy || model.disabledReason !== undefined}
                             onClick={() => { choose({ provider: group.id, model: model.id }) }}
                           >
                             <span className={css.optionCopy}>
                               <span className={css.modelName}>{model.name}</span>
                               {model.description !== undefined && (
                                 <span className={css.description}>{model.description}</span>
+                              )}
+                              {model.disabledReason !== undefined && (
+                                <span className={css.description}>{model.disabledReason}</span>
                               )}
                             </span>
                             <span className={css.check}>
@@ -343,13 +348,17 @@ export function ModelSelect(
                     aria-checked={effectiveEffort === level.effort}
                     className={clsx(css.option, effectiveEffort === level.effort && css.selected)}
                     key={level.key}
-                    disabled={busy}
+                    title={level.disabledReason}
+                    disabled={busy || level.disabledReason !== undefined}
                     onClick={() => { chooseEffort(level.effort) }}
                   >
                     <span className={css.optionCopy}>
                       <span className={css.modelName}>{level.label}</span>
                       {level.description !== undefined && (
                         <span className={css.description}>{level.description}</span>
+                      )}
+                      {level.disabledReason !== undefined && (
+                        <span className={css.description}>{level.disabledReason}</span>
                       )}
                     </span>
                     <span className={css.check}>

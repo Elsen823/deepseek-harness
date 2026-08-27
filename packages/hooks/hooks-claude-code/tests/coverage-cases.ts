@@ -4,10 +4,10 @@ import { mkdtempSync, rmSync, writeFileSync, chmodSync, existsSync, readFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
-import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
+import { Session, SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import { defineContentToolFixture } from '@deepseek-ai/dsh-tools'
-import type { Agent } from '@deepseek-ai/dsh-agent'
+import { createModelSelectionOwner, type Agent } from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
 import { LocalBashExecutor } from '@deepseek-ai/dsh-bash-local'
@@ -238,12 +238,14 @@ export function defineCoverageCases(group: CoverageGroup): void {
       const path = hooks(d, { SubagentStart: [{ hooks: [{ type: 'command', command: s }] }] })
       const ctx = await harness(path, new MockAdapter([]))
       const injected: string[] = []
+      const session = Session.create(SessionId('child-x'))
       const child = {
-        id: SessionId('child-x'),
+        id: session.id,
         inject: (input: { content: Array<{ type: string; text?: string }> }) => {
           injected.push(input.content.map(block => block.text ?? '').join(''))
         },
-        session: { id: SessionId('child-x'), header: { id: 'child-x' } },
+        session,
+        modelSelection: createModelSelectionOwner(session),
       } as unknown as Parameters<typeof ctx.agents.register>[0]
       ctx.agents.register(child)
       ctx.emit(subagentCarrier(ctx), 'subagent/start', { runId: SubagentRunId('run-x'), provider: 'p', id: SessionId('child-x'), local: true })
@@ -260,7 +262,13 @@ export function defineCoverageCases(group: CoverageGroup): void {
       const path = hooks(d, { SubagentStart: [{ hooks: [{ type: 'command', command: s }] }] })
       const ctx = await harness(path, new MockAdapter([]))
       const warn = vi.fn(); ctx.logger.warn = warn as never
-      const child = { id: SessionId('child-y'), inject: () => { throw new Error('inject boom') }, session: { id: SessionId('child-y'), header: { id: 'child-y' } } } as unknown as Parameters<typeof ctx.agents.register>[0]
+      const session = Session.create(SessionId('child-y'))
+      const child = {
+        id: session.id,
+        inject: () => { throw new Error('inject boom') },
+        session,
+        modelSelection: createModelSelectionOwner(session),
+      } as unknown as Parameters<typeof ctx.agents.register>[0]
       ctx.agents.register(child)
       ctx.emit(subagentCarrier(ctx), 'subagent/start', { runId: SubagentRunId('run-y'), provider: 'p', id: SessionId('child-y'), local: true })
       await waitFor(() => warn.mock.calls.some(c => String(c[0]).includes('SubagentStart hook failed')))

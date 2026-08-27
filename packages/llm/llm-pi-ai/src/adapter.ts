@@ -108,16 +108,28 @@ export interface PiAiAuthInjection {
   authContext: AuthContext
 }
 
-/** Copy profile stream knobs into pi-ai's common option vocabulary. */
+/** Add an already-validated tier to pi-ai's provider payload callback. */
+function serviceTierPayload(
+  serviceTier: NonNullable<GenerateOptions['serviceTier']>,
+): NonNullable<SimpleStreamOptions['onPayload']> {
+  return payload => ({
+    ...(payload as Record<string, unknown>),
+    service_tier: serviceTier,
+  })
+}
+
+/** Copy profile and request knobs into pi-ai's stream option vocabulary. */
 function profileOptions(
   profile: ResolvedPiAiProviderProfile,
   reasoning: ModelThinkingLevel | undefined,
+  serviceTier: GenerateOptions['serviceTier'],
   apiKey: string | undefined,
 ): SimpleStreamOptions {
   const enabledReasoning: ThinkingLevel | undefined = reasoning === 'off' ? undefined : reasoning
   return {
     ...apiKey === undefined ? {} : { apiKey },
     ...enabledReasoning === undefined ? {} : { reasoning: enabledReasoning },
+    ...serviceTier === undefined ? {} : { onPayload: serviceTierPayload(serviceTier) },
     ...profile.thinkingBudgets === undefined ? {} : { thinkingBudgets: profile.thinkingBudgets },
     ...profile.cacheRetention === undefined ? {} : { cacheRetention: profile.cacheRetention },
     ...profile.transport === undefined ? {} : { transport: profile.transport },
@@ -162,6 +174,19 @@ function resolveReasoningLevel(
   throw new LlmError(
     `pi-ai provider "${model.provider}" model "${model.id}" does not support reasoning effort "${effort}"`,
     'UNSUPPORTED_REASONING_EFFORT',
+  )
+}
+
+/** Accept service tiers only on pi-ai protocols that put them on the wire. */
+function resolveServiceTier(
+  model: Model<Api>,
+  serviceTier: GenerateOptions['serviceTier'],
+): GenerateOptions['serviceTier'] {
+  if (serviceTier === undefined) return undefined
+  if (model.api === 'openai-responses' || model.api === 'openai-codex-responses') return serviceTier
+  throw new LlmError(
+    `pi-ai provider "${model.provider}" model "${model.id}" does not support service tier "${serviceTier}"`,
+    'UNSUPPORTED_OPTION',
   )
 }
 
@@ -337,6 +362,7 @@ export class PiAiAdapter extends LlmAdapter {
       model,
       options.reasoningEffort ?? profile.reasoning,
     )
+    const serviceTier = resolveServiceTier(model, options.serviceTier)
     const apiKey = await this.config.resolveApiKey(options.provider, profile)
 
     const consumer = new AbortController()
@@ -365,7 +391,7 @@ export class PiAiAdapter extends LlmAdapter {
           maxBytes: profile.requestImageMaxBytes,
         })
       const events = snapshot.models.streamSimple(model, context, {
-        ...profileOptions(profile, reasoning, apiKey),
+        ...profileOptions(profile, reasoning, serviceTier, apiKey),
         ...options.temperature === undefined ? {} : { temperature: options.temperature },
         ...options.maxTokens === undefined ? {} : { maxTokens: options.maxTokens },
         ...options.sessionId === undefined ? {} : { sessionId: String(options.sessionId) },

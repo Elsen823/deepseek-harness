@@ -55,7 +55,7 @@ export type {
 export type { Session } from './sessions/session.ts'
 export type { ISession, ProjectionsFace, SessionFace } from './contract/session.ts'
 export type { AgentContext, ISessions } from './contract/sessions.ts'
-export type { IWorkspaces } from './contract/workspaces.ts'
+export type { IWorkspaces, WorkspaceConnectOptions } from './contract/workspaces.ts'
 export type {
   SessionBinding, SessionListState, SessionProvideContribution, SessionProvideDescriptor, SessionSummary,
 } from './sessions/service.ts'
@@ -90,6 +90,15 @@ export { displayFailureMessage } from './sessions/failure-display.ts'
 export type {
   ConversationContext, ConversationContextOriginKind,
 } from './sessions/conversation-context.ts'
+export {
+  applyModelSelectionIdentity,
+  emptyModelSelectionIdentity,
+  foldModelSelectionIdentity,
+} from './sessions/model-selection.ts'
+export type {
+  EffectiveModelIdentity, ModelSelectionIdentity, ModelSelectionIdentityValue,
+  NativeModelIdentity, SelectedModelIdentity,
+} from './sessions/model-selection.ts'
 export type {
   ContextProvenanceView, ContextRole, KnownContextForm,
 } from './sessions/context-provenance.ts'

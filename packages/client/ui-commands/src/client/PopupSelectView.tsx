@@ -141,15 +141,18 @@ export function PopupSelectView({ popup, t }: PopupSelectViewProps) {
                   key={option.id}
                   role="option"
                   aria-selected={index === state.active}
+                  aria-disabled={option.disabledReason !== undefined}
                   className={clsx(css.row, index === state.active && css.rowActive)}
+                  title={option.disabledReason}
                   // mousedown would race the document capture listener; the shell
                   // owns focus anyway, so a plain click (inside the card → no
                   // dismiss) works.
-                  onClick={() => { void popup.select(index) }}
-                  onMouseEnter={() => { popup.highlight(index) }}
+                  onClick={() => { if (option.disabledReason === undefined) void popup.select(index) }}
+                  onMouseEnter={() => { if (option.disabledReason === undefined) popup.highlight(index) }}
                 >
                   <span className={css.label}>{option.label}</span>
                   {option.detail !== undefined && <span className={css.detail}>{option.detail}</span>}
+                  {option.disabledReason !== undefined && <span className={css.detail}>{option.disabledReason}</span>}
                   {option.active === true && <span className={css.check}><IconCheckOutline16 /></span>}
                 </div>
               ))}

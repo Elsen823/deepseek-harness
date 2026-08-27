@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import AgentRegistry from '@deepseek-ai/dsh-agent'
+import AgentRegistry, { createModelSelectionOwner } from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import SessionStore, { AgentDriverId } from '@deepseek-ai/dsh-session'
 import type { Session } from '@deepseek-ai/dsh-session'
@@ -37,7 +37,7 @@ async function harness(): Promise<{ ctx: Context; api: ApiProxy; attach: (sessio
     ctx,
     api: createApiProxy(ctx, { defaultModelSelection: () => ({ provider: 'p', model: 'm' }), cwd: '/tmp' }),
     attach: (session) => {
-      ctx.agents.register({ id: session.id, session, status: 'idle', ctx } as Agent)
+      ctx.agents.register({ id: session.id, session, modelSelection: createModelSelectionOwner(session), status: 'idle', ctx } as Agent)
     },
   }
 }

@@ -4,6 +4,8 @@ English | [中文](README.zh.md)
 
 Model selection plugin, browser half: TWO entries over ONE per-session directory owned by `ModelDirectoryResolver` (`ctx.modelDirectories`). For ordinary sessions, the `/model` popupSelect contribution (registered through `ctx.commandUi`) and the composer's named `conversation.input.model` seat both load the session's advisory directory through `session.models` and submit through `session.selectModel` via the same `ModelDirectory` instance. The compact composer trigger opens a two-level Model/Effort menu: models stay provider-grouped, while the selected exact model supplies its adapter-owned effort names, descriptions, and default. `/model` applies the selected model's default effort, and the composer can then choose any advertised effort.
 
+The Session directory never writes the Models settings default: a picker action changes only its addressed Session, while Models settings remains the owner of the default used by future or uncommitted blank Sessions. Catalog rows that a Driver cannot represent remain visible but disabled with the Driver's reason, and a provider-unavailable route leaves the picker available so the user can recover by choosing a compatible route.
+
 The Host-reported provider/model/reasoning `ModelSelection` is the single selection fact, but it is echoed only when the exact provider/model pair remains in the advertised groups; an absent catalog row leaves the routable selection intact while the trigger prompts `Select model`, no stale row is synthesized, and no Effort row is shown until the user picks an advertised model. Directory loads and selections share a generation counter so an older response never overwrites a newer one; a connection reset drops every resident projection and repulls the Host-restored selection before display. Provider-local metadata failures list inline while usable groups stay selectable, and selection failures retain the prior selection and directory.
 
 When the Host reports that no adapter serves the session's route (`session.models.routable`), this plugin raises a composer block through `ctx.conversation.blocks` and the input goes inert with this plugin's own copy; recovering clears it without a reload. It follows `routable` and nothing else: a `null` — before the first load, or after one failed — never blocks, or a slow Host would lock a working composer, and catalog membership never blocks either, because a route serving a model it stopped advertising is missing from the groups yet perfectly usable. The trigger's own `Select model` fallback still covers that case, which is display, not a gate.
@@ -12,11 +14,15 @@ Directories are per-session, resolved lazily through `ctx.modelDirectories.direc
 
 Every resident directory refetches directly on forwarded `llm/adapters-updated` and `settings/document-updated` owner events. Provider topology, provider catalogs, and the default selection therefore converge without the Host or client runtime deriving a separate model-change alias.
 
+The session header's compact identity badge reads the durable event projection and keeps `Selected`, `Next turn`, `Effective`, `Native`, `DSH Session`, and native conversation identities separate. `Next turn` appears when accepted intent differs from the latest request evidence and disappears when a later request uses it; native model/effort and native conversation ids are omitted until Driver evidence supplies them. Activation and checkpoint provenance both supply native conversation identity, so a first native turn becomes identifiable when its checkpoint is recorded without parsing Driver-specific payloads. Reasoning Effort is a separate attribute of a model selection, never another model identity.
+
+The header identity badge is an internal contribution: consumers observe it through the assembled Session header and do not import it from `/client`.
+
 The `/client` exports are the plugin body (`apply`/`inject`), `ModelDirectoryResolver`, `ModelDirectory` with its state fields, and the seat's injected face type.
 
 ## Model Experience
 
-Indirectly, through the `session.selectModel` RPC available to ordinary sessions, both entries submit the complete `ModelSelection` that the Host snapshots at the next prompt-assembly boundary, so the following request uses the selected provider, model, and effort while a running step keeps its assembled selection; the selection becomes durable only when the existing request header records a request that consumes it, and menu interaction adds no prompt content.
+Indirectly, through the `session.selectModel` RPC available to ordinary sessions, both entries submit the complete `ModelSelection` that the Host accepts and durably records as `model/selected`; the next prompt-assembly boundary snapshots it so the following request uses the selected provider, model, and effort while a running step keeps its assembled selection. `request/header` or `agent-driver/model-request` records effective request evidence separately, and menu interaction adds no prompt content.
 
 #### KV Cache effect
 

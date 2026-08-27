@@ -24,6 +24,7 @@ import type { ModelDirectoryState } from './directory.ts'
 import { ModelDirectoryResolver } from './service.ts'
 import type { ModelSelectInjected } from './slots.ts'
 import { ModelSelect } from './ModelSelect.tsx'
+import { ModelIdentityBadge } from './ModelIdentityBadge.tsx'
 import { en, zh, type ModelKey } from './locales.ts'
 
 export { ModelDirectory } from './directory.ts'
@@ -55,6 +56,7 @@ function optionsOf(directory: SessionModels, t: TranslateNS<'model'>): SelectOpt
         detail: model.description !== undefined ? `${group.name} · ${model.description}` : group.name,
         ...(directory.current.provider === group.id && directory.current.model === model.id
           ? { active: true } : {}),
+        ...(model.disabledReason === undefined ? {} : { disabledReason: model.disabledReason }),
       })
     }
   }
@@ -79,6 +81,7 @@ function selectionOf(state: ModelDirectoryState, id: string): ModelSelection | u
   for (const group of state.groups) {
     for (const model of group.models) {
       if (rowId(group.id, model.id) !== id) continue
+      if (model.disabledReason !== undefined) return undefined
       const sameRoute = state.current?.provider === group.id && state.current.model === model.id
       const reasoningEffort = sameRoute
         ? state.current?.reasoningEffort ?? model.reasoning?.defaultEffort
@@ -172,5 +175,17 @@ export function apply(ctx: ClientContext): void {
         }
       },
     }, ModelSelect))
+  })
+
+  // Compact identity rows are derived from the Session event window; they do
+  // not mutate the Models settings default and remain scoped to the addressed
+  // Session rendered by the header.
+  ctx.inject(['slots'], (scope: ClientContext) => {
+    scope.slots.inject('conversation.session.header.actions', () => scope.slots.register({
+      name: 'conversation.session.header.actions',
+      id: 'model-selection-identity',
+      order: -15,
+      locale: NS,
+    }, ModelIdentityBadge))
   })
 }

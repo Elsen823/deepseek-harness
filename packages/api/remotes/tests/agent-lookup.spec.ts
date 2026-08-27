@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import AgentRegistry from '@deepseek-ai/dsh-agent'
+import AgentRegistry, { createModelSelectionOwner } from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import SessionStore from '@deepseek-ai/dsh-session'
 import { AgentDriverId } from '@deepseek-ai/dsh-session'
@@ -36,7 +36,7 @@ function provideSession(
 }
 
 function stubAgent(ctx: Context, session: Session): Agent {
-  return { id: session.id, session, status: 'idle', ctx } as Agent
+  return { id: session.id, session, modelSelection: createModelSelectionOwner(session), status: 'idle', ctx } as Agent
 }
 
 describe('API Remote Agent resolver races', () => {

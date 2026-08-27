@@ -55,6 +55,14 @@ export interface HostApi {
   }>>
 
   /**
+   * Request an explicit DSH process-generation restart. The host runs the
+   * restart handoff before ordinary teardown; a refused handoff is returned
+   * as a retryable business error and leaves the serving generation intact.
+   * This method has no payload so a browser cannot select a process or signal.
+   */
+  restart(request: RpcRequest<{}>): Promise<RpcResponse<{ accepted: true }>>
+
+  /**
    * Open the operating system's single-directory picker; cancellation returns
    * null. Only served under the `native` capability.
    */

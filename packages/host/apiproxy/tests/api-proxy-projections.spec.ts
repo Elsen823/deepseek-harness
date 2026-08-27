@@ -10,7 +10,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { z } from 'zod'
-import AgentRegistry, { Inbox } from '@deepseek-ai/dsh-agent'
+import AgentRegistry, { createModelSelectionOwner, Inbox } from '@deepseek-ai/dsh-agent'
 import { AttachmentStore } from '@deepseek-ai/dsh-attachment'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
@@ -70,7 +70,7 @@ async function harness(withRegistry: boolean): Promise<{ ctx: Context; session: 
   if (withRegistry) await ctx.plugin(SessionProjectionRegistry)
   const session = ctx.sessions.create(undefined, { meta: { driverId: AgentDriverId('dsh') } })
   // The gateway reads both the session and durable inbox baseline.
-  ctx.agents.register({ id: session.id, session, inbox: new Inbox(session, { inserted: () => {}, discarded: () => {}, claimed: () => {} }), status: 'idle', ctx } as Agent)
+  ctx.agents.register({ id: session.id, session, modelSelection: createModelSelectionOwner(session), inbox: new Inbox(session, { inserted: () => {}, discarded: () => {}, claimed: () => {} }), status: 'idle', ctx } as Agent)
   return { ctx, session }
 }
 

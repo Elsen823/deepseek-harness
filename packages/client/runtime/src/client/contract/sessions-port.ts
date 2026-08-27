@@ -7,12 +7,14 @@
  * dependency.
  */
 
-import type { SessionId, WorkspaceId } from '@deepseek-ai/dsh-api-remotes/client'
+import type { AgentDriverId, SessionId, WorkspaceId } from '@deepseek-ai/dsh-api-remotes/client'
 import type { ObservableSnapshot } from './store.ts'
 
 /** Session-list row facts sibling domains read: recency, blank-reuse eligibility, and its cwd canon. */
 export interface SessionsPortSummary {
   id: SessionId
+  /** Immutable Agent Driver binding; absent only for a catalog-only child address. */
+  driverId?: AgentDriverId
   /** Empty-log bit (blank sessions are reused by New Session instead of minting another). */
   blank: boolean
   cwd?: string
@@ -33,10 +35,10 @@ export interface SessionsPort {
   readonly list: ObservableSnapshot<SessionsPortList>
   /**
    * Create a session on the host.
-   * @param opts - target workspace.
+   * @param opts - target workspace and optional immutable Driver binding.
    * @returns the new session id.
    */
-  create(opts: { workspaceId: WorkspaceId }): Promise<SessionId>
+  create(opts: { workspaceId: WorkspaceId; driverId?: AgentDriverId }): Promise<SessionId>
   /**
    * Select a session as current.
    * @param id - session id (must exist in the list store).

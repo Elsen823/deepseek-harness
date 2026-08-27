@@ -499,7 +499,7 @@ describe('provider-routed retry policy', () => {
     expect(adapter.requests.map(request => request.provider)).toEqual(['mock', 'other', 'other'])
   })
 
-  it('selects an always policy from the provider chosen by agent/request', async () => {
+  it('selects an always policy from the Session Model Selection', async () => {
     vi.useFakeTimers()
     const adapter = new ScriptedAdapter([
       new LlmError('rerouted auth failed', 'AUTH'),
@@ -507,16 +507,12 @@ describe('provider-routed retry policy', () => {
     ])
     ;({ ctx: context } = await harness(adapter, {
       other: alwaysConfig({ initialDelayMs: 1, maxDelayMs: 1, jitterRatio: 0 }),
-    }, (ctx) => {
-      ctx.on('agent/request', async (_payload, next) => ({
-        ...await next(),
-        provider: 'other',
-      }))
     }))
     const agent = await context.agentLoop.create(SessionId('retry-provider-rerouted'), {
       provider: 'mock',
       model: 'mock',
     })
+    await agent.modelSelection.accept({ provider: 'other', model: 'mock' })
     const scheduled = waitForRetry(context, agent, 1)
 
     agent.followup(createUserMessage({ content: [{ type: 'text', text: 'reroute' }], source: { kind: 'user' } }))
@@ -528,10 +524,11 @@ describe('provider-routed retry policy', () => {
     expect(adapter.requests.map(request => request.provider)).toEqual(['other', 'other'])
   })
 
-  it('keeps finite retry budgets scoped to the failed provider', async () => {
+  it('keeps finite retry budgets scoped to the selected provider across Turns', async () => {
     vi.useFakeTimers()
     const adapter = new ScriptedAdapter([
       new LlmError('mock failed', 'SERVER'),
+      textResponse('mock recovered'),
       new LlmError('other failed', 'SERVER'),
       textResponse('other recovered'),
     ])
@@ -544,26 +541,33 @@ describe('provider-routed retry policy', () => {
         maxRetries: 1,
         backoff: { initialDelayMs: 1, maxDelayMs: 1 },
       }),
-    }, (ctx) => {
-      ctx.on('agent/request', async (_payload, next) => ({
-        ...await next(),
-        provider: adapter.requests.length === 0 ? 'mock' : 'other',
-      }))
     }))
     const agent = await context.agentLoop.create(SessionId('retry-provider-budgets'), {
       provider: 'mock',
       model: 'mock',
     })
-    const idle = waitForIdle(context, agent)
-
+    const mockScheduled = waitForRetry(context, agent, 1)
     agent.followup(createUserMessage({
-      content: [{ type: 'text', text: 'switch provider after failure' }],
+      content: [{ type: 'text', text: 'retry mock' }],
       source: { kind: 'user' },
     }))
-    await vi.runAllTimersAsync()
-    await idle
+    expect((await mockScheduled).data).toMatchObject({ provider: 'mock', retry: 1 })
+    const mockIdle = waitForIdle(context, agent)
+    await vi.advanceTimersByTimeAsync(1)
+    await mockIdle
 
-    expect(adapter.requests.map(request => request.provider)).toEqual(['mock', 'other', 'other'])
+    await agent.modelSelection.accept({ provider: 'other', model: 'mock' })
+    const otherScheduled = waitForRetry(context, agent, 1)
+    agent.followup(createUserMessage({
+      content: [{ type: 'text', text: 'retry other' }],
+      source: { kind: 'user' },
+    }))
+    expect((await otherScheduled).data).toMatchObject({ provider: 'other', retry: 1 })
+    const otherIdle = waitForIdle(context, agent)
+    await vi.advanceTimersByTimeAsync(1)
+    await otherIdle
+
+    expect(adapter.requests.map(request => request.provider)).toEqual(['mock', 'mock', 'other', 'other'])
     expect(agent.session.events.filter(event => event.type === 'llm/retry').map(event => ({
       provider: event.data.provider,
       retry: event.data.retry,

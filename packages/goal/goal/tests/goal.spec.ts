@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import AgentRegistry, { agentEvents, Inbox } from '@deepseek-ai/dsh-agent'
+import AgentRegistry, { agentEvents, createModelSelectionOwner, Inbox } from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { createUserMessage, HarnessError } from '@deepseek-ai/dsh-llm'
 import SessionStore, {
@@ -41,6 +41,7 @@ function stubAgentForSession(session: Session): StubAgent {
     id,
     options: {},
     session,
+    modelSelection: createModelSelectionOwner(session),
     inbox,
     ctx: new Context(),
     status: 'idle',

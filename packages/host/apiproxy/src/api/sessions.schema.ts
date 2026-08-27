@@ -147,6 +147,7 @@ export const sessionCreateRequestSchema = z.object({
   cwd: z.string().optional(),
   sessionId: sessionIdSchema.optional(),
   driverId: agentDriverIdSchema.optional(),
+  resident: z.boolean().optional(),
   agentPreset: z.string().optional(),
 }).refine(
   payload => payload.workspaceId === undefined || payload.cwd === undefined,
@@ -204,6 +205,7 @@ export const modelReasoningEffortSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
   description: z.string().optional(),
+  disabledReason: z.string().min(1).optional(),
 }) satisfies z.ZodType<Wire<ModelReasoningEffort>>
 
 /** Exact-model reasoning metadata. */
@@ -218,6 +220,7 @@ export const modelCatalogModelSchema = z.object({
   name: z.string().min(1),
   description: z.string().optional(),
   reasoning: modelReasoningSchema.optional(),
+  disabledReason: z.string().min(1).optional(),
 }) satisfies z.ZodType<Wire<ModelCatalogModel>>
 
 /** One successfully loaded provider group. */

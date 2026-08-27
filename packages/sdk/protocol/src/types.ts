@@ -9,9 +9,18 @@
  */
 
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
-import type { SessionEvent } from '@deepseek-ai/dsh-session/types'
+import type { ModelSelection, ModelSelectionSource, SessionEvent } from '@deepseek-ai/dsh-session/types'
 import type { SessionRuntimeStatus } from '@deepseek-ai/dsh-session-runtime/types'
 import type { SubagentStopReason } from '@deepseek-ai/dsh-subagent'
+
+/** Session-owned provider/model/effort selection projected on the SDK event stream. */
+export type { ModelSelection, ModelSelectionSource }
+
+/** Durable accepted model intent event carried by `session.event`. */
+export type SessionModelSelectedEvent = Extract<SessionEvent, { type: 'model/selected' }>
+
+/** The selected intent payload projected from one durable event. */
+export type SelectedModelSelection = ModelSelection & { source: ModelSelectionSource }
 
 /** One active Agent Driver advertised by the SDK runtime. */
 export interface AgentDriverCatalogItem {

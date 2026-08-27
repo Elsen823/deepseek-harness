@@ -123,8 +123,22 @@ interface SessionEventMap {
   /**
    * Full header for the next request, appended inside its step before dispatch.
    * It is log-only; the latest snapshot reconstructs the request header.
-   */
+  */
   'request/header': { header: EpochHeader; reason: RequestHeaderReason }
+  /**
+   * Latest accepted Session model intent. A user selection is durable before
+   * any Turn consumes it; a default selection is materialized when the first
+   * prompt is accepted. Effective request configuration remains recorded by
+   * `request/header` or `agent-driver/model-request`.
+   */
+  'model/selected': ModelSelection & { source: ModelSelectionSource }
+  /**
+   * Whole-value per-session service-tier choice. A branded id selects an
+   * adapter-owned tier; `null` explicitly restores the provider standard.
+   * Request producers fold this event in `agent/request`, while the effective
+   * value remains recorded in each changed `request/header`.
+   */
+  'llm/service-tier': { serviceTier: ServiceTierId | null }
   /**
    * Route metadata for the next request, logged only when the route or capacity
    * changes. It does not participate in request reconstruction or header equality.
@@ -513,9 +527,28 @@ declare class Session {
    * the first `request/header` snapshot. The live, incrementally-maintained
    * form of `foldRequestHeader(session.events)`: each header event is folded
    * once, when first seen, so a per-step read costs O(new events).
-   * @returns the folded header, or undefined when no header event exists yet.
-   */
+  * @returns the folded header, or undefined when no header event exists yet.
+  */
   requestHeader(): EpochHeader | undefined;
+  /**
+   * Return the latest durable selected-model intent, or `undefined` before a
+   * user choice or default materialization. Each event is folded once.
+   * @returns the latest immutable selected-model record.
+   */
+  modelSelection(): (ModelSelection & { source: ModelSelectionSource }) | undefined;
+  /**
+   * Return the latest effective Model Selection evidence independently of the
+   * accepted `model/selected` intent. Request headers and Driver model-request
+   * records are both effective evidence; service tier and other request fields
+   * remain outside the returned selection.
+   * @returns the latest effective evidence, or `undefined` before any request boundary.
+   */
+  effectiveModelSelection(): ModelSelection | undefined;
+  /**
+   * Return the latest effective Model Selection together with its durable source.
+   * @returns effective evidence, or `undefined` before any request boundary.
+   */
+  effectiveModelSelectionEvidence(): EffectiveModelSelectionEvidence | undefined;
   /**
    * Return the latest resolved route metadata, or `undefined` before the first
    * `request/context` event. Each event is folded once.

@@ -10,6 +10,8 @@ The package root exposes the Cordis plugin contract, `PiAiAdapter`, and `support
 
 Configure credentials, the model catalog, and deployment-specific transport settings per provider, keyed by the provider route itself. Each profile may set a `retryPolicy`; omission uses normal mode with five retries. `apiKeyEnv` is a credential *reference* resolved per request, so no secret enters this file. Omitting it leaves the route unauthenticated, which for an installed catalog route means pi-ai's provider-native ambient discovery; a configured reference that resolves to nothing fails the request with `MISSING_CREDENTIAL` instead, because falling through would authenticate with whatever unrelated key the environment happens to hold. One credential serves every model on its route.
 
+An explicit `GenerateOptions.serviceTier` is supported only by models using `openai-responses` or `openai-codex-responses`. The adapter adds the corresponding `service_tier` body field through pi-ai's payload hook after its typed request construction; every other protocol rejects the option with `UNSUPPORTED_OPTION` before credential or provider I/O.
+
 ```yaml
 - id: llm
   name: '@deepseek-ai/dsh-llm-pi-ai'

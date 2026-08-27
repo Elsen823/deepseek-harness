@@ -2,7 +2,7 @@
 
 import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import AgentRegistry, { Inbox } from '@deepseek-ai/dsh-agent'
+import AgentRegistry, { createModelSelectionOwner, Inbox } from '@deepseek-ai/dsh-agent'
 import type { Agent, AgentDriver } from '@deepseek-ai/dsh-agent'
 import AgentDefaultModelConfig from '@deepseek-ai/dsh-agent-default-model'
 import { createAssistantMessage } from '@deepseek-ai/dsh-llm'
@@ -66,6 +66,7 @@ async function bench(script: Script): Promise<{
         id: session.id,
         options,
         session,
+        modelSelection: createModelSelectionOwner(session),
         inbox: new Inbox(session, { inserted: () => {}, discarded: () => {}, claimed: () => {} }),
         status: 'idle',
         ctx: agentCtx,

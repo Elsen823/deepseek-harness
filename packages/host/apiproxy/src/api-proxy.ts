@@ -9,8 +9,7 @@ import { homedir } from 'node:os'
 import { dirname } from 'node:path'
 import { z as zod } from 'zod'
 import type { Context } from '@deepseek-ai/cordis'
-import { installModelSelection } from '@deepseek-ai/dsh-agent'
-import type { Agent, ModelSelection, ModelSelectionRef, AgentOptions, AgentStatus } from '@deepseek-ai/dsh-agent'
+import type { Agent, AgentHandle, ModelSelection, AgentOptions, AgentStatus } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-agent-presets/types'
 import { AttachmentError, admitEncodedImages } from '@deepseek-ai/dsh-attachment'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
@@ -41,8 +40,9 @@ import type {} from '@deepseek-ai/dsh-tools'
 import type {
   ApiProxy, ConfigurableProviderView, CredentialView, GoalRef, HistoryEntry, HostFrame,
   ModelCatalogFailure, ModelProviderGroup,
-  ModelReasoning, MuxFrame, PromptContentPart, QuestionResponsePayload, SessionListMetadata, SessionProjectionsBlock, SessionSearchItem,
-  QueuedInboxItem, SessionSummary, SettingsNamespaceView, SubagentAddress, JobView, ToolEventView,
+  ModelReasoning, MuxFrame, PromptContentPart, QuestionResponsePayload, SessionListMetadata,
+  SessionModels, SessionProjectionsBlock, SessionSearchItem,
+  QueuedInboxItem, SessionSummary, SettingsNamespaceView, SubagentAddress, SubagentPromptReceipt, JobView, ToolEventView,
   WorkspaceId, WorkspaceView,
 } from './api/index.ts'
 import {
@@ -280,7 +280,10 @@ function ok<T>(request: RpcRequest<unknown>, value: T): RpcResponse<T> {
  * owning catalog stops advertising it. Per-provider failures ride `failures`
  * without failing the sound groups; groups that advertise nothing are dropped.
  */
-async function buildModelCatalog(ctx: Context): Promise<{
+async function buildModelCatalog(
+  ctx: Context,
+  validateSelection?: (selection: ModelSelection, signal?: AbortSignal) => void | Promise<void>,
+): Promise<{
   groups: ModelProviderGroup[]
   failures: ModelCatalogFailure[]
 }> {
@@ -289,15 +292,33 @@ async function buildModelCatalog(ctx: Context): Promise<{
       const models = await ctx.llm.listModels(provider.id)
       const entries = await Promise.all(models.map(async (model) => {
         const resolved = await ctx.llm.resolveModelInfo(provider.id, model.id)
+        const validate = async (selection: ModelSelection): Promise<string | undefined> => {
+          if (validateSelection === undefined) return undefined
+          try {
+            await validateSelection(selection)
+            return undefined
+          } catch (error: unknown) {
+            return error instanceof Error ? error.message : String(error)
+          }
+        }
+        const modelDisabledReason = await validate({ provider: provider.id, model: model.id })
         const reasoning: ModelReasoning | undefined = resolved.reasoning === undefined
           ? undefined
           : {
-            efforts: resolved.reasoning.efforts.map(effort => ({
-              id: effort.id,
-              name: effort.name,
-              ...effort.description === undefined
-                ? {}
-                : { description: effort.description },
+            efforts: await Promise.all(resolved.reasoning.efforts.map(async (effort) => {
+              const disabledReason = await validate({
+                provider: provider.id,
+                model: model.id,
+                reasoningEffort: effort.id,
+              })
+              return {
+                id: effort.id,
+                name: effort.name,
+                ...effort.description === undefined
+                  ? {}
+                  : { description: effort.description },
+                ...disabledReason === undefined ? {} : { disabledReason },
+              }
             })),
             ...resolved.reasoning.defaultEffort === undefined
               ? {}
@@ -308,6 +329,7 @@ async function buildModelCatalog(ctx: Context): Promise<{
           name: model.name,
           ...model.description === undefined ? {} : { description: model.description },
           ...reasoning === undefined ? {} : { reasoning },
+          ...modelDisabledReason === undefined ? {} : { disabledReason: modelDisabledReason },
         }
       }))
       const group: ModelProviderGroup = {
@@ -600,21 +622,14 @@ export interface ApiProxyDefaults {
    * reaches the sessions that have not run a turn yet.
    */
   defaultModelSelection: () => ModelSelection
-  /**
-   * Record a selection as the new default. Either absent, or a closure that
-   * may itself decline — the gateway plugin always passes one, and it no-ops
-   * when the deployment mounts no settings provider or when the write races
-   * service teardown. A switch then stays process-local. A rejection is
-   * reported and swallowed: the switch already applies to its own session,
-   * and undoing it because storage failed would be the worse outcome.
-   */
-  saveDefaultModelSelection?: (selection: ModelSelection) => Promise<void>
   /** Default project directory for new sessions whose create request carries no cwd. */
   cwd: string
   /** Native open-with-default-application; injectable for carrier tests. */
   openPath?: (path: string, signal: AbortSignal) => Promise<void>
   /** Native text-editor handoff; injectable for settings-document tests. */
   openTextFile?: (path: string, signal: AbortSignal) => Promise<void>
+  /** Explicit process-generation restart controller; absent for non-process embedders. */
+  restart?: () => Promise<void>
   /** Validated DEFLATE level for session-log ZIP entries; defaults to 6. */
   sessionExportCompressionLevel?: SessionLogCompressionLevel
   /** Maximum artifact size eligible for one cold blankness read. */
@@ -627,6 +642,37 @@ export interface ApiProxyDefaults {
    * falls back to platform detection ({@link canOpenNativePath}).
    */
   canOpenPath?: () => boolean
+}
+
+/** Trusted Host control over Agent handles retained by one API proxy instance. */
+export interface ApiProxySessionLifecycles {
+  /** Transfer an exact newly published Agent handle to this proxy generation. */
+  retain(handle: AgentHandle): Agent
+  /**
+   * Ensure one durable Session has a live API-owned Agent without starting a Turn.
+   * @param sessionId - DSH Session identity already present in the durable store.
+   * @returns after activation publishes or the existing live Agent is observed.
+   */
+  activate(sessionId: SessionId): Promise<void>
+  /**
+   * Test whether this exact API proxy owns the live Agent disposer.
+   * @param sessionId - DSH Session identity.
+   * @returns true only while the retained handle still names the registered Agent.
+   */
+  owns(sessionId: SessionId): boolean
+  /**
+   * Release one idle owned Agent while retaining its durable Session log.
+   * @param sessionId - DSH Session identity.
+   * @returns after Driver, Agent scope, and Session attachment teardown settle.
+   * @throws when this proxy does not own the live Agent or the Agent is running.
+   */
+  release(sessionId: SessionId): Promise<void>
+}
+
+/** Wire API plus the Host-only lifecycle capability held by its implementation. */
+export interface ManagedApiProxy extends ApiProxy {
+  /** Lifecycle control for Agents whose exclusive handles this proxy retains. */
+  readonly sessionLifecycles: ApiProxySessionLifecycles
 }
 
 /** The tool/call payload fields the presenter path reads. */
@@ -1084,7 +1130,7 @@ function changedWorkspaceView(workspaceId: string, value: unknown): WorkspaceVie
  * @param defaults - host routing and project-directory defaults.
  * @returns the ApiProxy implementation.
  */
-export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiProxy {
+export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ManagedApiProxy {
   const sessionExportCompressionLevel = defaults.sessionExportCompressionLevel
     ?? DEFAULT_SESSION_LOG_COMPRESSION_LEVEL
   const coldBlankProbeMaxBytes = defaults.coldBlankProbeMaxBytes
@@ -1094,8 +1140,6 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
     const { provider, model } = defaults.defaultModelSelection()
     return { provider, model }
   }
-  type WebModelSelectionRef = ModelSelectionRef & { current: ModelSelection }
-  const selections = new WeakMap<Agent, WebModelSelectionRef>()
   /**
    * Serializes `agentPreset.select` per session. Two concurrent selects both
    * pass the blank check, and the second `unmountPresetFor` then finds nothing
@@ -1106,12 +1150,159 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
   const presetSwitches = new Map<SessionId, Promise<unknown>>()
   /** Client-chosen identity creation/resume, deduplicated across concurrent retries. */
   const sessionCreations = new Map<SessionId, Promise<Agent>>()
+  const ownedSessionHandles = new Map<SessionId, { readonly agent: Agent; readonly handle: AgentHandle }>()
   /** Serializes path ownership and explicit title checks with Workspace mutations. */
   let workspaceCreationChain = Promise.resolve()
   const pendingQuestions = new Map<RpcId, PendingQuestion>()
   const pendingApprovals = new Map<RpcId, PendingApproval>()
   const muxQueues = new Set<FrameQueue<RpcRequest<MuxFrame>>>()
   const imageAdmissionChains = new WeakMap<Agent, Promise<void>>()
+
+  /** Return a retryable error while this process is publishing restart state. */
+  function restartHandoffError(): import('@deepseek-ai/dsh-api-remotes').ApiRemoteLookupError | undefined {
+    const agents = ctx.get('agents')
+    if (agents === undefined) return undefined
+    const phase = agents.restartHandoffPhase
+    if (phase === 'active') return undefined
+    return {
+      code: 'agent-busy',
+      message: `Agent restart handoff is ${phase}; retry this request after the next Web generation is ready`,
+      details: { reason: `restart-handoff-${phase}` },
+    }
+  }
+
+  /** Map a generation-fence failure onto one request's retryable response. */
+  function restartHandoffResponse<T>(request: RpcRequest<unknown>): RpcResponse<T> | undefined {
+    const unavailable = restartHandoffError()
+    return unavailable === undefined ? undefined : err(request, unavailable)
+  }
+
+  /**
+   * Hold one complete unary API request in the generic Agent restart fence.
+   * Admission is acquired synchronously before the handler can cross an
+   * await; the registry therefore waits for this request before publishing a
+   * replacement generation, while a request arriving afterward receives the
+   * existing retryable `agent-busy` response.
+   */
+  function admitApiRequest(
+    request: RpcRequest<unknown>,
+    operation: () => Promise<RpcResponse<unknown>>,
+  ): Promise<RpcResponse<unknown>> {
+    const agents = ctx.get('agents')
+    if (agents === undefined) {
+      try {
+        return Promise.resolve(operation())
+      } catch (error: unknown) {
+        return Promise.reject(error instanceof Error ? error : new Error(String(error), { cause: error }))
+      }
+    }
+    let release: (() => void) | undefined
+    try {
+      release = agents.admitRestartOperation()
+    } catch (error: unknown) {
+      const unavailable = restartHandoffError()
+      if (unavailable !== undefined) {
+        return Promise.resolve({
+          rpcId: request.rpcId,
+          result: { ok: false, error: unavailable },
+        })
+      }
+      return Promise.reject(error instanceof Error ? error : new Error(String(error), { cause: error }))
+    }
+    let result: Promise<RpcResponse<unknown>>
+    try {
+      // Invoke synchronously after admission so signal-following native
+      // capabilities can install their listener before a caller aborts.
+      result = Promise.resolve(operation())
+    } catch (error: unknown) {
+      result = Promise.reject(error instanceof Error ? error : new Error(String(error), { cause: error }))
+    }
+    return result.then(
+      (value) => {
+        // A request can be admitted just before the handoff intent closes the
+        // generation, then finish after an awaited persistence or filesystem
+        // operation. Do not let that old generation's response be consumed by
+        // a reconnecting client: the next generation owns the retry. A failed
+        // handoff restores `active`, so the old generation still returns its
+        // normal response when it remains authoritative.
+        const unavailable = restartHandoffResponse<unknown>(request)
+        return unavailable === undefined ? value : unavailable
+      },
+      (error: unknown) => {
+        const unavailable = restartHandoffResponse<unknown>(request)
+        if (unavailable !== undefined) return unavailable
+        throw error
+      },
+    ).finally(() => { release() })
+  }
+
+  /** Add restart admission to the selected unary methods of one API domain. */
+  function admitApiMethods<T extends object>(target: T, methods: readonly string[]): T {
+    const names = new Set(methods)
+    return new Proxy(target, {
+      get(current, property, receiver) {
+        const value = Reflect.get(current, property, receiver)
+        if (typeof property !== 'string' || !names.has(property) || typeof value !== 'function') return value
+        return (...args: unknown[]): unknown => {
+          const request = args[0] as RpcRequest<unknown>
+          return admitApiRequest(request, () => Reflect.apply(value, current, args) as Promise<RpcResponse<unknown>>)
+        }
+      },
+    })
+  }
+
+  /** Retain the exclusive disposer for Agents created or resumed by this gateway. */
+  function retainSessionHandle(handle: AgentHandle): Agent {
+    const sessionId = handle.agent.id
+    if (ctx.agents.get(sessionId) !== handle.agent) {
+      throw new Error(`api-proxy cannot retain a stale Agent handle for session "${sessionId}"`)
+    }
+    const existing = ownedSessionHandles.get(sessionId)
+    if (existing !== undefined && existing.agent !== handle.agent) {
+      throw new Error(`api-proxy already owns another Agent handle for session "${sessionId}"`)
+    }
+    ownedSessionHandles.set(sessionId, { agent: handle.agent, handle })
+    return handle.agent
+  }
+
+  ctx.on('agent/disposed', ({ agent }) => {
+    const owned = ownedSessionHandles.get(agent.id)
+    if (owned?.agent === agent) ownedSessionHandles.delete(agent.id)
+  })
+
+  const sessionLifecycles: ApiProxySessionLifecycles = Object.freeze({
+    retain(handle: AgentHandle): Agent {
+      return retainSessionHandle(handle)
+    },
+    async activate(sessionId: SessionId): Promise<void> {
+      const unavailable = restartHandoffError()
+      if (unavailable !== undefined) throw new Error(unavailable.message)
+      const result = await agentFor(sessionId)
+      if ('error' in result) throw new Error(result.error.message)
+    },
+    owns(sessionId: SessionId): boolean {
+      if (restartHandoffError() !== undefined) return false
+      const owned = ownedSessionHandles.get(sessionId)
+      return owned !== undefined && ctx.agents.get(sessionId) === owned.agent
+    },
+    async release(sessionId: SessionId): Promise<void> {
+      const unavailable = restartHandoffError()
+      if (unavailable !== undefined) throw new Error(unavailable.message)
+      const creating = sessionCreations.get(sessionId)
+      if (creating !== undefined) await creating
+      const afterCreation = restartHandoffError()
+      if (afterCreation !== undefined) throw new Error(afterCreation.message)
+      const owned = ownedSessionHandles.get(sessionId)
+      if (owned === undefined || ctx.agents.get(sessionId) !== owned.agent) {
+        throw new Error(`api-proxy does not own the live Agent for session "${sessionId}"`)
+      }
+      if (owned.agent.status !== 'idle') {
+        throw new Error(`Agent for session "${sessionId}" is running`)
+      }
+      await owned.handle.dispose()
+      if (ownedSessionHandles.get(sessionId) === owned) ownedSessionHandles.delete(sessionId)
+    },
+  })
 
   /** Serialize image admission with model selection for one agent. */
   function serializeImageAdmission<T>(agent: Agent, operation: () => Promise<T>): Promise<T> {
@@ -1120,52 +1311,23 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
     return result
   }
 
-  /**
-   * Install or return the session-local model selection that prompt assembly snapshots.
-   *
-   * Precedence, resolved on EVERY read rather than seeded once: a selection
-   * made in this process, else the session's own latest logged request/header,
-   * else the live Agent default. Re-reading keeps the two tiers exact in both
-   * directions: a session with a recorded request derives its selection from
-   * its log, while a blank session (New Session reuses one rather than minting
-   * another) reads any default saved after it was created. There is no create-time
-   * per-session override tier on this wire — if one returns (a create-options
-   * contribution), it must fold in between the selection and the log.
-   */
-  function selectionFor(agent: Agent): WebModelSelectionRef {
-    const installed = selections.get(agent)
-    if (installed !== undefined) return installed
-    let picked: ModelSelection | undefined
-    const selection: WebModelSelectionRef = {
-      get current(): ModelSelection {
-        if (picked !== undefined) return picked
-        // Incrementally folded by the session, so a per-step read costs
-        // O(new events) rather than a rescan.
-        const logged = agent.session.requestHeader()?.config
-        if (logged === undefined) return defaults.defaultModelSelection()
-        return {
-          provider: logged.provider,
-          model: logged.model,
-          ...logged.reasoningEffort === undefined
-            ? {}
-            : { reasoningEffort: logged.reasoningEffort },
-        }
-      },
-      set current(next: ModelSelection) {
-        picked = next
-      },
-      assembled: undefined,
+  /** Read the current Session-local selection without consulting request evidence. */
+  function selectionFor(agent: Agent): ModelSelection {
+    // The deployment default is a live source for an uncommitted blank
+    // Session. Once selected intent exists, this source is ignored by the
+    // Agent owner and cannot change the addressed Session.
+    agent.modelSelection.setDefaultSource(defaults.defaultModelSelection)
+    const selected = agent.modelSelection.selected
+    if (selected !== undefined) {
+      return {
+        provider: selected.provider,
+        model: selected.model,
+        ...selected.reasoningEffort === undefined ? {} : { reasoningEffort: selected.reasoningEffort },
+      }
     }
-    installModelSelection(agent.ctx, selection)
-    selections.set(agent, selection)
-    return selection
-  }
-
-  /** Pre-publication setup used by both fresh and resumed Web agents. */
-  function installSelection(agentCtx: Context): void {
-    const agent = agentCtx.agent
-    if (agent === undefined) throw new Error('api-proxy: agent setup has no scoped agent')
-    selectionFor(agent)
+    const inherited = agent.modelSelection.defaultSelection
+    if (inherited !== undefined) return inherited
+    throw new Error(`session "${agent.id}" has no Session-local model selection`)
   }
 
   /**
@@ -1212,17 +1374,13 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
     const presets = ctx.get('agentPresets')
     if (presets === undefined) {
       return {
-        setup: (agentCtx: Context) => {
-          installSelection(agentCtx)
-          return Promise.resolve()
-        },
+        setup: async () => {},
       }
     }
     const resolvedId = (await presets.resolve(presetId)).id
     return {
       agentPreset: resolvedId,
       setup: async (agentCtx: Context) => {
-        installSelection(agentCtx)
         await presets.mount(agentCtx, resolvedId)
       },
     }
@@ -1247,6 +1405,8 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
   // restore that history under the old tool set.
   const agentFor = createApiRemoteAgentResolver(ctx, {
     agentOptions,
+    retainHandle: retainSessionHandle,
+    checkAdmission: restartHandoffError,
     setup: async ({ meta, events }) =>
       (await composeAgent(resolveSessionPreset({ header: meta, events }))).setup,
   })
@@ -1614,7 +1774,10 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
     checkPersistedIdentity: boolean,
     presetId?: string,
     driverId?: ReturnType<typeof AgentDriverId>,
+    resident = false,
   ): Promise<Agent> {
+    const unavailable = restartHandoffError()
+    if (unavailable !== undefined) throw new Error(unavailable.message)
     if (driverId !== undefined && ctx.agents.getDriver(driverId) === undefined) {
       throw new AgentDriverUnavailable(driverId)
     }
@@ -1659,11 +1822,12 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           // session's history was produced under that composition, and
           // rebuilding it differently would replay tool calls the model can no
           // longer make.
-          return (await ctx.agents.resume({
+          return retainSessionHandle(await ctx.agents.resume({
             resumeSessionId: sessionId,
+            resident,
             agentOptions: agentOptions(),
             setup: (await composeAgent(storedPreset)).setup,
-          })).agent
+          }))
         }
 
         try {
@@ -1672,8 +1836,9 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           throw new Error(`failed to ensure project directory "${cwd}": ${String(error)}`, { cause: error })
         }
         const composition = await composeAgent(presetId)
-        return (await ctx.agents.create({
+        return retainSessionHandle(await ctx.agents.create({
           sessionId,
+          resident,
           ...driverId === undefined ? {} : { driverId },
           agentOptions: agentOptions(),
           meta: {
@@ -1681,7 +1846,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
             ...composition.agentPreset === undefined ? {} : { agentPreset: composition.agentPreset },
           },
           setup: composition.setup,
-        })).agent
+        }))
       })().catch((error: unknown) => {
         // Another Host entry path may have published the same identity while
         // this operation crossed an asynchronous persistence/filesystem step.
@@ -1704,6 +1869,8 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
       sessionCreations.set(sessionId, creation)
     }
     const agent = await creation
+    const afterCreation = restartHandoffError()
+    if (afterCreation !== undefined) throw new Error(afterCreation.message)
     if (hasSubagentOwner(agent.session, agent)) throw new SubagentSessionOwnership(sessionId)
     // Beside the cwd check for the same reason, and after the await so it
     // covers every path that yields a live agent — freshly created, adopted
@@ -1827,11 +1994,15 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
     request: RpcRequest<{ sessionId: SessionId }>,
     mutation: (goals: NonNullable<ReturnType<typeof ctx.get<'goals'>>>, agent: Agent) => CoreGoalRef,
   ): Promise<RpcResponse<{ ref: GoalRef }>> {
+    const unavailable = restartHandoffResponse<{ ref: GoalRef }>(request)
+    if (unavailable !== undefined) return unavailable
     const found = await agentFor(request.payload.sessionId)
     if ('error' in found) return err(request, found.error)
     const goals = goalServiceFor(found.agent)
     if ('error' in goals) return err(request, goals.error)
     try {
+      const afterLookup = restartHandoffResponse<{ ref: GoalRef }>(request)
+      if (afterLookup !== undefined) return afterLookup
       const ref = mutation(goals, found.agent)
       return ok(request, { ref: { id: ref.id, revision: ref.revision } })
     } catch (error: unknown) {
@@ -1866,8 +2037,10 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
   ): Promise<{ agent: Agent } | { refused: RpcResponse<T> }> {
     const found = await agentFor(sessionId)
     if ('error' in found) return { refused: err(request, found.error) }
+    const unavailable = restartHandoffError()
+    if (unavailable !== undefined) return { refused: err(request, unavailable) }
     const agent = found.agent
-    const selection = selectionFor(agent).current
+    const selection = selectionFor(agent)
     if (!routeServed(selection.provider)) {
       return {
         refused: err(request, {
@@ -2008,7 +2181,8 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
     return ok(request, namespaceView(descriptor))
   }
 
-  return {
+  const api: ManagedApiProxy = {
+    sessionLifecycles,
     sessions: {
       drivers(request) {
         return Promise.resolve(ok(request, {
@@ -2157,6 +2331,12 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
       },
 
       async create(request) {
+        const unavailable = restartHandoffResponse<{
+          sessionId: SessionId
+          driverId: AgentDriverId
+          agentPreset?: string
+        }>(request)
+        if (unavailable !== undefined) return unavailable
         const sessionId = request.payload.sessionId ?? `session-${randomUUID()}` as SessionId
         let workspace: Workspace | undefined
         if (request.payload.workspaceId !== undefined) {
@@ -2179,6 +2359,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
             request.payload.sessionId !== undefined,
             requestedPreset,
             requestedDriver,
+            request.payload.resident === true,
           )
         } catch (error: unknown) {
           if (error instanceof AgentDriverUnavailable) {
@@ -2232,6 +2413,12 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
             details: {},
           })
         }
+        const afterCreation = restartHandoffResponse<{
+          sessionId: SessionId
+          driverId: AgentDriverId
+          agentPreset?: string
+        }>(request)
+        if (afterCreation !== undefined) return afterCreation
         if (workspace !== undefined) {
           try {
             await workspace.attachSession(sessionId)
@@ -2249,6 +2436,12 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
             })
           }
         }
+        const afterWorkspace = restartHandoffResponse<{
+          sessionId: SessionId
+          driverId: AgentDriverId
+          agentPreset?: string
+        }>(request)
+        if (afterWorkspace !== undefined) return afterWorkspace
         // Echo the composition the session RUNS so a client can label it
         // without waiting for the next list refresh — the create is the commit
         // point that knows it (a caller that named none gets the default).
@@ -2305,10 +2498,18 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
 
       async models(request) {
         const { sessionId } = request.payload
+        const unavailable = restartHandoffResponse<SessionModels>(request)
+        if (unavailable !== undefined) return unavailable
         const found = await agentFor(sessionId)
         if ('error' in found) return err(request, found.error)
-        const current = selectionFor(found.agent).current
-        const { groups, failures } = await buildModelCatalog(ctx)
+        const afterLookup = restartHandoffResponse<SessionModels>(request)
+        if (afterLookup !== undefined) return afterLookup
+        const current = selectionFor(found.agent)
+        const validateSelection = (selection: ModelSelection, signal?: AbortSignal) =>
+          found.agent.modelSelection.validate(selection, signal)
+        const { groups, failures } = await buildModelCatalog(ctx, validateSelection)
+        const afterCatalog = restartHandoffResponse<SessionModels>(request)
+        if (afterCatalog !== undefined) return afterCatalog
         const routable = routeServed(current.provider)
         return ok(request, { current: { ...current }, routable, groups, failures })
       },
@@ -2319,6 +2520,8 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         if ('error' in found) return err(request, found.error)
         return serializeImageAdmission(found.agent, async () => {
           try {
+            const unavailable = restartHandoffResponse<{ selected: ModelSelection }>(request)
+            if (unavailable !== undefined) return unavailable
             const resolved = await ctx.llm.resolveCallConfig({
               provider,
               model,
@@ -2326,6 +2529,8 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
                 ? {}
                 : { reasoningEffort: ReasoningEffortId(reasoningEffort) },
             })
+            const afterResolve = restartHandoffResponse<{ selected: ModelSelection }>(request)
+            if (afterResolve !== undefined) return afterResolve
             const selected: ModelSelection = {
               provider: resolved.provider,
               model: resolved.model,
@@ -2333,15 +2538,16 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
                 ? {}
                 : { reasoningEffort: resolved.reasoningEffort },
             }
-            selectionFor(found.agent).current = selected
-            try {
-              await defaults.saveDefaultModelSelection?.(selected)
-            } catch (error: unknown) {
-              ctx.logger.warn(
-                `api-proxy: the model switch applies to this session but was not saved as the default: ${String(error)}`,
-              )
-            }
-            return ok(request, { selected: { ...selected } })
+            const accepted = await found.agent.modelSelection.accept(selected, 'user')
+            return ok(request, {
+              selected: {
+                provider: accepted.provider,
+                model: accepted.model,
+                ...accepted.reasoningEffort === undefined
+                  ? {}
+                  : { reasoningEffort: accepted.reasoningEffort },
+              },
+            })
           } catch (error: unknown) {
             return err(request, {
               code: 'model-unavailable',
@@ -2356,6 +2562,8 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         const { sessionId, title } = request.payload
         const found = await agentFor(sessionId)
         if ('error' in found) return err(request, found.error)
+        const unavailable = restartHandoffResponse<{ title: string; seq: number }>(request)
+        if (unavailable !== undefined) return unavailable
         const titles = ctx.get('sessionTitle')
         if (titles === undefined) {
           return err(request, { code: 'internal', message: 'renaming is unavailable: this deployment mounts no session-title service', details: {} })
@@ -2383,6 +2591,8 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
       },
 
       async fork(request) {
+        const unavailable = restartHandoffResponse<{ sessionId: SessionId; driverId: AgentDriverId }>(request)
+        if (unavailable !== undefined) return unavailable
         const { sessionId, atSeq, driverId } = request.payload
         let source: SessionReadState
         try {
@@ -2398,6 +2608,8 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           })
         }
         const forkDriverId = driverId ?? source.header.driverId
+        const afterRead = restartHandoffResponse<{ sessionId: SessionId; driverId: AgentDriverId }>(request)
+        if (afterRead !== undefined) return afterRead
         if (ctx.agents.getDriver(forkDriverId) === undefined) {
           return err(request, {
             code: 'agent-driver-not-found',
@@ -2454,7 +2666,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           ? retainedSeed
           : crossDriverSeed(retainedSeed)
         try {
-          await ctx.agents.create({
+          retainSessionHandle(await ctx.agents.create({
             sessionId: childId,
             driverId: forkDriverId,
             seed,
@@ -2468,7 +2680,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
             },
             agentOptions: agentOptions(),
             setup: forkComposition.setup,
-          })
+          }))
         } catch (error: unknown) {
           return err(request, {
             code: 'internal',
@@ -2490,6 +2702,8 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
             })
           }
         }
+        const afterFork = restartHandoffResponse<{ sessionId: SessionId; driverId: AgentDriverId }>(request)
+        if (afterFork !== undefined) return afterFork
         return ok(request, { sessionId: childId, driverId: forkDriverId })
       },
 
@@ -2517,8 +2731,10 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         const hasImage = content.some(part => part.type === 'image')
         const admit = async (): Promise<RpcResponse<{ accepted: true }>> => {
           try {
+            const beforeAdmission = restartHandoffResponse<{ accepted: true }>(request)
+            if (beforeAdmission !== undefined) return beforeAdmission
             if (hasImage) {
-              const current = selectionFor(agent).current
+              const current = selectionFor(agent)
               const modelInfo = await ctx.llm.resolveModelInfo(current.provider, current.model)
               if (modelInfo.inputModalities !== undefined && !modelInfo.inputModalities.includes('image')) {
                 return err(request, {
@@ -2530,6 +2746,8 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
             }
             const durable = await durablePromptContent(ctx, content)
             const message: UserMessage = createUserMessage({ content: durable, source })
+            const beforeSend = restartHandoffResponse<{ accepted: true }>(request)
+            if (beforeSend !== undefined) return beforeSend
             if (mode === 'steer') agent.steer(message)
             else agent.followup(message)
           } catch (error: unknown) {
@@ -2601,6 +2819,8 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
       },
 
       updateQueue(request) {
+        const unavailable = restartHandoffResponse<{ accepted: true }>(request)
+        if (unavailable !== undefined) return Promise.resolve(unavailable)
         const { sessionId, itemId, action } = request.payload
         if (action.kind === 'edit' && action.content.some(block => block.type !== 'text')) {
           return Promise.resolve(err(request, {
@@ -2634,6 +2854,8 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
             details: { itemId },
           }))
         }
+        const beforeMutation = restartHandoffResponse<{ accepted: true }>(request)
+        if (beforeMutation !== undefined) return Promise.resolve(beforeMutation)
         if (action.kind === 'steer' && (target !== 'next-turn' || agent.status !== 'running')) {
           return Promise.resolve(err(request, {
             code: 'steer-unavailable',
@@ -2651,6 +2873,8 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
       },
 
       cancel(request) {
+        const unavailable = restartHandoffResponse<{ accepted: true }>(request)
+        if (unavailable !== undefined) return Promise.resolve(unavailable)
         const { sessionId } = request.payload
         const agent = ctx.agents.get(sessionId)
         if (agent === undefined) {
@@ -2771,6 +2995,8 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
 
       async prompt(request, signal) {
         const { parentSessionId, childSessionId, content, clientTimeZone } = request.payload
+        const unavailable = restartHandoffResponse<SubagentPromptReceipt>(request)
+        if (unavailable !== undefined) return unavailable
         const canonicalTimeZone = clientTimeZone === undefined
           ? undefined
           : canonicalClientTimeZone(clientTimeZone)
@@ -2793,6 +3019,8 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           parentSessionId, childSessionId, mode: 'continuable',
         }, signal)
         if (verified.error !== undefined) return err(request, verified.error)
+        const afterLookup = restartHandoffResponse<SubagentPromptReceipt>(request)
+        if (afterLookup !== undefined) return afterLookup
         try {
           const messageId = await ctx.subagents.followup(parent, childSessionId, content, {
             source: {
@@ -2974,6 +3202,27 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         }))
       },
 
+      async restart(request) {
+        const restart = defaults.restart
+        if (restart === undefined) {
+          return err(request, {
+            code: 'internal',
+            message: 'host.restart is unavailable: this embedding did not provide a process restart controller',
+            details: {},
+          })
+        }
+        try {
+          await restart()
+          return ok(request, { accepted: true as const })
+        } catch (error: unknown) {
+          return err(request, {
+            code: 'agent-busy',
+            message: `host.restart was refused: ${error instanceof Error ? error.message : String(error)}`,
+            details: { reason: 'restart-handoff-refused' },
+          })
+        }
+      },
+
       async pickDirectory(request, signal) {
         const capability = ctx.directoryPicker.capability()
         if (capability.kind !== 'native') {
@@ -3133,6 +3382,8 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         if ('error' in found) return err(request, found.error)
         const { agent } = found
         const swap = async (): Promise<RpcResponse<{ agentPreset: string }>> => {
+          const unavailable = restartHandoffResponse<{ agentPreset: string }>(request)
+          if (unavailable !== undefined) return unavailable
           // Re-read inside the queue: an earlier switch may have run, and a
           // conversation may have started, since this request arrived.
           if (!sessionBlank(agent.session)) {
@@ -3144,6 +3395,8 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           }
           try {
             const preset = await presets.recompose(agent.ctx, agentPreset)
+            const afterRecompose = restartHandoffResponse<{ agentPreset: string }>(request)
+            if (afterRecompose !== undefined) return afterRecompose
             // Recorded only after the swap committed: the log states what the
             // agent runs, and a rejected mount leaves the previous composition.
             agent.session.append('agent-preset/selected', { agentPreset: preset.id })
@@ -3776,5 +4029,30 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
       pending.resolve(payload.answer)
       return Promise.resolve({ accepted: true })
     },
+  }
+  return {
+    ...api,
+    // Only operations that read a process-local Session/Agent snapshot or
+    // mutate one are admitted to the generation fence. Host capabilities,
+    // workspace metadata, preset authoring, settings, credentials, and LLM
+    // catalogs have no process-local Agent owner and remain usable while a
+    // handoff drains; the request itself still sees its ordinary provider
+    // errors. The explicit lists keep this quiescence policy reviewable.
+    sessions: admitApiMethods(api.sessions, [
+      'list', 'search', 'create', 'history', 'models', 'selectModel', 'rename', 'fork',
+      'prompt', 'attachment', 'updateQueue', 'cancel',
+    ]),
+    subagents: admitApiMethods(api.subagents, ['list', 'history', 'prompt', 'interrupt']),
+    // host.restart is the explicit barrier entry itself; admitting it through
+    // the ordinary request fence would count the request as pre-handoff work
+    // and make restart wait on its own operation.
+    host: api.host,
+    workspace: api.workspace,
+    skills: admitApiMethods(api.skills, ['list']),
+    agentPresets: admitApiMethods(api.agentPresets, ['select']),
+    goals: admitApiMethods(api.goals, ['create', 'edit', 'pause', 'resume', 'complete', 'clear']),
+    settings: api.settings,
+    credentials: api.credentials,
+    llm: api.llm,
   }
 }

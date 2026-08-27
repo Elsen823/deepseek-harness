@@ -4,7 +4,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
-import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
+import type { AgentDriverId, WorkspaceConnectOptions, WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
 import type { ConversationSlotProps, InputZone } from '../contract/slots.ts'
 import { HeroGlow, HeroShell, WorkspaceChip, workspaceLabel } from './EmptyHero.tsx'
 import css from './ConversationRoot.module.css'
@@ -23,6 +23,7 @@ export function ConversationRoot({
   const inputState = useInput(s => s)
   const cwd = useSessions(s => sessionId === undefined ? undefined : s.byId[sessionId]?.cwd)
   const summaryBlank = useSessions(s => sessionId === undefined ? undefined : s.byId[sessionId]?.blank)
+  const sessionDriverId = useSessions(s => sessionId === undefined ? undefined : s.byId[sessionId]?.driverId)
   const workspaces = useWorkspaces(s => s)
   // A plugin this package cannot import (ui-model-selection) says this session cannot
   // send; its reason is already localized by whoever raised it.
@@ -30,6 +31,7 @@ export function ConversationRoot({
 
   const [pickerOpen, setPickerOpen] = useState(false)
   const [pendingWorkspaceId, setPendingWorkspaceId] = useState<WorkspaceId | undefined>()
+  const [pendingDriverId, setPendingDriverId] = useState<AgentDriverId | undefined>()
   const pickerAnchor = useRef<HTMLButtonElement>(null)
 
   // Publishes the seat's live height as --dsh-composer-height on the scroll
@@ -51,9 +53,11 @@ export function ConversationRoot({
   const sessionWorkspace = sessionId === undefined
     ? undefined
     : workspaces.items.find(workspace => workspace.sessionIds.includes(sessionId))
+  const sessionWorkspaceId = sessionWorkspace?.workspaceId
   const pendingWorkspace = workspaces.items.find(
     workspace => workspace.workspaceId === pendingWorkspaceId,
   )
+  const selectedDriverId = pendingDriverId ?? sessionDriverId
 
   // Clear the pending pick once the session lands in it, or when the picked
   // workspace disappears from a ready list (deleted from the sidebar).
@@ -64,6 +68,24 @@ export function ConversationRoot({
       setPendingWorkspaceId(undefined)
     }
   }, [pendingWorkspaceId, sessionWorkspace?.workspaceId, workspaces.phase, pendingWorkspace])
+
+  useEffect(() => {
+    if (pendingDriverId !== undefined && sessionDriverId === pendingDriverId) {
+      setPendingDriverId(undefined)
+    }
+  }, [pendingDriverId, sessionDriverId])
+
+  const selectDriver = useCallback(async (driverId: AgentDriverId): Promise<void> => {
+    const previous = pendingDriverId
+    setPendingDriverId(driverId)
+    if (sessionWorkspaceId === undefined) return
+    try {
+      await selectWorkspace(sessionWorkspaceId, { driverId })
+    } catch (error) {
+      setPendingDriverId(current => current === driverId ? previous : current)
+      throw error
+    }
+  }, [pendingDriverId, selectWorkspace, sessionWorkspaceId])
 
   // While a session is still replaying (loading + blank) the hero/docked
   // choice is unknowable — render the composer hidden instead of flashing
@@ -113,11 +135,18 @@ export function ConversationRoot({
         onPick: (workspaceId) => {
           setPickerOpen(false)
           setPendingWorkspaceId(workspaceId)
-          void selectWorkspace(workspaceId).catch(() => {
+          const options: WorkspaceConnectOptions | undefined = selectedDriverId === undefined
+            ? undefined
+            : { driverId: selectedDriverId }
+          void selectWorkspace(workspaceId, options).catch(() => {
             setPendingWorkspaceId(current => current === workspaceId ? undefined : current)
           })
         },
         onClose: () => { setPickerOpen(false) },
+      })}
+      {renderSlot('conversation.hero.agentDriver', {
+        ...(selectedDriverId === undefined ? {} : { selectedDriverId }),
+        selectDriver,
       })}
       {renderSlot('conversation.hero.agentPreset', {})}
     </div>

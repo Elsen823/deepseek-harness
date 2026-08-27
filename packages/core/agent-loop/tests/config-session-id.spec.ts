@@ -133,7 +133,7 @@ describe('config-driven session id', () => {
     await ctx.fiber.dispose()
   })
 
-  it('waits for a draining exact-id lifecycle during an overlapping reload', async () => {
+  it('rejects an overlapping Driver generation until the exact-id lifecycle drains', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-cfg-exact-overlap-'))
     dirs.push(root)
     const ctx = await makeCoreContext()
@@ -163,13 +163,14 @@ describe('config-driven session id', () => {
     expect(first.status).toBe('idle')
     const failures: unknown[] = []
     ctx.on('agent-loop/config-start-failed', ({ error }) => { failures.push(error) })
-    const secondLoop = await ctx.plugin(AgentLoop, config)
+    await expect(ctx.plugin(AgentLoop, config)).rejects.toThrow('agent driver "dsh" is already registered')
     await new Promise(resolve => setTimeout(resolve, 0))
     expect(ctx.agents.get(sessionId) === first).toBe(true)
     expect(failures).toEqual([])
 
     cleanupGate.resolve(undefined)
     await firstDisposal
+    const secondLoop = await ctx.plugin(AgentLoop, config)
     await expect.poll(() => ctx.agents.get(sessionId)).toBeDefined()
     const second = ctx.agents.get(sessionId) as Agent
     expect(second === first).toBe(false)
@@ -180,7 +181,7 @@ describe('config-driven session id', () => {
     await ctx.fiber.dispose()
   })
 
-  it('cancels an exact-id reload while the prior lifecycle is still draining', async () => {
+  it('does not start an exact-id reload when its overlapping Driver registration is rejected', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-cfg-exact-cancel-'))
     dirs.push(root)
     const ctx = await makeCoreContext()
@@ -205,8 +206,7 @@ describe('config-driven session id', () => {
     const firstDisposal = firstLoop.dispose()
     await cleanupStarted.promise
     expect(first.status).toBe('idle')
-    const secondLoop = await ctx.plugin(AgentLoop, config)
-    await secondLoop.dispose()
+    await expect(ctx.plugin(AgentLoop, config)).rejects.toThrow('agent driver "dsh" is already registered')
     expect(ctx.agents.get(sessionId) === first).toBe(true)
 
     cleanupGate.resolve(undefined)
@@ -403,7 +403,10 @@ describe('config-driven session id', () => {
     await ctx1.plugin(AgentLoop, { agents: [] })
     await ctx1.plugin(JsonlSessionPersistence, { root })
     ctx1.llm.registerAdapter(['mock'], new MockAdapter([textResponse('first')]))
-    const a1 = (await ctx1.agents.create({ sessionId: SessionId('sticky-1') })).agent
+    const a1 = (await ctx1.agents.create({
+      sessionId: SessionId('sticky-1'),
+      agentOptions: { provider: 'mock', model: 'mock' },
+    })).agent
     a1.followup(createUserMessage({ content: [{ type: 'text', text: 'remember me' }], source: { kind: 'user' } }))
     await waitForIdle(ctx1, a1)
     await ctx1.fiber.dispose()

@@ -32,6 +32,15 @@ export interface CmdlineArgs {
   get(): readonly string[]
 }
 
+/** Request an explicit process-generation restart through the launcher's controller. */
+export interface AppRestart {
+  /**
+   * Run the restart handoff and, after it commits, the ordinary process teardown.
+   * @param code - process completion code after teardown; defaults to zero.
+   */
+  (code?: number): Promise<void>
+}
+
 /** Request bounded process exit; the launcher wires it to its shutdown controller. */
 export interface AppExit {
   /**
@@ -47,6 +56,8 @@ declare module '@deepseek-ai/cordis' {
     cmdlineArgs?: CmdlineArgs
     /** Bounded process-exit request; provided by a launcher before the tree mounts. */
     appExit?: AppExit
+    /** Explicit process-generation restart; absent for embedders without restart control. */
+    appRestart?: AppRestart
   }
 }
 
@@ -56,6 +67,8 @@ export interface CmdlineHost {
   args: readonly string[]
   /** Bounded process-exit request. */
   exit: AppExit
+  /** Explicit process-generation restart; omitted by embedders without restart control. */
+  restart?: AppRestart
 }
 
 /**
@@ -69,6 +82,7 @@ export function provideCmdline(ctx: Context, host: CmdlineHost): void {
   const snapshot: readonly string[] = Object.freeze([...host.args])
   ctx.provide('cmdlineArgs', { get: () => snapshot })
   ctx.provide('appExit', host.exit)
+  if (host.restart !== undefined) ctx.provide('appRestart', host.restart)
 }
 
 /** The process streams commander output is written to; production writes to the process. */

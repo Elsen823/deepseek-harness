@@ -88,6 +88,8 @@ export class FakeApiClient implements IApiClient {
     () => Promise.resolve(ok({
       version: '0-fake', cwd: '/f', attachedSessions: 0, home: '/h', canOpenPath: true,
     }))
+  onRestart: (payload: unknown) => Promise<RpcResponse<{ accepted: true }>> =
+    () => Promise.resolve(ok({ accepted: true as const }))
   onPickDirectory: (payload: unknown) => Promise<RpcResponse<{ path: string | null }>> =
     () => Promise.resolve(ok({ path: null }))
   onOpenPath: (payload: unknown) => Promise<RpcResponse<{ opened: true }>> =
@@ -152,6 +154,7 @@ export class FakeApiClient implements IApiClient {
 
   readonly host: IApiClient['host'] = {
     describe: payload => this.record('host.describe', payload, this.onDescribe(payload)),
+    restart: payload => this.record('host.restart', payload, this.onRestart(payload)),
     pickDirectory: payload => this.record('host.pickDirectory', payload, this.onPickDirectory(payload)),
     listDirectory: payload => this.record('host.listDirectory', payload, this.onListDirectory(payload)),
     createDirectory: payload => this.record('host.createDirectory', payload, this.onCreateDirectory(payload)),

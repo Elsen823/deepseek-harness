@@ -10,8 +10,6 @@
 import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import { installModelSelection } from '@deepseek-ai/dsh-agent'
-import type { ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
@@ -112,10 +110,6 @@ async function run(ctx: Context, task: string, io: HeadlessIo): Promise<void> {
     sessionId: SessionId(`session-${randomUUID()}`),
     meta: { cwd: process.cwd() },
     agentOptions: { provider: selection.provider, model: selection.model },
-    setup: (agentCtx) => {
-      const selected: ModelSelectionRef = { current: selection, assembled: undefined }
-      installModelSelection(agentCtx, selected)
-    },
   })
   await agent.whenIdle()
   const firstSeq = agent.session.seq

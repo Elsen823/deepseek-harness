@@ -43,6 +43,7 @@ import { randomUuid } from './random-uuid.ts'
 import type { ClientConnectionRpc } from '../rpc.ts'
 
 const FIXTURE_DRIVER_ID = 'dsh' as AgentDriverId
+const CLAUDE_DRIVER_ID = 'claude' as AgentDriverId
 
 /** The fake carrier mints like a real one (business code never mints). */
 function rpcRequest<P>(payload: P): RpcRequest<P> {
@@ -358,7 +359,7 @@ function fixtureUsage(turn: number, step: number): TokenUsage {
 
 /** fx-alpha history script: 75 turns (~150+ messages -> 4 pages at PAGE_MESSAGES=50),
  *  mixing reasoning blocks / tool call+result / context. */
-function buildAlphaLog(): SessionEvent[] {
+function buildAlphaLog(modelIdentity = false, handoffIdentity = false): SessionEvent[] {
   const events: Record<string, unknown>[] = []
   let time = Date.now() - 3_600_000
   const push = (e: Record<string, unknown>): number => {
@@ -598,6 +599,41 @@ function buildAlphaLog(): SessionEvent[] {
   const callIndex = events.length - 4
   const callTime = events[callIndex]?.time as number
   events.splice(callIndex + 1, 0, { type: 'todo/write', time: callTime + 400, data: { todos: fixtureTodos } })
+  // Optional identity evidence stays in the tail page so the assembled
+  // snapshot can observe it without loading older history; the ordinary
+  // fixture transcript remains unchanged.
+  if (modelIdentity) {
+    push({
+      type: 'model/selected',
+      data: { provider: 'deepseek-official', model: 'deepseek-v4-flash', reasoningEffort: 'max', source: 'user' },
+    })
+    push({
+      type: 'request/header',
+      data: {
+        header: { config: { provider: 'deepseek-official', model: 'deepseek-v4-flash', reasoningEffort: 'high' } },
+        reason: 'initial',
+      },
+    })
+  }
+  if (handoffIdentity) {
+    push({
+      type: 'agent-driver/activation',
+      data: {
+        owner: FIXTURE_DRIVER_ID,
+        activationId: 'fixture-reconnect-activation',
+        phase: 'active',
+        provenance: {
+          kind: 'resumed',
+          nativeConversationId: 'fixture-native-thread-reconnected',
+        },
+        compatibility: {
+          runtime: 'fixture-host/1',
+          status: 'same',
+        },
+        driver: { kind: 'fixture/native-thread' },
+      },
+    })
+  }
   events.forEach((e, i) => { e.seq = i })
   return events as unknown as SessionEvent[]
 }
@@ -1453,6 +1489,12 @@ export interface FixtureOptions {
   dropSessionCreateResponse?: boolean
   /** Order of the two successful create frames. */
   createFrameOrder?: 'session-first' | 'workspace-first'
+  /** Seed DSH Selected/Effective evidence for the assembled identity snapshot. */
+  modelIdentity?: boolean
+  /** Seed a resumed native-thread identity for the assembled handoff snapshot. */
+  handoffIdentity?: boolean
+  /** Include the optional Claude Driver in the fixture catalog for opt-in browser coverage. */
+  claudeDriver?: boolean
 }
 
 /** Inbox pump shared by both stream generators (FrameQueue pattern: ONE abort listener hung
@@ -1532,7 +1574,10 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
     { sessionId: sid('fx-beta'), driverId: FIXTURE_DRIVER_ID, updatedAt: Date.now() - 60_000, running: false, blank: false, parentSessionId: sid('fx-alpha'), cwd: '/tmp/fixture' },
     { sessionId: sid('fx-gamma'), driverId: FIXTURE_DRIVER_ID, updatedAt: Date.now() - 120_000, running: false, blank: false, cwd: '/tmp/fixture' },
   ]
-  const logs = new Map<SessionId, SessionEvent[]>([[sid('fx-alpha'), buildAlphaLog()]])
+  const logs = new Map<SessionId, SessionEvent[]>([[
+    sid('fx-alpha'),
+    buildAlphaLog(options.modelIdentity === true, options.handoffIdentity === true),
+  ]])
   const modelSelections = new Map<SessionId, ModelSelection>(sessions.map(session => [
     session.sessionId,
     { provider: 'deepseek-official', model: 'deepseek-v4-flash' },
@@ -2270,7 +2315,10 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
     sessions: {
       drivers: request => ok(request, {
         defaultId: FIXTURE_DRIVER_ID,
-        items: [{ id: FIXTURE_DRIVER_ID, name: 'DeepSeek Harness' }],
+        items: [
+          { id: FIXTURE_DRIVER_ID, name: 'DeepSeek Harness' },
+          ...options.claudeDriver === true ? [{ id: CLAUDE_DRIVER_ID, name: 'Claude Code' }] : [],
+        ],
       }),
       list: request => ok(request, { items: [...sessions].sort((a, b) => b.updatedAt - a.updatedAt) }),
       search: (request, signal) => {
@@ -2657,6 +2705,7 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
       describe: request => ok(request, {
         version: '0.0.0-fixture', cwd: '/tmp/fixture', attachedSessions, home: FIXTURE_HOME, canOpenPath: true,
       }),
+      restart: request => ok(request, { accepted: true as const }),
       // Deterministic native pick: the keyless lanes drive the full
       // pick-then-adopt path without an OS chooser (design-mock content,
       // same tree the browse primitives serve).
@@ -3231,6 +3280,7 @@ export class FixtureApiClient extends AbstractApiClient {
       case 'subagent.prompt': return this.api.subagents.prompt(request, signal)
       case 'subagent.interrupt': return this.api.subagents.interrupt(request)
       case 'host.describe': return this.api.host.describe(request)
+      case 'host.restart': return this.api.host.restart(request)
       case 'host.pickDirectory': return this.api.host.pickDirectory(request, new AbortController().signal)
       case 'host.listDirectory': return this.api.host.listDirectory(request, new AbortController().signal)
       case 'host.createDirectory': return this.api.host.createDirectory(request)
@@ -3321,5 +3371,8 @@ function fixtureOptionsFromLocation(): FixtureOptions {
     failWorkspaceAttach: query.get('fixtureAttach') === 'fail',
     dropSessionCreateResponse: query.get('fixtureSessionCreate') === 'drop-response',
     createFrameOrder: query.get('fixtureFrames') === 'workspace-first' ? 'workspace-first' : 'session-first',
+    modelIdentity: query.get('fixtureModelIdentity') === '1',
+    handoffIdentity: query.get('fixtureHandoff') === '1',
+    claudeDriver: query.get('fixtureClaude') === '1',
   }
 }

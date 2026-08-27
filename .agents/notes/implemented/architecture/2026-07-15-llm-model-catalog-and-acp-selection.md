@@ -28,15 +28,15 @@ Catalog membership is advisory. It drives selectors and diagnostics but never ch
 
 ### Per-session selection in the front end
 
-A selection is owned by the front end that offers it (today the TUI `/model` selector), never by `LlmRuntime` or `AgentOptions`: those are deployment-wide or creation-wide objects, and mutating them would couple concurrent sessions. Each opaque choice carries the full provider/model pair, because the same model id may appear under multiple routes.
+The Agent-owned Session Model Selection lifecycle owns accepted choices; front ends such as TUI and Web only present and submit them. `LlmRuntime` and `AgentOptions` remain deployment-wide or creation-wide objects, and mutating them would couple concurrent Sessions. Each opaque choice carries the full provider/model pair, because the same model id may appear under multiple routes.
 
 The ACP automation transport is not a catalog consumer. Its deployment config supplies one optional provider/model target for newly created agents, and it advertises no model selector or configuration-option interface.
 
 ### Prompt/request consistency and durability
 
-`installModelSelection` (in `dsh-agent`) installs scoped `system-prompt/assemble` and `agent/request` listeners for a front-end-owned selection. Prompt assembly snapshots the selected pair once per step, overwrites the assembled `provider` and `model` variables after downstream prompt listeners, and the request listener applies that same snapshot after downstream request listeners. A selection during asynchronous assembly therefore starts on the next step rather than splitting prompt text from routing. Other call-config fields remain untouched.
+Each live Agent carries one Session-local Model Selection owner. A Driver captures and resolves one immutable selection at Turn start before prompt assembly or model I/O, and every request in that Turn uses the captured value. Prompt assembly and request middleware do not own or route Model Selection.
 
-The request header remains the durable source of truth. When a selection is actually used, the existing full `request/header` snapshot records it, and a front end initializes its selection from the folded last request header before falling back to creation options. A selection that is never used by a request is intentionally in-memory only because it never became model-visible state.
+The `model/selected` Session event records accepted intent even before a request consumes it. `request/header` and Driver model-request events remain effective request evidence; they are folded independently and never replace selected intent. A Session choice does not change the deployment default used by future Sessions.
 
 ## Alternatives considered
 
@@ -44,9 +44,9 @@ The request header remains the durable source of truth. When a selection is actu
 
 **Make catalogs mandatory whitelists.** This conflicts with the hand-written adapter's arbitrary model pass-through and private deployments. The selected adapter already owns authoritative request validation.
 
-**Store selection in `AgentOptions` or `LlmRuntime`.** Those are creation-wide or deployment-wide objects. Mutating them would couple concurrent sessions and bypass the logged `agent/request` replacement path.
+**Store selection in `AgentOptions` or `LlmRuntime`.** Those are creation-wide or deployment-wide objects. Mutating them would couple concurrent Sessions and bypass the Agent-owned Session lifecycle.
 
-**Persist a new model-selection session event immediately.** An unused UI selection has not affected a model request. Recording the existing request header when the target is consumed preserves the model-visible-if-and-only-if-logged rule without adding a second source of truth.
+**Use only the first request as the durable selection.** An accepted choice must survive a restart before its first request and remain distinct from effective request evidence. `model/selected` records intent, while `request/header` records consumption.
 
 ## Consequences
 
@@ -54,7 +54,7 @@ The request header remains the durable source of truth. When a selection is actu
 - Catalog consumers must treat absence as “not advertised,” never “invalid request.”
 - pi-ai adapters expose their installed provider catalogs; hand-written DeepSeek deployments list known choices explicitly and retain arbitrary model support.
 - Human-facing catalog consumers own their selection interaction. ACP uses its fixed deployment target and does not widen the protocol with model discovery.
-- Request headers remain compatible with the provider-routed session shape; no new JSONL event or format version is required.
+- The `model/selected` event records accepted intent without changing the Session format version; request headers remain effective provider-routed evidence.
 - A catalog read can be asynchronous, and every caller receives detached values.
 
 ## Testing
