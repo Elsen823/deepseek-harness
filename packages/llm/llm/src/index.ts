@@ -167,6 +167,12 @@ export interface PreparedLlmCall {
   /** Config fields materialized by the captured adapter rather than proposed by the caller. */
   readonly adapterDefaults: LlmCallConfigAdapterDefaults
   /**
+   * Create another one-shot attempt bound to the same adapter generation,
+   * resolved config, context, modalities, defaults, and retry policy.
+   * @returns a fresh attempt handle for retry execution.
+   */
+  nextAttempt(): PreparedLlmCall
+  /**
    * Dispatch this call once through the registration captured during
    * preparation. The request's call-config fields must match {@link config};
    * reuse or mismatch fails with `INVALID_PREPARED_CALL`.
@@ -904,34 +910,39 @@ export class LlmRuntime extends TypertRemoteService {
         ? { maxTokens: true }
         : {},
     })
-    let dispatched = false
-    return Object.freeze({
-      config: resolvedConfig,
-      retryPolicy: registration.retryPolicy,
-      adapterDefaults,
-      ...context === undefined ? {} : { context },
-      ...modelInfo.inputModalities === undefined
-        ? {}
-        : { inputModalities: Object.freeze([...modelInfo.inputModalities]) },
-      stream: (options: GenerateOptions): AsyncIterable<StreamChunk> => {
-        if (dispatched) {
-          throw new LlmError('a prepared LLM call can only be dispatched once', 'INVALID_PREPARED_CALL')
-        }
-        if (!callConfigEquals(options, resolvedConfig)) {
-          throw new LlmError(
-            'prepared LLM call config changed before adapter dispatch',
-            'INVALID_PREPARED_CALL',
-          )
-        }
-        dispatched = true
-        return this.streamWithRegistration(options, {
-          registration,
-          config: resolvedConfig,
-          modelInfo,
-          dispatch: options => adapterCall.stream(options),
-        })
-      },
-    })
+    const inputModalities = modelInfo.inputModalities === undefined
+      ? undefined
+      : Object.freeze([...modelInfo.inputModalities])
+    const createAttempt = (): PreparedLlmCall => {
+      let dispatched = false
+      return Object.freeze({
+        config: resolvedConfig,
+        retryPolicy: registration.retryPolicy,
+        adapterDefaults,
+        ...context === undefined ? {} : { context },
+        ...inputModalities === undefined ? {} : { inputModalities },
+        nextAttempt: createAttempt,
+        stream: (options: GenerateOptions): AsyncIterable<StreamChunk> => {
+          if (dispatched) {
+            throw new LlmError('a prepared LLM call can only be dispatched once', 'INVALID_PREPARED_CALL')
+          }
+          if (!callConfigEquals(options, resolvedConfig)) {
+            throw new LlmError(
+              'prepared LLM call config changed before adapter dispatch',
+              'INVALID_PREPARED_CALL',
+            )
+          }
+          dispatched = true
+          return this.streamWithRegistration(options, {
+            registration,
+            config: resolvedConfig,
+            modelInfo,
+            dispatch: options => adapterCall.stream(options),
+          })
+        },
+      })
+    }
+    return createAttempt()
   }
 
   private registration(provider: string): AdapterRegistration {

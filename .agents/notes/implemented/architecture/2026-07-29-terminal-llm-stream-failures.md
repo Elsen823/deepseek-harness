@@ -18,7 +18,7 @@ Retry policy had the same indirect ownership. It was discovered through the stre
 
 The adapter-owned catch ends before each yielded chunk. Errors from `llm/stream` middleware, nested calls, adapter cleanup, chunk consumers, logging, signal checks, and assembly remain thrown as defects or lifecycle failures; they never enter model-request recovery. A transport failure after partial deltas may leave blocks open, so the stream invariant permits open blocks only for terminal error or aborted finishes. No assistant message or tool call is assembled from that incomplete output.
 
-`PreparedLlmCall` exposes the immutable retry policy captured with its config and registration. One-shot reuse and config mismatch remain synchronous `INVALID_PREPARED_CALL` misuse errors. A route served entirely by `llm/stream` middleware has no prepared registration and therefore no serving policy.
+`PreparedLlmCall` exposes the immutable retry policy captured with its config and registration. Each handle remains one-shot and rejects reuse or config mismatch with synchronous `INVALID_PREPARED_CALL`; `nextAttempt()` creates a fresh one-shot handle bound to the same adapter generation, resolved config, context, modalities, defaults, and retry policy. A route served entirely by `llm/stream` middleware has no prepared registration and therefore no serving policy.
 
 The agent loop consumes one failure representation. It iterates and logs chunks without a classification catch, inspects the terminal finish, and passes its failure facts plus the prepared policy to `agent/request-error`. The public `isLlmAdapterFailure`, `llmFailureOf`, and `llmRetryPolicyOf` sidecar APIs are absent.
 
@@ -34,4 +34,4 @@ The agent loop consumes one failure representation. It iterates and logs chunks 
 
 ## Consequences
 
-All `LlmRuntime.stream()` consumers receive adapter operational failures through one typed terminal protocol, while programming and lifecycle failures retain ordinary exception semantics. Recovery gives up exact thrown-object identity and exposes only detached provider-neutral facts. The stream service owns slightly more adapter plumbing, but consumers delete catches that identify which adapter threw and delete stream-keyed metadata. Prepared calls carry their policy explicitly, and middleware-only routing remains visibly policy-free.
+All `LlmRuntime.stream()` consumers receive adapter operational failures through one typed terminal protocol, while programming and lifecycle failures retain ordinary exception semantics. Recovery gives up exact thrown-object identity and exposes only detached provider-neutral facts. The stream service owns slightly more adapter plumbing, but consumers delete catches that identify which adapter threw and delete stream-keyed metadata. Prepared calls carry their policy explicitly and can create repeat attempts without re-resolving mutable registration state; middleware-only routing remains visibly policy-free.

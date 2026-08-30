@@ -7,7 +7,7 @@
 import { describe, expect, it } from 'vitest'
 import { deepFreeze } from '@deepseek-ai/dsh-util-values'
 import { callConfigEquals, isAgentLoopRequest, markAgentLoopRequest } from '../src/call-config.ts'
-import { ReasoningEffortId } from '../src/brand.ts'
+import { ReasoningEffortId, ServiceTierId } from '../src/brand.ts'
 import type { GenerateOptions } from '../src/types.ts'
 
 describe('callConfigEquals', () => {
@@ -20,6 +20,11 @@ describe('callConfigEquals', () => {
     expect(callConfigEquals(
       { ...base, reasoningEffort: ReasoningEffortId('high') },
       { ...base, reasoningEffort: ReasoningEffortId('high') },
+    )).toBe(true)
+    expect(callConfigEquals({ ...base, serviceTier: ServiceTierId('priority') }, base)).toBe(false)
+    expect(callConfigEquals(
+      { ...base, serviceTier: ServiceTierId('priority') },
+      { ...base, serviceTier: ServiceTierId('priority') },
     )).toBe(true)
     expect(callConfigEquals({ ...base, temperature: 0.5 }, base)).toBe(false)
     expect(callConfigEquals({ ...base, maxTokens: 1 }, { ...base, maxTokens: 2 })).toBe(false)

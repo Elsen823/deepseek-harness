@@ -1,6 +1,6 @@
 import { describe, expect, expectTypeOf, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import { createUserMessage, ToolCallId, createMessage, createToolResultMessage, MessageId, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, ToolCallId, createMessage, createToolResultMessage, MessageId, ReasoningEffortId, ServiceTierId } from '@deepseek-ai/dsh-llm'
 import SessionStore, {
   adoptSessionEvent,
   SESSION_FORMAT_VERSION,
@@ -397,6 +397,34 @@ describe('Session', () => {
       config.reasoningEffort = reasoningEffort
       expect(() => Session.create(SessionId('invalid-reasoning-effort'), [invalid]))
         .toThrow('seed request/header at index 0 has an invalid reasoningEffort')
+    }
+  })
+
+  it('round-trips a non-empty service tier and rejects invalid durable values', () => {
+    const valid = {
+      type: 'request/header',
+      seq: 0,
+      time: 1,
+      data: {
+        header: {
+          config: {
+            provider: 'mock',
+            model: 'model',
+            serviceTier: ServiceTierId('adapter-owned'),
+          },
+        },
+        reason: 'initial',
+      },
+    } as const
+    expect(Session.create(SessionId('service-tier'), [valid]).events[0]).toEqual(valid)
+
+    for (const serviceTier of ['', 1]) {
+      const invalid = structuredClone(valid) as unknown as SessionEvent
+      if (invalid.type !== 'request/header') throw new Error('test fixture must be a request header')
+      const config = invalid.data.header.config as unknown as Record<string, unknown>
+      config.serviceTier = serviceTier
+      expect(() => Session.create(SessionId('invalid-service-tier'), [invalid]))
+        .toThrow('seed request/header at index 0 has an invalid serviceTier')
     }
   })
 

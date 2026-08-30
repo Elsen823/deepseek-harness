@@ -146,7 +146,7 @@ The request envelope — the `EpochHeader` (call config + markers for adapter-su
  * empty optional fields are absent.
  */
 interface EpochHeader {
-  /** The conversation's call configuration (provider, model, reasoning effort, and sampling scalars). */
+  /** The conversation's call configuration (provider, model, reasoning effort, service tier, and sampling scalars). */
   config: LlmCallConfig
   /** Effective config fields materialized from the exact adapter rather than proposed by a caller. */
   adapterDefaults?: LlmCallConfigAdapterDefaults
@@ -157,7 +157,7 @@ interface EpochHeader {
 }
 ```
 
-Canonical form represents an empty system prompt or tool list as an absent field, matching how requests are built. Legacy v0 logs containing the legacy `request/header-delta` event or its full-snapshot `fallback` reason are rejected at seed, append, and persistence-load boundaries rather than replayed incompletely.
+Canonical form represents an empty system prompt or tool list as an absent field, matching how requests are built. Persisted reasoning-effort and service-tier identifiers must be non-empty strings. Legacy v0 logs containing the legacy `request/header-delta` event or its full-snapshot `fallback` reason are rejected at seed, append, and persistence-load boundaries rather than replayed incompletely.
 
 ### The route capacity event: `request/context`
 

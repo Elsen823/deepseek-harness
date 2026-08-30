@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import LlmRuntime, { createUserMessage, LlmError, ReasoningEffortId  } from '@deepseek-ai/dsh-llm'
+import LlmRuntime, { createUserMessage, LlmError, ReasoningEffortId, ServiceTierId } from '@deepseek-ai/dsh-llm'
 import type { GenerateOptions, LlmModelReasoningInfo, LlmResolvedModelInfo, StreamChunk } from '@deepseek-ai/dsh-llm'
 import SessionStore, { Session, SessionId, foldRequestHeader } from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
@@ -709,7 +709,11 @@ describe('request stability across the loop', () => {
     await waitForIdle(ctx, agent)
     ctx.systemPrompt.section({ name: 'extra', order: 2, text: 'now with guidance' })
     ctx.on('agent/request', async (_payload, next) => ({
-      ...await next(), temperature: 0.5, maxTokens: 99, stop: ['<END>'],
+      ...await next(),
+      serviceTier: ServiceTierId('priority'),
+      temperature: 0.5,
+      maxTokens: 99,
+      stop: ['<END>'],
     }))
     send(agent, 'again')
     await waitForIdle(ctx, agent)
@@ -736,6 +740,7 @@ describe('request stability across the loop', () => {
       const header = foldRequestHeader(events.slice(0, firstChunk.seq))!
       expect(request.model).toBe(header.config.model)
       expect(request.reasoningEffort).toBe(header.config.reasoningEffort)
+      expect(request.serviceTier).toBe(header.config.serviceTier)
       expect(request.system).toEqual(header.system)
       expect(structuredClone(request.tools ?? [])).toEqual(structuredClone(header.tools ?? []))
       expect(request.temperature).toBe(header.config.temperature)

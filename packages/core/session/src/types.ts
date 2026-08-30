@@ -177,7 +177,7 @@ export type TurnEndReason = TurnEndReasonMap[keyof TurnEndReasonMap]
  * empty optional fields are absent.
  */
 export interface EpochHeader {
-  /** The conversation's call configuration (provider, model, reasoning effort, and sampling scalars). */
+  /** The conversation's call configuration (provider, model, reasoning effort, service tier, and sampling scalars). */
   config: LlmCallConfig
   /** Effective config fields materialized from the exact adapter rather than proposed by a caller. */
   adapterDefaults?: LlmCallConfigAdapterDefaults

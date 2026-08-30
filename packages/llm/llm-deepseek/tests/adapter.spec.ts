@@ -12,6 +12,7 @@ import LlmRuntime, { ToolCallId, createUserMessage,
   ProviderRequestId,
   QUOTA_EXCEEDED_CODE,
   ReasoningEffortId,
+  ServiceTierId,
   userAgent,
 } from '@deepseek-ai/dsh-llm'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
@@ -188,6 +189,19 @@ describe('request image policy', () => {
 })
 
 describe('DeepSeekAdapter against a mock server', () => {
+  it('rejects service tier before provider I/O', async () => {
+    const server = await mockServer([])
+    const adapter = adapterOf({ baseURL: server.url })
+
+    await expect(drain(adapter.stream({
+      provider: 'deepseek-official',
+      model: 'm',
+      messages: [],
+      serviceTier: ServiceTierId('priority'),
+    }))).rejects.toMatchObject({ code: 'UNSUPPORTED_OPTION' })
+    expect(server.requests).toEqual([])
+  })
+
   it('merges prepared extension fields and accepts them once after HTTP 2xx', async () => {
     const server = await mockServer([{ kind: 'sse', events: textEvents }])
     const accept = vi.fn()

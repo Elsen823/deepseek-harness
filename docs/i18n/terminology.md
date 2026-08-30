@@ -181,6 +181,7 @@
 | same-world subprocess | 与宿主共享文件系统和内核的子进程 | | 同世界子进程 | |
 | sandbox | 沙箱 | | | |
 | service | 服务 | | | |
+| service tier | 服务层 | | 服务层级 | 提供方为请求调度定义的延迟、配额或成本类别；代码标识 `ServiceTierId` 与协议字段 `service_tier` 保持原样 |
 | serving interface | 对外服务接口 | | | |
 | session | 会话 | | | |
 | session event | 会话事件 | | | |

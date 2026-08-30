@@ -866,6 +866,15 @@ describe('LlmRuntime', () => {
       messages: [],
     })).toThrow(expect.objectContaining({ code: 'INVALID_PREPARED_CALL' }))
 
+    const retryAttempt = prepared.nextAttempt()
+    expect(retryAttempt.config).toBe(prepared.config)
+    expect(retryAttempt.retryPolicy).toBe(prepared.retryPolicy)
+    expect(retryAttempt.adapterDefaults).toBe(prepared.adapterDefaults)
+    await collect(retryAttempt.stream({
+      ...retryAttempt.config,
+      messages: [],
+    }))
+
     const late = await ctx.llm.prepareCall({ provider: 'route', model: 'model' })
     const lateOptions = { ...late.config, messages: [] }
     const lateStream = late.stream(lateOptions)
@@ -928,14 +937,14 @@ describe('LlmRuntime', () => {
     const ctx = new Context()
     await ctx.plugin(LlmRuntime)
     let generation = 'first'
-    let dispatched: string | undefined
+    const dispatched: string[] = []
     const adapter = new class extends ScriptedAdapter {
       override prepareCall(provider: string, model: string) {
         const captured = generation
         return Promise.resolve({
           model: { provider, id: model, name: model, inputModalities: ['text'] as const },
           stream: (options: GenerateOptions) => {
-            dispatched = captured
+            dispatched.push(captured)
             return super.stream(options)
           },
         })
@@ -948,7 +957,8 @@ describe('LlmRuntime', () => {
     expect(prepared.inputModalities).toEqual(['text'])
     expect(Object.isFrozen(prepared.inputModalities)).toBe(true)
     await collect(prepared.stream({ ...prepared.config, messages: [] }))
-    expect(dispatched).toBe('first')
+    await collect(prepared.nextAttempt().stream({ ...prepared.config, messages: [] }))
+    expect(dispatched).toEqual(['first', 'first'])
   })
 
   it('projects historical images to stable text only after the loop-visible waterfall', async () => {

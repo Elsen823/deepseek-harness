@@ -62,3 +62,15 @@ export type ReasoningEffortId = Branded<'ReasoningEffortId'>
 export function ReasoningEffortId(id: string): ReasoningEffortId {
   return brandString<ReasoningEffortId>(id)
 }
+
+/** Adapter-owned identifier for one provider request service tier. */
+export type ServiceTierId = Branded<'ServiceTierId'>
+
+/**
+ * Brand an adapter-owned service-tier identifier.
+ * @param id - opaque identifier interpreted by the selected adapter.
+ * @returns the same string, branded; no validation is performed.
+ */
+export function ServiceTierId(id: string): ServiceTierId {
+  return id as ServiceTierId
+}

@@ -18,7 +18,7 @@ Status: implemented
 
 适配器所属的 catch 会在每个分片被 yield 前结束。来自 `llm/stream` middleware、嵌套调用、适配器清理、分片消费方、日志记录、signal 检查与组装的错误仍作为缺陷或生命周期失败抛出；它们绝不进入模型请求恢复。部分 delta 之后的传输失败可能留下未关闭块，因此流 invariant 只允许在终止 finish 的结束原因为 error 或 aborted 时存在未关闭块。不会从这些不完整输出组装 assistant 消息或工具调用。
 
-`PreparedLlmCall` 公开随其配置和注册捕获的不可变重试策略。一次性句柄复用与配置不匹配仍是同步的 `INVALID_PREPARED_CALL` 误用错误。完全由 `llm/stream` middleware 提供服务的路由没有准备完成的注册，因此也没有服务策略。
+`PreparedLlmCall` 公开随其配置和注册捕获的不可变重试策略。每个句柄仍是一次性的，复用或配置不匹配会以同步 `INVALID_PREPARED_CALL` 拒绝；`nextAttempt()` 会创建绑定到同一适配器代次、解析配置、上下文、模态、默认值与重试策略的新一次性句柄。完全由 `llm/stream` middleware 提供服务的路由没有准备完成的注册，因此也没有服务策略。
 
 agent loop 只消费一种失败表示。它不再使用分类 catch，而是直接迭代并记录分片、检查终止 finish，再把其中的失败事实与准备完成的策略传给 `agent/request-error`。公共的 `isLlmAdapterFailure`、`llmFailureOf` 和 `llmRetryPolicyOf` sidecar API 不再存在。
 
@@ -34,4 +34,4 @@ agent loop 只消费一种失败表示。它不再使用分类 catch，而是直
 
 ## Consequences
 
-所有 `LlmRuntime.stream()` 消费方都通过一种带类型的终止协议接收适配器运行失败，而编程与生命周期失败保留普通异常语义。恢复放弃精确抛出对象身份，只暴露与原对象分离的提供方无关事实。流服务承担略多的适配器处理工作，但消费方删除了用于判断哪个适配器抛出异常的 catch，也删除了以流为键的元数据。准备完成的调用显式携带策略，而完全由 middleware 提供服务的路由仍明确没有策略。
+所有 `LlmRuntime.stream()` 消费方都通过一种带类型的终止协议接收适配器运行失败，而编程与生命周期失败保留普通异常语义。恢复放弃精确抛出对象身份，只暴露与原对象分离的提供方无关事实。流服务承担略多的适配器处理工作，但消费方删除了用于判断哪个适配器抛出异常的 catch，也删除了以流为键的元数据。准备完成的调用显式携带策略，并可在不重新解析可变注册状态的情况下创建重复尝试；完全由 middleware 提供服务的路由仍明确没有策略。

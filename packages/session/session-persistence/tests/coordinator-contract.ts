@@ -706,22 +706,21 @@ export function runCoordinatorContract(name: string, makeFixture: () => Promise<
             .rejects.toThrow('lacks an identified message')
         }
 
-        // An out-of-repo event type passes only with the envelope's ignorable
-        // marker (unknown-type refusal otherwise), and its non-object data is
-        // not message-validated.
-        const pluginId = SessionId('non-object-plugin-event')
-        await ctx.sessionPersistence.create(meta(pluginId, WORK))
-        await ctx.sessionPersistence.append(pluginId, [{
-          type: 'plugin/test',
+        // A known log-only event with non-object data is not a legacy message
+        // candidate; both whole-log and seek reads preserve it unchanged.
+        const primitiveId = SessionId('non-object-log-only-event')
+        const primitive = {
+          type: 'session/end-seed',
           seq: 0,
           time: 1,
           data: null,
-          ignorable: true,
-        } as unknown as SessionEvent])
-        await expect(ctx.sessionPersistence.inspect(pluginId))
-          .resolves.toMatchObject({ events: [{ type: 'plugin/test', data: null, ignorable: true }] })
-        await expect(ctx.sessionPersistence.readFrom(pluginId, 0))
-          .resolves.toMatchObject({ events: [{ type: 'plugin/test', data: null, ignorable: true }] })
+        } as unknown as SessionEvent
+        await ctx.sessionPersistence.create(meta(primitiveId, WORK))
+        await ctx.sessionPersistence.append(primitiveId, [primitive])
+        await expect(ctx.sessionPersistence.inspect(primitiveId))
+          .resolves.toMatchObject({ events: [primitive] })
+        await expect(ctx.sessionPersistence.readFrom(primitiveId, 0))
+          .resolves.toMatchObject({ events: [primitive] })
 
         for (const type of ['user/message', 'assistant/message'] as const) {
           const missingContentId = SessionId(`invalid-${type}-without-content`)
@@ -1357,7 +1356,7 @@ export function runCoordinatorContract(name: string, makeFixture: () => Promise<
       }
     })
 
-    it('rejects an unknown event type on load unless the event is marked ignorable', async () => {
+    it('requires an active registration for required plugin events and accepts ignorable ones', async () => {
       const fix = await makeFixture()
       const { ctx, fiber } = await freshCtx(fix)
       try {
@@ -1369,16 +1368,32 @@ export function runCoordinatorContract(name: string, makeFixture: () => Promise<
         ])
         const failure = await ctx.sessionPersistence.load(required.id).then(() => undefined, (error: unknown) => error as Error)
         expect(failure?.name).toBe('SessionFormatUnsupportedError')
-        expect(failure?.message).toMatch(/event type "future\/event".*not marked ignorable/)
+        expect(failure?.message).toMatch(/required event type "future\/event".*not registered/)
 
-        const skippable = meta('unknown-ignorable', WORK)
-        await ctx.sessionPersistence.create(skippable)
-        await ctx.sessionPersistence.append(skippable.id, [
+        const registrationOwner = await ctx.plugin(Object.assign((inner: Context) => {
+          inner.sessions.registerEventType('future/event' as never)
+        }, { inject: ['sessions'] }))
+        const registered = await ctx.sessionPersistence.load(required.id)
+        expect((registered.events as readonly { readonly type: string }[])
+          .some(event => event.type === 'future/event')).toBe(true)
+        await registrationOwner.dispose()
+        await expect(ctx.sessionPersistence.load(required.id)).rejects.toMatchObject({
+          name: 'SessionFormatUnsupportedError',
+        })
+
+        const ignorable = meta('unknown-ignorable', WORK)
+        await ctx.sessionPersistence.create(ignorable)
+        await ctx.sessionPersistence.append(ignorable.id, [
           ...oneTurnLog(),
-          { type: 'future/event', seq: oneTurnLog().length, time: 99, data: { payload: 1 }, ignorable: true } as unknown as SessionEvent,
+          {
+            type: 'optional/activity', seq: oneTurnLog().length, time: 100,
+            data: { payload: 2 }, ignorable: true,
+          } as unknown as SessionEvent,
         ])
-        const loaded = await ctx.sessionPersistence.load(skippable.id)
-        expect(loaded.events.some(event => (event.type as string) === 'future/event')).toBe(true)
+        const loadedIgnorable = await ctx.sessionPersistence.load(ignorable.id)
+        expect((loadedIgnorable.events as readonly { readonly type: string; readonly ignorable?: boolean }[]).some(event => (
+          event.type === 'optional/activity' && event.ignorable === true
+        ))).toBe(true)
       } finally {
         await fiber.dispose()
         await fix.cleanup()
