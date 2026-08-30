@@ -228,6 +228,7 @@ export const EVENT_WALK_EXEMPTIONS: Record<string, string> = {
   'slash/input-insert-text': 'client-face slash-input protocol — packages/client/ui-input-trigger/README.md owns the API',
   'slots/changed': 'client-face slot invalidation signal — packages/client/ui-renderer/README.md owns the API',
   'theme/change': 'client-face theme switch signal — packages/client/ui-theme/README.md owns the API',
+  'ui-subagent/catalog-filter': 'client-face subagent catalog projection waterfall — packages/client/ui-subagent/README.md owns the API',
 }
 
 /**
@@ -240,6 +241,7 @@ export const LINK_MAP: Readonly<Record<string, string>> = {
   Agent: 'core.md',
   AgentCancelCause: 'core.md',
   AgentFactory: 'core.md',
+  AgentFactoryRequest: 'core.md',
   AgentHandle: 'core.md',
   ModelSelection: 'core.md',
   AllowedModelRoute: 'subagent.md',
@@ -312,6 +314,7 @@ export const LINK_MAP: Readonly<Record<string, string>> = {
   SessionCreateRequest: 'session.md',
   SessionCreateValue: 'session.md',
   SessionEvent: 'session.md',
+  SessionEventType: 'session.md',
   SessionFollowFrame: 'session.md',
   SessionFollowRequest: 'session.md',
   SessionForkRequest: 'session.md',

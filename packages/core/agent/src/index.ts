@@ -38,6 +38,21 @@ declare module '@deepseek-ai/cordis' {
      */
     agent?: Agent
   }
+
+  interface Events {
+    /**
+     * Global agent-construction interception. A listener may return an
+     * alternate handle or call `next()` to delegate to the registered default
+     * factory.
+     * @param request - create/resume operation, its caller context, and original options.
+     * @param next - delegate to the next interceptor or the default factory.
+     * @mode waterfall
+     */
+    'agent/factory'(
+      request: AgentFactoryRequest,
+      next: () => Promise<AgentHandle>,
+    ): Promise<AgentHandle>
+  }
 }
 
 /**
@@ -203,6 +218,25 @@ export interface AgentFactory {
    */
   resume(ownerCtx: Context, options: ResumeAgentOptions): Promise<AgentHandle>
 }
+
+/** One request routed through the global `agent/factory` waterfall. */
+export type AgentFactoryRequest =
+  | {
+    /** Create a fresh Session and Agent. */
+    readonly kind: 'create'
+    /** Caller-bound context that owns the complete returned lifecycle. */
+    readonly ownerCtx: Context
+    /** Original options passed to {@link AgentRegistry.create}. */
+    readonly options: CreateAgentOptions
+  }
+  | {
+    /** Resume a persisted Session as an Agent. */
+    readonly kind: 'resume'
+    /** Caller-bound context that owns load and the complete returned lifecycle. */
+    readonly ownerCtx: Context
+    /** Original options passed to {@link AgentRegistry.resume}. */
+    readonly options: ResumeAgentOptions
+  }
 
 /** Thrown when create/resume is called before an agent factory is registered. */
 const NO_FACTORY_MESSAGE = 'no agent factory registered (load an agent-loop plugin)'
@@ -379,10 +413,22 @@ export class AgentRegistry extends Service {
     return dispose
   }
 
-  /** Return the active creation factory. */
+  /** Return the active default creation factory. */
   private requireFactory(): FactorySlot {
     if (this.factory === undefined) throw new Error(NO_FACTORY_MESSAGE)
     return this.factory
+  }
+
+  /** Invoke the registered default factory for one waterfall request. */
+  private invokeDefaultFactory(request: AgentFactoryRequest): Promise<AgentHandle> {
+    const { target } = this.requireFactory()
+    const receiver = getTraceable(request.ownerCtx, target)
+    if (request.kind === 'create') {
+      // oxlint-disable-next-line typescript/unbound-method -- Reflect.apply intentionally supplies the caller-traced receiver
+      return Reflect.apply(target.createAgent, receiver, [request.ownerCtx, request.options])
+    }
+    // oxlint-disable-next-line typescript/unbound-method -- Reflect.apply intentionally supplies the caller-traced receiver
+    return Reflect.apply(target.resume, receiver, [request.ownerCtx, request.options])
   }
 
   /**
@@ -396,14 +442,12 @@ export class AgentRegistry extends Service {
    */
   async create(options: CreateAgentOptions): Promise<AgentHandle> {
     const ownerCtx = this.ctx
-    // Re-trace a Service-backed factory through the accessing context
-    // explicitly. This preserves AgentLoop's dependency origin while binding
-    // its effects to ownerCtx; plain factories receive ownerCtx as an explicit
-    // capability and need no Cordis tracker magic.
-    const { target } = this.requireFactory()
-    const receiver = getTraceable(ownerCtx, target)
-    // oxlint-disable-next-line typescript/unbound-method -- Reflect.apply intentionally supplies the caller-traced receiver
-    return Reflect.apply(target.createAgent, receiver, [ownerCtx, options])
+    const request: AgentFactoryRequest = { kind: 'create', ownerCtx, options }
+    return this.ctx.waterfall(
+      'agent/factory',
+      request,
+      () => this.invokeDefaultFactory(request),
+    )
   }
 
   /**
@@ -415,10 +459,12 @@ export class AgentRegistry extends Service {
    */
   async resume(options: ResumeAgentOptions): Promise<AgentHandle> {
     const ownerCtx = this.ctx
-    const { target } = this.requireFactory()
-    const receiver = getTraceable(ownerCtx, target)
-    // oxlint-disable-next-line typescript/unbound-method -- Reflect.apply intentionally supplies the caller-traced receiver
-    return Reflect.apply(target.resume, receiver, [ownerCtx, options])
+    const request: AgentFactoryRequest = { kind: 'resume', ownerCtx, options }
+    return this.ctx.waterfall(
+      'agent/factory',
+      request,
+      () => this.invokeDefaultFactory(request),
+    )
   }
 
   /**

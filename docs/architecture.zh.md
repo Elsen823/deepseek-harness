@@ -12,6 +12,8 @@
 
 不存在需要打补丁的特权内核：扩展 dsh 的方式是把插件挂载到其他插件旁边，而各项注册都是副作用，会在其插件卸载时撤销。
 
+共享包为必须跨越应用树的扩展公开了几个窄拦截点：`agent/factory` 可以替换所选主 agent 的构造，`ctx.sessions.registerEventType()` 接纳读取时必需的外部持久事件，浏览器侧 `ui-subagent/catalog-filter` 则在不修改保留状态的前提下投影 subagent 导航。这些扩展点把部署行为留在插件中，同时保留一个默认 loop、一种 Session 格式和一个权威客户端存储。
+
 ## Profile 与组合包
 
 运行中的 `dsh` 是一棵插件树，由启动时按序叠加的各层组合而成。
@@ -68,8 +70,10 @@ Python SDK 遵循相同的应用架构。其运行时 wheel 把普通 `dsh` CLI 
 事件就是扩展点，而选对事件域是大多数改动的第一个决定。
 
 - **会话事件**是追加到日志并通过 `session/event` 广播的持久事实。当某个事实必须在重新加载后仍然存在时，使用它。
-- **Agent 事件**（`agent/*`）携带活跃 `Agent`：inbox、步骤、状态、请求、验证、续跑。要观察或拦截进行中的工作时，使用它。
+- **Agent 事件**（`agent/*`）通常携带活跃 `Agent`：inbox、步骤、状态、请求、验证、续跑。要观察或拦截进行中的工作时，使用它。全局 `agent/factory` waterfall 是刻意保留的预构造例外，因为此时尚不存在 Agent。
 - **能力事件**无需导入循环即可向某个 seam（`fs/*`、`tools/*`、`telemetry/*`）附加策略和适配器。
+
+外部持久事件默认在读取时必需：其插件在活跃期间注册事件名，注册缺席时持久化会拒绝该 Session。只有当某个观察事件缺失也不会改变重建结果时，writer 才能持久化 `ignorable: true`。`agent/factory` 是默认工厂之前的异步 waterfall；监听器要么返回自己的 `AgentHandle`，要么调用 `next()`。
 
 [事件映射](event-producer-consumer.zh.md)列出每个事件的生产方与消费方。
 

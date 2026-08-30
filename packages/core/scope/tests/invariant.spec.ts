@@ -21,7 +21,7 @@ function emit(ctx: Context, receiver: object | undefined, event: string, args: u
 }
 
 describe('scoped-dispatch invariants', () => {
-  type AgentEventName = Extract<keyof Events, `agent/${string}`>
+  type AgentEventName = Exclude<Extract<keyof Events, `agent/${string}`>, 'agent/factory'>
   type EventArgs<K extends keyof Events> = Events[K] extends (...args: infer Args) => unknown ? Args : never
 
   it('ignores ordinary events and rejects a scoped dispatch without a carrier', async () => {
@@ -30,6 +30,18 @@ describe('scoped-dispatch invariants', () => {
     const agent = { id: 'a1' }
     expect(() => { emit(ctx, undefined, 'agent/error', [{ agent, turn: 1, step: 0, error: new Error('x') }]) })
       .toThrow(/dispatched without a scope carrier/)
+  })
+
+  it('treats the pre-construction agent factory waterfall as global', async () => {
+    const ctx = await setup()
+    const request = {
+      kind: 'create',
+      ownerCtx: ctx,
+      options: { sessionId: 'factory-session' },
+    }
+    expect(() => {
+      emit(ctx, undefined, 'agent/factory', [request, () => Promise.resolve(undefined)])
+    }).not.toThrow()
   })
 
   it('checks every generated subject resolver against the carrier key', async () => {

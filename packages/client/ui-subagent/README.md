@@ -31,6 +31,10 @@ The session header keeps the current session title as the lineage breadcrumb and
 
 Rows display mode plus `running`/`inactive` activity and an optional log-backed title; the trailing column stacks total durable provider usage above active-turn duration. Keyboard navigation works with ArrowRight/ArrowLeft to expand and collapse branches and ArrowUp/ArrowDown, Home, End, and Escape to navigate or close the tree. An unlabeled one-shot row falls back to its session id; corrupt, unsupported, or unavailable rows remain readable but disabled.
 
+### Filter a catalog presentation
+
+Browser plugins can synchronously wrap `ui-subagent/catalog-filter` to project which retained descendants the header presents. The input contains the root and optional current Session ids, the controller's retained catalogs and summaries, and one shared wall-clock sample. A listener either calls `next()` to compose with the next filter or returns coherent projected catalogs, summaries, and descendant totals; `nextExpirationAt` requests a future recomputation when time alone can change the projection. The default returns the complete retained catalog, and filtering never mutates controller state or deletes durable Sessions.
+
 ### Continuing a conversation
 
 A continuable child with a live parent keeps the ordinary input chrome: typing and Send stay available while the child runs because every follow-up joins the child's FIFO inbox, and an independent Stop routes through `subagents/interruptByParent`. A continuable child whose exact parent is unavailable and which is not running elects a read-only composer explaining the recovery path; while such a child still runs, the selector yields to the ordinary composer with input and Send disabled but its independent Stop usable.
@@ -47,7 +51,7 @@ The `@` source remains deliberately separate and inert: candidates are zero-RPC 
 <details>
 <summary>Implementation internals — click to expand</summary>
 
-The catalog and composer behavior are specified by the [Web subagent conversations note](../../../.agents/notes/implemented/feature/2026-07-27-web-subagent-conversations.md) and the [current-turn interrupt note](../../../.agents/notes/implemented/feature/2026-08-06-continuable-subagent-interrupt.md).
+The catalog and composer behavior are specified by the [Web subagent conversations note](../../../.agents/notes/implemented/feature/2026-07-27-web-subagent-conversations.md), the [catalog filter note](../../../.agents/notes/implemented/architecture/2026-08-30-subagent-catalog-filter.md), and the [current-turn interrupt note](../../../.agents/notes/implemented/feature/2026-08-06-continuable-subagent-interrupt.md).
 
 ### Catalog derivation
 

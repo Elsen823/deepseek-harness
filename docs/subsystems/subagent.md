@@ -8,6 +8,8 @@ Service Definition: [dsh-subagent](../../packages/subagent/subagent) (`ctx.subag
 
 Sources: [`packages/subagent/subagent/src/types.ts`](../../packages/subagent/subagent/src/types.ts), [`packages/subagent/subagent/src/index.ts`](../../packages/subagent/subagent/src/index.ts), and [`packages/subagent/subagent/src/continuation.ts`](../../packages/subagent/subagent/src/continuation.ts)
 
+The Web catalog is a client presentation over this durable discovery data, not part of the provider seam. Browser plugins wrap the synchronous `ui-subagent/catalog-filter` waterfall to return coherent catalogs, summaries, descendant totals, and an optional future expiration time; the default presents the complete retained lineage. The projection never mutates Session Controller state or deletes Sessions. See the [client package](../../packages/client/ui-subagent) and [catalog-filter decision](../../.agents/notes/implemented/architecture/2026-08-30-subagent-catalog-filter.md).
+
 ## Two kinds of capability, discovered two ways
 
 A provider advertises its **start-time** features on a static descriptor the service checks BEFORE a one-shot run exists; a request that needs one the provider lacks is rejected loud (`SubagentError('UNSUPPORTED_CAPABILITY')`), never accepted-then-ignored. Those flags describe only the one-shot [`start()`](#the-provider-contract-subagentprovider) path, where the provider composes the child. **Continuable** children are composed by the continuation manager itself, so they are gated by one optional method whose presence IS the capability, with TS narrowing as the discovery mechanism: [`SubagentProvider.prepareContinuable`](#the-provider-contract-subagentprovider).

@@ -360,11 +360,20 @@ export type SurfaceOp =
   | 'append'
   | { op: 'replace'; start: number; end: number }
 
+/** Envelope fields accepted by {@link Session.append} for every event type. */
+export interface SessionAppendOptions {
+  /**
+   * Marks an informational event as safe for a reader to ignore when its
+   * declaring plugin is absent. Required plugin state leaves this field absent.
+   */
+  ignorable?: true
+}
+
 /**
  * Surface placement and cited source-event seqs for {@link Session.append}. Required on
  * message-producing events and forbidden on log-only events.
  */
-export interface SurfaceIntent {
+export interface SurfaceIntent extends SessionAppendOptions {
   surfaceOp: SurfaceOp
   /**
    * Complete set of known source-event seqs. `assistant/message` may use a
@@ -405,6 +414,8 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
      * on purely informational records whose loss cannot affect reconstruction;
      * defaulting to required means a forgotten marker over-refuses (an
      * inconvenience) rather than silently resuming a gutted session.
+     * Plugin-owned informational events use this marker when their declaring
+     * plugin may be absent.
      */
     ignorable?: true
   } & (K extends SurfaceEventType ? {

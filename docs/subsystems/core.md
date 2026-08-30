@@ -48,7 +48,7 @@ interface AgentHandle {
 
 `CreateAgentOptions` carries the shared identity and everything a fresh agent needs before publication: session metadata (`meta` — validated `cwd`, fork lineage, seed boundary, origin classification, delegation depth), an optional `seed` replay prefix for forks, per-agent `AgentOptions`, a creation-only cancellation `signal`, and `setup`. `ResumeAgentOptions` is the persisted-identity counterpart: `resumeSessionId`, `agentOptions`, `signal`, and `setup`. The `setup` callback (`AgentSetup`) composes the agent's scoped world while both ids are still unpublished — everything registered through `agentCtx` exists before `agent/created` and the first prompt assembly — and may return a synchronous commit invoked immediately before publication; a setup rejection, commit throw, or owner disposal rolls the transaction back without publishing either id.
 
-`AgentFactory` is the creation interface behind the registry: the loop registers its factory via `ctx.agents.setFactory()`, so consumers use `ctx.agents` without depending on the concrete loop package. The exact `create`/`resume` signatures and rollback contracts are in the [generated section](#ctxagents--agentregistry) below.
+`AgentFactory` is the default creation interface behind the registry: the loop registers its factory via `ctx.agents.setFactory()`, so consumers use `ctx.agents` without depending on the concrete loop package. Before that default runs, both operations traverse the global asynchronous [`agent/factory`](#agentfactory--waterfall) waterfall with a discriminated `AgentFactoryRequest`, the original options, and the caller-owned context. A listener may return an alternate lifecycle-owning handle or call `next()`; no default factory is required when an interceptor handles the request. The exact `create`/`resume` signatures and rollback contracts are in the [generated section](#ctxagents--agentregistry) below.
 
 ## The agent handle
 
@@ -872,6 +872,26 @@ A step or turn errored. The machine reports a failure here even when the error h
 Types: [Scoped](scope.md)
 
 Source: [`packages/core/agent/src/runtime-types.ts`](../../packages/core/agent/src/runtime-types.ts)
+
+<a id="agentfactory--waterfall"></a>
+
+#### `agent/factory` — waterfall
+
+Global agent-construction interception. A listener may return an alternate handle or call `next()` to delegate to the registered default factory.
+
+```ts cordis-catalog
+/**
+ * Global agent-construction interception. A listener may return an
+ * alternate handle or call `next()` to delegate to the registered default
+ * factory.
+ * @param request - create/resume operation, its caller context, and original options.
+ * @param next - delegate to the next interceptor or the default factory.
+ * @mode waterfall
+ */
+'agent/factory'( request: AgentFactoryRequest, next: () => Promise<AgentHandle>, ): Promise<AgentHandle>
+```
+
+Source: [`packages/core/agent/src/index.ts`](../../packages/core/agent/src/index.ts)
 
 <a id="agentinboxclaimed--emit"></a>
 

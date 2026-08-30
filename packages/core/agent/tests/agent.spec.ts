@@ -395,6 +395,48 @@ describe('AgentRegistry factory seam', () => {
     expect(calls.resume[0]?.ownerCtx.fiber).toBe(callerFiber)
   })
 
+  it('routes create and resume through the global waterfall with original options', async () => {
+    const ctx = new Context()
+    await ctx.plugin(AgentRegistry)
+    const { factory, calls } = stubFactory()
+    ctx.agents.setFactory(factory)
+    const seen: Array<{ kind: 'create' | 'resume'; options: object; fiber: Context['fiber'] }> = []
+    ctx.on('agent/factory', (request, next) => {
+      seen.push({ kind: request.kind, options: request.options, fiber: request.ownerCtx.fiber })
+      return next()
+    })
+    const createOptions: CreateAgentOptions = { sessionId: SessionId('waterfall-create') }
+    const resumeOptions: ResumeAgentOptions = { resumeSessionId: SessionId('waterfall-resume') }
+    let callerFiber: Context['fiber'] | undefined
+
+    await ctx.plugin(Object.assign(async (inner: Context) => {
+      callerFiber = inner.fiber
+      await inner.agents.create(createOptions)
+      await inner.agents.resume(resumeOptions)
+    }, { inject: ['agents'] }))
+
+    expect(seen).toEqual([
+      { kind: 'create', options: createOptions, fiber: callerFiber },
+      { kind: 'resume', options: resumeOptions, fiber: callerFiber },
+    ])
+    expect(calls.create).toHaveLength(1)
+    expect(calls.resume).toHaveLength(1)
+  })
+
+  it('lets an alternate factory short-circuit selected requests without a default', async () => {
+    const ctx = new Context()
+    await ctx.plugin(AgentRegistry)
+    const alternate = stubAgent('alternate')
+    ctx.on('agent/factory', (request, next) => request.kind === 'create'
+      ? Promise.resolve({ agent: alternate, dispose: () => Promise.resolve() })
+      : next())
+
+    const handle = await ctx.agents.create({ sessionId: SessionId('ignored-by-alternate') })
+    expect(handle.agent).toBe(alternate)
+    await expect(ctx.agents.resume({ resumeSessionId: SessionId('needs-default') }))
+      .rejects.toThrow(/no agent factory/)
+  })
+
   it('rejects a second factory and clears the slot with its owner (HMR)', async () => {
     const ctx = new Context()
     await ctx.plugin(AgentRegistry)

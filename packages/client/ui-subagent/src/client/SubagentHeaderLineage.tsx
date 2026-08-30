@@ -16,13 +16,16 @@ import { NS } from './locales.ts'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-token-meter/client'
 import css from './SubagentHeaderLineage.module.css'
-import { indexSubagentDescendants } from './subagent-lineage.ts'
+import type {
+  SubagentCatalogFilterInput, SubagentCatalogFilterResult,
+} from './catalog-filter.ts'
 
 type CatalogEntry = SubagentCatalogSnapshot['entries'][number]
 type Catalogs = SessionListState['subagentsByParent']
 
 /** Business actions supplied by the slot registration. */
 export interface SubagentCatalogInjected {
+  filterCatalog: (input: SubagentCatalogFilterInput) => SubagentCatalogFilterResult
   openChild: (address: SubagentAddress) => void
   refresh: (parentSessionId: SessionId) => void
   setCatalogOpen: (parentSessionId: SessionId, open: boolean) => void
@@ -465,6 +468,7 @@ type CatalogDropdownProps = CatalogDropdownSharedProps & (
 )
 
 const MENU_VIEWPORT_MARGIN = 16
+const MAX_PORTABLE_TIMER_DELAY_MS = 2_147_483_647
 
 /** Place a portaled catalog below its trigger without crossing the viewport edge. */
 function catalogMenuPosition(trigger: HTMLButtonElement): CSSProperties {
@@ -482,12 +486,11 @@ function catalogMenuPosition(trigger: HTMLButtonElement): CSSProperties {
 /** One trigger-plus-tree dropdown over the catalog rooted at `rootSessionId`. */
 function CatalogDropdown({
   rootSessionId, currentSessionId, displayTitle, openTitle, variant, separator = false,
-  useSessions, openChild, refresh, setCatalogOpen, t,
+  useSessions, filterCatalog, openChild, refresh, setCatalogOpen, t,
 }: CatalogDropdownProps) {
   const ancestorSwitcher = variant === 'switcher' && openTitle !== undefined
-  const catalogs = useSessions(state => state.subagentsByParent)
-  const summaries = useSessions(state => state.byId)
-  const catalog = catalogs[rootSessionId]
+  const retainedCatalogs = useSessions(state => state.subagentsByParent)
+  const retainedSummaries = useSessions(state => state.byId)
   const [open, setOpen] = useState(false)
   const [menuPosition, setMenuPosition] = useState<CSSProperties>()
   const [now, setNow] = useState(() => Date.now())
@@ -500,6 +503,17 @@ function CatalogDropdown({
   const observedCatalogs = useRef(new Set<SessionId>())
   const setCatalogOpenRef = useRef(setCatalogOpen)
   setCatalogOpenRef.current = setCatalogOpen
+  const presentation = useMemo(() => filterCatalog({
+    rootSessionId,
+    ...(currentSessionId === undefined ? {} : { currentSessionId }),
+    catalogs: retainedCatalogs,
+    summaries: retainedSummaries,
+    now,
+  }), [currentSessionId, filterCatalog, now, retainedCatalogs, retainedSummaries, rootSessionId])
+  const catalogs = presentation.catalogs
+  const summaries = presentation.summaries
+  const catalog = catalogs[rootSessionId]
+  const retainedCatalog = retainedCatalogs[rootSessionId]
   const currentEntry = currentSessionId === undefined
     ? undefined
     : catalog?.entries.find(entry => entry.kind === 'child' && entry.id === currentSessionId)
@@ -507,10 +521,7 @@ function CatalogDropdown({
     ? currentEntry.label ?? currentEntry.id
     : displayTitle
   const healthy = catalog?.entries.filter(entry => entry.kind === 'child') ?? []
-  const descendants = useMemo(
-    () => indexSubagentDescendants(summaries).get(rootSessionId) ?? NO_DESCENDANTS,
-    [rootSessionId, summaries],
-  )
+  const descendants = presentation.descendants.get(rootSessionId) ?? NO_DESCENDANTS
   // The catalog can arrive before the session-list baseline; never undercount
   // the already-visible direct rows during that short bootstrap window.
   const descendantCount = Math.max(healthy.length, descendants.count)
@@ -519,7 +530,8 @@ function CatalogDropdown({
   // Session summaries can announce membership before the descriptor-backed catalog catches up.
   // Keep that entry point visible through disabled loading rows; only catalog rows are navigable.
   const summaryBackedLoading = (descendants.count > 0 || variant === 'switcher')
-    && (catalog === undefined || (catalog.state === 'ready' && catalog.entries.length === 0))
+    && (retainedCatalog === undefined
+      || (retainedCatalog.state === 'ready' && retainedCatalog.entries.length === 0))
   const presentedCatalog: SubagentCatalogSnapshot | undefined = summaryBackedLoading
     ? {
       entries: [],
@@ -654,6 +666,30 @@ function CatalogDropdown({
     const timer = setInterval(() => { setNow(Date.now()) }, 1_000)
     return () => { clearInterval(timer) }
   }, [open, descendants.runningCount])
+
+  useEffect(() => {
+    const expirationAt = presentation.nextExpirationAt
+    if (expirationAt === undefined) return
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const schedule = (): void => {
+      const delay = Math.min(
+        MAX_PORTABLE_TIMER_DELAY_MS,
+        Math.max(0, expirationAt - Date.now()),
+      )
+      timer = setTimeout(() => {
+        const current = Date.now()
+        if (current < expirationAt) {
+          schedule()
+          return
+        }
+        setNow(current)
+      }, delay)
+    }
+    schedule()
+    return () => {
+      if (timer !== undefined) clearTimeout(timer)
+    }
+  }, [presentation.nextExpirationAt])
 
   useEffect(() => () => {
     cancelHoverOpen()
@@ -802,13 +838,13 @@ function CatalogDropdown({
  */
 export function SubagentHeaderLineage({
   lineageSessionId, displayTitle, openTitle,
-  useSessions, openChild, refresh, setCatalogOpen, t,
+  useSessions, filterCatalog, openChild, refresh, setCatalogOpen, t,
 }: SubagentHeaderLineageProps) {
   const parentId = useSessions((state) => {
     const summary = state.byId[lineageSessionId]
     return summary?.origin === 'subagent' ? summary.parentId : undefined
   })
-  const shared = { useSessions, openChild, refresh, setCatalogOpen, t }
+  const shared = { useSessions, filterCatalog, openChild, refresh, setCatalogOpen, t }
   if (parentId === undefined) {
     return (
       <CatalogDropdown

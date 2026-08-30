@@ -31,6 +31,10 @@ kind: "package-reference"
 
 行显示 mode、`running`/`inactive` 活动状态与由日志支撑的可选 title；尾随列在上行显示提供方的持久化 token 用量总计，在下行显示活跃轮次耗时。键盘导航：ArrowRight/ArrowLeft 展开和折叠分支；ArrowUp/ArrowDown、Home、End 与 Escape 用于导航或关闭树。没有 label 的 one-shot 行回退到其会话 id；损坏、不受支持或不可用的行仍保持可读但禁用。
 
+### 过滤目录呈现
+
+浏览器插件可以同步包装 `ui-subagent/catalog-filter`，投影页头要呈现哪些已保留后代。输入包含根 Session id、可选的当前 Session id、controller 保留的目录与摘要，以及一个共享时钟样本。监听器可以调用 `next()` 与下一个过滤器组合，也可以返回彼此一致的投影目录、摘要和后代总数；仅由时间推进即可改变投影时，`nextExpirationAt` 请求在未来重新计算。默认结果返回完整保留目录，过滤既不修改 controller 状态，也不删除持久 Session。
+
 ### 续接对话
 
 确切 parent 存活时，可继续 child 保留普通输入 chrome：child 运行期间输入和 Send 保持可用，因为每条后续消息都会进入 child 的 FIFO inbox，而独立的 Stop 经由 `subagents/interruptByParent` 路由。确切 parent 不可用且 child 未在运行的可继续 child 会选用说明恢复路径的只读编辑器；此类 child 仍在运行期间，selector 会让位给普通编辑器——输入区与 Send 被禁用，但独立的 Stop 保持可用。
@@ -47,7 +51,7 @@ kind: "package-reference"
 <details>
 <summary>实现细节——点击展开</summary>
 
-目录与编辑器行为由 [Web subagent 对话笔记](../../../.agents/notes/implemented/feature/2026-07-27-web-subagent-conversations.zh.md) 与[当前轮次中断笔记](../../../.agents/notes/implemented/feature/2026-08-06-continuable-subagent-interrupt.zh.md) 规定。
+目录与编辑器行为由 [Web subagent 对话笔记](../../../.agents/notes/implemented/feature/2026-07-27-web-subagent-conversations.zh.md)、[目录过滤器笔记](../../../.agents/notes/implemented/architecture/2026-08-30-subagent-catalog-filter.zh.md)与[当前轮次中断笔记](../../../.agents/notes/implemented/feature/2026-08-06-continuable-subagent-interrupt.zh.md)规定。
 
 ### 目录派生
 

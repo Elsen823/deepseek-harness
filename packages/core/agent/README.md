@@ -42,6 +42,8 @@ await handle.dispose()   // stops the loop, unregisters, removes the session, un
 
 `AgentOptions` supplies the initial provider/model route, optional adapter-owned `reasoningEffort`, and optional positive `maxTokens` output cap. The loop validates exact-model reasoning support, resolves adapter defaults, records the effective values in the request header, and applies them to each conversation request. An optional `setup(agentCtx)` callback composes the agent's scoped world before it is published — scoped tools, prompt sections, and listeners exist before any creation announcement. Setup is composition-only: drive the agent only after creation resolves.
 
+Every `create()` and `resume()` first traverses the global asynchronous `agent/factory` waterfall with the original options and caller-owned context. A listener can return an alternate `AgentHandle` to own that lifecycle or call `next()` to delegate; the final continuation invokes the sole registered default factory. This lets an external main driver replace construction for selected sessions without adding a driver discriminator to every Session header or depending on `dsh-agent-loop`.
+
 ### Drive an agent's conversation
 
 The handle's methods route identified user-role messages into the agent's inbox. `followup()` queues an ordinary next-turn prompt and wakes the driver; `steer()` submits next-step input and wakes it; `inject()` adds model-facing context without waking the driver, so it lands in the next admitted step. `cancel(cause)` aborts the active activity and, unless `keepInbox` is set, clears pending work; `whenIdle()` resolves after the whole agent reaches quiescence.
@@ -78,7 +80,7 @@ This section explains how the package realizes the behavior above; the observabl
 
 ### Design concept
 
-The package is built on one separation: the public `Agent` surface and registry live here, while construction and driving live in the loop package behind a registered factory. Consumers therefore depend on `dsh-agent` and never on `dsh-agent-loop`, keeping the driver swappable. The second idea is the initiator scope: an `AsyncLocalStorage` chain that carries the exact live `Agent` through the asynchronous driver work it starts, so helpers below a driver can attribute their work without forwarding the agent through every call.
+The package is built on one separation: the public `Agent` surface and registry live here, while construction and driving live behind the `agent/factory` waterfall and a registered default factory. Consumers therefore depend on `dsh-agent` and never on `dsh-agent-loop`; a deployment can intercept selected creation requests while the shipped loop remains the fallback. The second idea is the initiator scope: an `AsyncLocalStorage` chain that carries the exact live `Agent` through the asynchronous driver work it starts, so helpers below a driver can attribute their work without forwarding the agent through every call.
 
 ### Step admission
 

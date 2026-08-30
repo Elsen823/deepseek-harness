@@ -1,10 +1,22 @@
 import { describe, expect, it } from 'vitest'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { indexSubagentDescendants } from '../src/client/subagent-lineage.ts'
+import { completeSubagentCatalog } from '../src/client/catalog-filter.ts'
 
 const sid = (id: string): SessionId => id as SessionId
 
 describe('UI Subagent descendant projection', () => {
+  it('defaults the catalog filter to the complete retained presentation', () => {
+    const root = sid('root')
+    const child = { id: sid('child'), parentId: root, origin: 'subagent' as const, running: true }
+    const catalogs = {} as never
+    const summaries = { [child.id]: child } as never
+    const result = completeSubagentCatalog({ rootSessionId: root, catalogs, summaries, now: 1 })
+    expect(result.catalogs).toBe(catalogs)
+    expect(result.summaries).toBe(summaries)
+    expect(result.descendants.get(root)).toEqual({ count: 1, runningCount: 1 })
+  })
+
   it('counts nested running descendants and stops at ordinary forks', () => {
     const owner = { id: sid('owner'), running: false }
     const child = { id: sid('child'), parentId: owner.id, origin: 'subagent' as const, running: false }

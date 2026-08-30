@@ -12,6 +12,8 @@ We recommend using an agent to explore the codebase and understand its architect
 
 There is no privileged core to patch: you extend dsh by mounting a plugin beside the others, and registrations are effects that unwind when their plugin unloads.
 
+The shared packages expose narrow interception points for extensions that must cross an application tree: `agent/factory` can replace selected main-agent construction, `ctx.sessions.registerEventType()` admits required external durable events, and the browser-side `ui-subagent/catalog-filter` projects subagent navigation without modifying retained state. These points keep deployment behavior in plugins while preserving one default loop, one Session format, and one authoritative client store.
+
 ## Profiles and bundles
 
 A running `dsh` is a plugin tree composed at boot from ordered layers.
@@ -66,8 +68,10 @@ Here are some core packages that contribute to the Cordis tree.
 Events are the extension points, and picking the right domain is the first decision in most changes.
 
 - **Session events** are durable facts appended to the log and broadcast through `session/event`. Use one when the fact must survive a reload.
-- **Agent events** (`agent/*`) carry a live `Agent`: inbox, step, status, request, validation, continuation. Use one to observe or intercept work in flight.
+- **Agent events** (`agent/*`) normally carry a live `Agent`: inbox, step, status, request, validation, continuation. Use one to observe or intercept work in flight. The global `agent/factory` waterfall is the deliberate pre-construction exception because no Agent exists yet.
 - **Capability events** attach policy and adapters to a seam (`fs/*`, `tools/*`, `telemetry/*`) without importing the loop.
+
+An external durable event is required-on-read by default: its plugin registers the event name while active, and persistence refuses the Session if that registration is absent. A writer may persist `ignorable: true` only for an observational event whose absence cannot change reconstruction. `agent/factory` is an asynchronous waterfall before the default factory; a listener returns its own `AgentHandle` or calls `next()`.
 
 The [event map](event-producer-consumer.md) lists every event's producers and consumers.
 

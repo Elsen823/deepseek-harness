@@ -11,6 +11,11 @@ import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import { en, NS, zh, type SubagentKey } from './locales.ts'
+import {
+  completeSubagentCatalog,
+  type SubagentCatalogFilterInput,
+  type SubagentCatalogFilterResult,
+} from './catalog-filter.ts'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
@@ -25,6 +30,10 @@ export type {
 export type {
   SubagentReadOnlyComposerProps, SubagentReadOnlyMatch,
 } from './SubagentReadOnlyComposer.tsx'
+export type {
+  SubagentCatalogFilterInput, SubagentCatalogFilterResult,
+} from './catalog-filter.ts'
+export { completeSubagentCatalog } from './catalog-filter.ts'
 
 /** Required services for conversation slots and session navigation. */
 export const inject = ['sessions', 'slots', 'locale']
@@ -52,6 +61,13 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-subagent: dictionaries')
   const sessions = ctx.sessions
   const catalogActions = (_parentSessionId: SessionId): SubagentCatalogInjected => ({
+    filterCatalog(input: SubagentCatalogFilterInput): SubagentCatalogFilterResult {
+      return ctx.waterfall(
+        'ui-subagent/catalog-filter',
+        input,
+        () => completeSubagentCatalog(input),
+      )
+    },
     openChild(address: SubagentAddress) {
       sessions.openSubagent(address)
     },

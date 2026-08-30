@@ -106,6 +106,18 @@ describe('apply', () => {
     actions.openChild(address)
     actions.refresh(sid('parent'))
     actions.setCatalogOpen(sid('parent'), true)
+    const retainedCatalogs = {} as SessionListState['subagentsByParent']
+    const retainedSummaries = {} as Record<SessionId, SessionSummary>
+    ctx.on('ui-subagent/catalog-filter', (input, next) => ({
+      ...next(),
+      nextExpirationAt: input.now + 10,
+    }))
+    const complete = actions.filterCatalog({
+      rootSessionId: sid('parent'), catalogs: retainedCatalogs, summaries: retainedSummaries, now: 1,
+    })
+    expect(complete.catalogs).toBe(retainedCatalogs)
+    expect(complete.summaries).toBe(retainedSummaries)
+    expect(complete.nextExpirationAt).toBe(11)
     expect(face.actionCalls).toEqual([
       { method: 'openSubagent', args: [address] },
       { method: 'refreshSubagents', args: [sid('parent')] },

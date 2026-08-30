@@ -11,6 +11,7 @@ import {
 } from '../src/client/SubagentHeaderLineage.tsx'
 import { SubagentReadOnlyComposer } from '../src/client/SubagentReadOnlyComposer.tsx'
 import { zh } from '../src/client/locales.ts'
+import { completeSubagentCatalog } from '../src/client/catalog-filter.ts'
 
 afterEach(() => {
   cleanup()
@@ -71,6 +72,7 @@ function props(
   return {
     sessionId: PARENT,
     useSessions,
+    filterCatalog: completeSubagentCatalog,
     openChild: vi.fn(),
     refresh: vi.fn(),
     setCatalogOpen: vi.fn(),
@@ -99,6 +101,38 @@ function hoverCatalog(trigger: HTMLElement): void {
 }
 
 describe('SubagentHeaderLineage', () => {
+  it('recomputes at the catalog filter expiration and clears its timer on disposal', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(1_000)
+    const base = props(catalog())
+    const filterCatalog = vi.fn((input: Parameters<typeof completeSubagentCatalog>[0]) => ({
+      ...completeSubagentCatalog(input),
+      ...(input.now < 1_500 ? { nextExpirationAt: 1_500 } : {}),
+    }))
+    const view = render(
+      <SubagentHeaderLineage {...base} filterCatalog={filterCatalog} />,
+    )
+
+    expect(filterCatalog).toHaveBeenCalledTimes(1)
+    expect(filterCatalog.mock.lastCall?.[0].now).toBe(1_000)
+    await act(async () => { await vi.advanceTimersByTimeAsync(499) })
+    expect(filterCatalog).toHaveBeenCalledTimes(1)
+    await act(async () => { await vi.advanceTimersByTimeAsync(1) })
+    expect(filterCatalog).toHaveBeenCalledTimes(2)
+    expect(filterCatalog.mock.lastCall?.[0].now).toBe(1_500)
+
+    const pendingFilter = (input: Parameters<typeof completeSubagentCatalog>[0]) => ({
+      ...completeSubagentCatalog(input),
+      nextExpirationAt: 2_500,
+    })
+    view.rerender(
+      <SubagentHeaderLineage {...base} filterCatalog={pendingFilter} />,
+    )
+    expect(vi.getTimerCount()).toBe(1)
+    view.unmount()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
   it('aggregates live descendant activity onto the closed trigger', () => {
     const summaries: Record<SessionId, SessionSummary> = {
       [CHILD]: {

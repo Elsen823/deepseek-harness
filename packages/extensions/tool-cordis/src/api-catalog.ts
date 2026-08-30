@@ -1776,6 +1776,18 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     description: 'In-memory session store (`ctx.sessions`).\n\nPersistence is intentionally not implemented here — persistence plugins subscribe to `session/event` and flush on `session/flush` / dispose.',
     methods: [
       {
+        signature: 'registerEventType(type: SessionEventType): () => void',
+        description: 'Register one plugin-owned durable event type for the calling fiber. Persistence accepts required events of this type only while the registration is active; removal makes future reconstruction fail loud.',
+        parameters: [{ name: 'type', description: 'merge-extended {@link SessionEventMap} key owned by the plugin.' }],
+        returns: 'the exact Cordis effect disposer that removes the registration.',
+      },
+      {
+        signature: 'isEventTypeRegistered(type: string): boolean',
+        description: 'Return whether the active composition can reconstruct an event type.',
+        parameters: [{ name: 'type', description: 'stored event type to test.' }],
+        returns: '`true` for generated first-party types or active plugin registrations.',
+      },
+      {
         signature: 'create(id?: SessionId, options?: CreateSessionOptions): Session',
         description: 'Create a session owned by the calling fiber: disposing that fiber stops event notification and removes the session from the store. `options.seed` populates the session with a copy of those events (replay/fork); `options.meta` attaches creation metadata (validated absolute `cwd`, seed and parent lineage, and delegation depth) as the immutable SessionHeader (the store fills `version`/`id`/`createdAt`).\n\nFor an agent whose session must be torn down IN ORDER with its loop (so the loop\'s final events are published before the store attachment ends), do NOT use this — fold the session lifecycle into the agent\'s own effect via prepare + enter + announce (see `dsh-agent-loop`\'s creation transaction).',
         parameters: [{ name: 'id', description: 'the session id; omitted, the store mints `session-<n>`.' }, { name: 'options', description: 'seed events and/or creation metadata for the header.' }],
@@ -2928,6 +2940,14 @@ export const EVENT_API: readonly EventApiEntry[] = [
     parameters: [{ name: 'payload', description: '.error - the failure, verbatim. Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent.' }],
   },
   {
+    name: 'agent/factory',
+    mode: 'waterfall',
+    signature: '\'agent/factory\'( request: AgentFactoryRequest, next: () => Promise<AgentHandle>, ): Promise<AgentHandle>',
+    summary: 'Global agent-construction interception.',
+    description: 'Global agent-construction interception. A listener may return an alternate handle or call `next()` to delegate to the registered default factory.',
+    parameters: [{ name: 'request', description: 'create/resume operation, its caller context, and original options.' }, { name: 'next', description: 'delegate to the next interceptor or the default factory.' }],
+  },
+  {
     name: 'agent/inbox/claimed',
     mode: 'emit',
     signature: '\'agent/inbox/claimed\'(this: Scoped<Agent>, payload: { agent: Agent; message: UserMessage; turn: number }): void',
@@ -3426,6 +3446,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'AgentFactory',
     declaration: 'export interface AgentFactory {\n    createAgent(ownerCtx: Context, options: CreateAgentOptions): Promise<AgentHandle>;\n    resume(ownerCtx: Context, options: ResumeAgentOptions): Promise<AgentHandle>;\n}',
+  },
+  {
+    name: 'AgentFactoryRequest',
+    declaration: 'export type AgentFactoryRequest = {\n    readonly kind: \'create\';\n    readonly ownerCtx: Context;\n    readonly options: CreateAgentOptions;\n} | {\n    readonly kind: \'resume\';\n    readonly ownerCtx: Context;\n    readonly options: ResumeAgentOptions;\n};',
   },
   {
     name: 'AgentHandle',
@@ -4809,11 +4833,15 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'Session',
-    declaration: 'export class Session {\n    get surface(): SessionSurface;\n    readonly header: SessionHeader;\n    get id(): SessionId;\n    readonly firstLiveSeq: number;\n    static create(id: SessionId, seed?: readonly SessionEvent[], header?: SessionHeader): Session;\n    static fromRestore(id: SessionId, seed: readonly SessionEvent[], header: SessionHeader): Session;\n    get events(): readonly SessionEvent[];\n    get seq(): number;\n    append<T extends SessionEventType>(type: T, data: SessionEventMap[T], ...opts: T extends SurfaceEventType ? [\n        opts: SurfaceIntent\n    ] : [\n    ]): SessionEvent<T>;\n    requestHeader(): EpochHeader | undefined;\n    requestContext(): RequestContext | undefined;\n    deriveMessages(): Message[];\n    deriveEventMessage(event: SessionEvent): Message | null;\n}',
+    declaration: 'export class Session {\n    get surface(): SessionSurface;\n    readonly header: SessionHeader;\n    get id(): SessionId;\n    readonly firstLiveSeq: number;\n    static create(id: SessionId, seed?: readonly SessionEvent[], header?: SessionHeader): Session;\n    static fromRestore(id: SessionId, seed: readonly SessionEvent[], header: SessionHeader): Session;\n    get events(): readonly SessionEvent[];\n    get seq(): number;\n    append<T extends SessionEventType>(type: T, data: SessionEventMap[T], ...opts: T extends SurfaceEventType ? [\n        opts: SurfaceIntent\n    ] : [\n        opts?: SessionAppendOptions\n    ]): SessionEvent<T>;\n    requestHeader(): EpochHeader | undefined;\n    requestContext(): RequestContext | undefined;\n    deriveMessages(): Message[];\n    deriveEventMessage(event: SessionEvent): Message | null;\n}',
   },
   {
     name: 'SessionAddress',
     declaration: 'export type SessionAddress = {\n    readonly kind: \'session\';\n    readonly sessionId: SessionId;\n} | {\n    readonly kind: \'subagent\';\n    readonly parentSessionId: SessionId;\n    readonly childSessionId: SessionId;\n    readonly mode: \'one-shot\' | \'continuable\';\n};',
+  },
+  {
+    name: 'SessionAppendOptions',
+    declaration: 'export interface SessionAppendOptions {\n    ignorable?: true;\n}',
   },
   {
     name: 'SessionAttachmentRequest',
@@ -5569,7 +5597,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SurfaceIntent',
-    declaration: 'export interface SurfaceIntent {\n    surfaceOp: SurfaceOp;\n    sourceEventSeqs?: number[];\n}',
+    declaration: 'export interface SurfaceIntent extends SessionAppendOptions {\n    surfaceOp: SurfaceOp;\n    sourceEventSeqs?: number[];\n}',
   },
   {
     name: 'SurfaceOp',

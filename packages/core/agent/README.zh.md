@@ -42,6 +42,8 @@ await handle.dispose()   // stops the loop, unregisters, removes the session, un
 
 `AgentOptions` 提供初始 provider/model 路由、可选的适配器所有 `reasoningEffort`，以及可选的正数 `maxTokens` 输出上限。循环会校验确切模型的推理支持、解析适配器默认值、把有效值记录在请求头中，并将它们应用到每个对话请求。可选的 `setup(agentCtx)` 回调会在 agent 发布之前组合其作用域世界——作用域工具、提示词段与监听器在任何创建公告之前就已存在。Setup 只做组合：创建完成后才能驱动 agent。
 
+每次 `create()` 与 `resume()` 都会先携带原始选项和调用方所有的上下文，遍历全局异步 `agent/factory` waterfall。监听器可以返回替代 `AgentHandle` 并拥有该生命周期，也可以调用 `next()` 继续委托；最终 continuation 会调用唯一注册的默认工厂。这样，外部主驱动器无需在每个 Session header 中加入驱动器判别字段，也无需依赖 `dsh-agent-loop`，即可替换所选会话的构造过程。
+
 ### 驱动 agent 的对话
 
 句柄的方法把带标识的 user 角色消息路由进 agent 的收件箱。`followup()` 排队一条普通的下一个轮次提示词并唤醒驱动器；`steer()` 提交下一步输入并唤醒它；`inject()` 添加面向模型的上下文但不唤醒驱动器，因此它落在下一个被接纳的步骤中。`cancel(cause)` 中止当前活动，并在未设置 `keepInbox` 时清除待处理工作；`whenIdle()` 在整个 agent 达到完全停稳后兑现。
@@ -78,7 +80,7 @@ await handle.agent.whenIdle()
 
 ### 设计理念
 
-该包建立在一个分离之上：公开的 `Agent` 表面与注册表在此处，而构造与驱动位于循环包中、注册工厂之后。消费方因此依赖 `dsh-agent` 而从不依赖 `dsh-agent-loop`，驱动器保持可替换。第二个理念是发起方作用域：一条 `AsyncLocalStorage` 链把确切的实时 `Agent` 携带经过它启动的异步驱动器工作，使驱动器之下的辅助函数无需逐调用转发 agent 即可归因自己的工作。
+该包建立在一个分离之上：公开的 `Agent` 表面与注册表位于此处，而构造与驱动位于 `agent/factory` waterfall 和已注册默认工厂之后。消费方因此依赖 `dsh-agent` 而从不依赖 `dsh-agent-loop`；部署可以拦截所选创建请求，同时保留随附 loop 作为回退。第二个理念是发起方作用域：一条 `AsyncLocalStorage` 链把确切的实时 `Agent` 携带经过它启动的异步驱动器工作，使驱动器之下的辅助函数无需逐调用转发 agent 即可归因自己的工作。
 
 ### 步骤准入
 

@@ -8,6 +8,8 @@ Service Definition：[dsh-subagent](../../packages/subagent/subagent)（`ctx.sub
 
 源码：[`packages/subagent/subagent/src/types.ts`](../../packages/subagent/subagent/src/types.ts)、[`packages/subagent/subagent/src/index.ts`](../../packages/subagent/subagent/src/index.ts)和 [`packages/subagent/subagent/src/continuation.ts`](../../packages/subagent/subagent/src/continuation.ts)
 
+Web 目录是这一持久发现数据之上的客户端呈现，不属于提供方 seam。浏览器插件包装同步 `ui-subagent/catalog-filter` waterfall，返回彼此一致的目录、摘要、后代总数与可选的未来过期时间；默认呈现完整保留谱系。该投影绝不修改 Session Controller 状态，也不删除 Session。参见[客户端包](../../packages/client/ui-subagent)与[目录过滤器决策](../../.agents/notes/implemented/architecture/2026-08-30-subagent-catalog-filter.zh.md)。
+
 ## 两类能力，两种发现方式
 
 提供方通过一个静态描述符公布其**启动时**功能，服务会在单次 run 存在之前即行检查；如果请求依赖提供方不具备的功能，会被明确拒绝（`SubagentError('UNSUPPORTED_CAPABILITY')`），绝不会被接受后静默忽略。这些 flag 仅描述单次 [`start()`](#the-provider-contract-subagentprovider) 路径，即由提供方组合子 agent 的路径。**可继续**子 agent 由继续执行管理器自行组合，因此它们由唯一一个可选方法把关，方法存在即为能力，并以 TypeScript 的类型收窄作为发现机制：[`SubagentProvider.prepareContinuable`](#the-provider-contract-subagentprovider)。

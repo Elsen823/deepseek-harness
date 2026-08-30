@@ -7,17 +7,15 @@
 
 /**
  * Every `SessionEventMap` member declared in this repository — the event
- * vocabulary this build understands. The persistence read path refuses to
- * interpret a log containing a type outside this set unless the event
- * carries the envelope's `ignorable` marker (see `SessionEvent.ignorable`
- * in `./types.ts`): such a log was likely written by a newer harness, and
- * silently skipping a required event would reconstruct a wrong session.
+ * static vocabulary this build understands. The persistence read path also
+ * accepts event types registered through `ctx.sessions.registerEventType()`
+ * and unregistered events carrying `ignorable: true`; every other type
+ * refuses reconstruction because silently skipping a required event could
+ * reconstruct a wrong session.
  * Downstream (out-of-repo) plugin events are outside this list by
- * construction. The persisted `SessionEvent.ignorable` marker is the
- * compatibility mechanism; event-name registration was rejected because
- * it does not classify omission safety and would make reads
- * composition-dependent. The rationale is in
- * `.agents/notes/implemented/architecture/2026-08-30-retain-ignorable-external-session-events.md`.
+ * construction and use the runtime registration surface instead. The
+ * persisted `SessionEvent.ignorable` marker is the omission-safety marker;
+ * see `SessionEvent.ignorable` in `./types.ts`.
  */
 export const KNOWN_SESSION_EVENT_TYPES: ReadonlySet<string> = new Set([
   'agent-preset/selected',

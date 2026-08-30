@@ -15,10 +15,11 @@ import type { Scoped } from '@deepseek-ai/dsh-scope'
 import type { Message } from '@deepseek-ai/dsh-llm'
 import { SESSION_FORMAT_VERSION } from './types.ts'
 import type { TypertLookup } from '@deepseek-ai/dsh-typert-protocol'
-import type { CreateSessionOptions, EpochHeader, PrepareSessionOptions, RequestContext, SessionEvent, SessionEventMap, SessionEventType, SessionHeader, SessionId, SurfaceIntent, SurfaceEventType } from './types.ts'
+import type { CreateSessionOptions, EpochHeader, PrepareSessionOptions, RequestContext, SessionAppendOptions, SessionEvent, SessionEventMap, SessionEventType, SessionHeader, SessionId, SurfaceIntent, SurfaceEventType } from './types.ts'
 import { deriveEventMessage, SurfaceManager } from './surface.ts'
 import type { SessionSurface } from './surface.ts'
 import { foldRequestHeader } from './request-header.ts'
+import { KNOWN_SESSION_EVENT_TYPES } from './known-event-types.ts'
 
 export * from './types.ts'
 export { SessionPreparation } from './preparation.ts'
@@ -30,7 +31,7 @@ export type { ChunkRow, StorageRecord } from './chunk-rows.ts'
 export type { SessionSurface, SurfaceFoldReplacement, SurfaceFoldResult } from './surface.ts'
 export { deriveEventMessage, foldSurface, isAppendSurfaceEvent, isReplacementSurfaceEvent, isSurfaceEvent, isSurfaceEligibleType } from './surface.ts'
 export { canonicalHeader, foldRequestHeader, headerEquals } from './request-header.ts'
-export { KNOWN_SESSION_EVENT_TYPES } from './known-event-types.ts'
+export { KNOWN_SESSION_EVENT_TYPES }
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -574,9 +575,11 @@ export class Session {
    *
    * @param type - The event type (key of {@link SessionEventMap}).
    * @param data - The event payload; must be JSON-serializable.
-   * @param opts - Surface metadata: `surfaceOp` controls how the event enters
-   *   the ordered surface; `sourceEventSeqs` lists the seq numbers of earlier
-   *   events this one derives from. REQUIRED for
+   * @param opts - Envelope options. `ignorable` marks an informational event
+   *   as safe to read without its declaring plugin. For surface events,
+   *   `surfaceOp` controls how the event enters the ordered surface and
+   *   `sourceEventSeqs` lists the seq numbers of earlier events this one
+   *   derives from. Surface intent is REQUIRED for
    *   {@link SurfaceEventType} events (every message-producing event must
    *   declare how it joins the surface, the sole source of derived model
    *   history) and
@@ -602,20 +605,29 @@ export class Session {
   append<T extends SessionEventType>(
     type: T,
     data: SessionEventMap[T],
-    ...opts: T extends SurfaceEventType ? [opts: SurfaceIntent] : []
+    ...opts: T extends SurfaceEventType
+      ? [opts: SurfaceIntent]
+      : [opts?: SessionAppendOptions]
   ): SessionEvent<T> {
-    const surfaceOpts: SurfaceIntent | undefined = opts[0]
-    const surfaceMetadata = {
-      ...surfaceOpts?.sourceEventSeqs === undefined ? {} : { sourceEventSeqs: surfaceOpts.sourceEventSeqs },
-      ...surfaceOpts?.surfaceOp === undefined ? {} : { surfaceOp: surfaceOpts.surfaceOp },
-    }
+    const appendOpts: SurfaceIntent | SessionAppendOptions | undefined = opts[0]
+    const eventMetadata = appendOpts !== undefined && 'surfaceOp' in appendOpts
+      ? {
+        ...appendOpts.ignorable === true ? { ignorable: true as const } : {},
+        ...appendOpts.sourceEventSeqs === undefined
+          ? {}
+          : { sourceEventSeqs: appendOpts.sourceEventSeqs },
+        surfaceOp: appendOpts.surfaceOp,
+      }
+      : {
+        ...appendOpts?.ignorable === true ? { ignorable: true as const } : {},
+      }
     const dataSnapshot = snapshotJsonValue(data)
     if (dataSnapshot === undefined) {
       throw new Error(`session event "${type}" carries non-JSON-serializable data`)
     }
     assertSupportedRequestHeader(type, dataSnapshot, `session event "${type}"`)
-    const surfaceMetadataSnapshot = snapshotJsonValue(surfaceMetadata)
-    if (surfaceMetadataSnapshot === undefined) {
+    const eventMetadataSnapshot = snapshotJsonValue(eventMetadata)
+    if (eventMetadataSnapshot === undefined) {
       throw new Error(`session event "${type}" carries non-JSON-serializable surface metadata`)
     }
     const entry = attachments.get(this)
@@ -627,7 +639,7 @@ export class Session {
       seq: this.log.length,
       time: Date.now(),
       data: dataSnapshot,
-      ...(surfaceMetadataSnapshot as { surfaceOp?: unknown; sourceEventSeqs?: unknown }),
+      ...(eventMetadataSnapshot as { ignorable?: unknown; surfaceOp?: unknown; sourceEventSeqs?: unknown }),
     } as unknown as SessionEvent<T>)
     this.surfaceManager.validateNext(event as SessionEvent)
 
@@ -789,6 +801,7 @@ export class SessionForkError extends Error {
  */
 export class SessionStore extends Service {
   private store = new Map<SessionId, SessionEntry>()
+  private readonly pluginEventTypes = new Set<string>()
   private counter = 0
 
   constructor(ctx: Context) {
@@ -802,6 +815,39 @@ export class SessionStore extends Service {
         resolve: sessionId => this.get(sessionId),
       })
     })
+  }
+
+  /**
+   * Register one plugin-owned durable event type for the calling fiber.
+   * Persistence accepts required events of this type only while the
+   * registration is active; removal makes future reconstruction fail loud.
+   * @param type - merge-extended {@link SessionEventMap} key owned by the plugin.
+   * @returns the exact Cordis effect disposer that removes the registration.
+   */
+  registerEventType(type: SessionEventType): () => void {
+    if (KNOWN_SESSION_EVENT_TYPES.has(type)) {
+      throw new Error(`session event type "${type}" is built into this harness`)
+    }
+    if (!type.includes('/') || type.startsWith('/') || type.endsWith('/')) {
+      throw new TypeError(`session event type "${type}" must be a slash-qualified name`)
+    }
+    // oxlint-disable-next-line typescript/no-misused-promises -- synchronous disposer
+    return this.ctx.effect(function* (this: SessionStore) {
+      if (this.pluginEventTypes.has(type)) {
+        throw new Error(`session event type "${type}" is already registered`)
+      }
+      this.pluginEventTypes.add(type)
+      yield () => { this.pluginEventTypes.delete(type) }
+    }.bind(this), 'sessions.registerEventType()')
+  }
+
+  /**
+   * Return whether the active composition can reconstruct an event type.
+   * @param type - stored event type to test.
+   * @returns `true` for generated first-party types or active plugin registrations.
+   */
+  isEventTypeRegistered(type: string): boolean {
+    return KNOWN_SESSION_EVENT_TYPES.has(type) || this.pluginEventTypes.has(type)
   }
 
   /**

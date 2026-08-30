@@ -50,7 +50,7 @@ interface AgentHandle {
 
 `CreateAgentOptions` 携带共享标识以及新 agent 发布前所需的一切：会话元数据（`meta`——已校验的 `cwd`、fork 谱系、seed 边界、来源分类、委派深度）、fork 用的可选 `seed` 回放前缀、按 agent 的 `AgentOptions`、仅创建期有效的取消 `signal`，以及 `setup`。`ResumeAgentOptions` 是持久标识的对应项：`resumeSessionId`、`agentOptions`、`signal` 与 `setup`。`setup` 回调（`AgentSetup`）在两个 id 都尚未发布时组装 agent 的作用域世界——凡经 `agentCtx` 注册的内容都先于 `agent/created` 与第一次提示词组装存在——并可返回一个在发布前一刻调用的同步 commit；setup 拒绝、commit 抛出或所有者 dispose（资源释放）都会回滚事务，两个 id 均不发布。
 
-`AgentFactory` 是注册表背后的创建接口：循环经 `ctx.agents.setFactory()` 注册其工厂，因此消费方使用 `ctx.agents` 时无需依赖具体循环包。确切的 `create`/`resume` 签名及回滚约定见下方[生成区块](#ctxagents--agentregistry)。
+`AgentFactory` 是注册表背后的默认创建接口：循环经 `ctx.agents.setFactory()` 注册其工厂，因此消费方使用 `ctx.agents` 时无需依赖具体循环包。在默认工厂运行前，两项操作都会携带带判别字段的 `AgentFactoryRequest`、原始选项和调用方所有的上下文，遍历全局异步 [`agent/factory`](#agentfactory--waterfall) waterfall。监听器可以返回一个拥有替代生命周期的 handle，也可以调用 `next()`；当拦截器处理请求时，无需存在默认工厂。确切的 `create`/`resume` 签名及回滚约定见下方[生成区块](#ctxagents--agentregistry)。
 
 <a id="the-agent-handle"></a>
 
@@ -882,6 +882,26 @@ A step or turn errored. The machine reports a failure here even when the error h
 Types: [Scoped](scope.zh.md)
 
 Source: [`packages/core/agent/src/runtime-types.ts`](../../packages/core/agent/src/runtime-types.ts)
+
+<a id="agentfactory--waterfall"></a>
+
+#### `agent/factory` — waterfall
+
+Global agent-construction interception. A listener may return an alternate handle or call `next()` to delegate to the registered default factory.
+
+```ts cordis-catalog
+/**
+ * Global agent-construction interception. A listener may return an
+ * alternate handle or call `next()` to delegate to the registered default
+ * factory.
+ * @param request - create/resume operation, its caller context, and original options.
+ * @param next - delegate to the next interceptor or the default factory.
+ * @mode waterfall
+ */
+'agent/factory'( request: AgentFactoryRequest, next: () => Promise<AgentHandle>, ): Promise<AgentHandle>
+```
+
+Source: [`packages/core/agent/src/index.ts`](../../packages/core/agent/src/index.ts)
 
 <a id="agentinboxclaimed--emit"></a>
 

@@ -1092,6 +1092,40 @@ describe('Session', () => {
 
 
 describe('SessionStore', () => {
+  it('owns plugin event registrations by the calling fiber', async () => {
+    const ctx = new Context()
+    await ctx.plugin(SessionStore)
+    expect(ctx.sessions.isEventTypeRegistered('plugin/checkpoint')).toBe(false)
+
+    const owner = await ctx.plugin(Object.assign((inner: Context) => {
+      inner.sessions.registerEventType('plugin/checkpoint' as SessionEventType)
+      expect(inner.sessions.isEventTypeRegistered('plugin/checkpoint')).toBe(true)
+      expect(() => inner.sessions.registerEventType('plugin/checkpoint' as SessionEventType))
+        .toThrow(/already registered/)
+    }, { inject: ['sessions'] }))
+
+    expect(ctx.sessions.isEventTypeRegistered('plugin/checkpoint')).toBe(true)
+    await owner.dispose()
+    expect(ctx.sessions.isEventTypeRegistered('plugin/checkpoint')).toBe(false)
+    expect(() => ctx.sessions.registerEventType('turn/start')).toThrow(/built into/)
+  })
+
+  it('appends optional ignorable metadata without weakening the default', async () => {
+    const ctx = new Context()
+    await ctx.plugin(SessionStore)
+    const session = ctx.sessions.create(SessionId('plugin-events'))
+
+    const required = session.append('plugin/required' as SessionEventType, { value: 1 } as never)
+    const observational = session.append(
+      'plugin/activity' as SessionEventType,
+      { value: 2 } as never,
+      { ignorable: true },
+    )
+
+    expect(required.ignorable).toBeUndefined()
+    expect(observational.ignorable).toBe(true)
+  })
+
   it('creates sessions, emits session/created and session/event', async () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
