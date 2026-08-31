@@ -40,3 +40,11 @@ apps/web/dist/
 worktrees/
 .agents/worktrees/
 .typert-*/
+agent-hooks/
+.scratch/
+.agent-teams/
+CONTEXT.md
+vendor/**/src/*.js
+vendor/**/src/*.js.map
+vendor/**/src/*.d.ts
+vendor/**/src/*.d.ts.map
