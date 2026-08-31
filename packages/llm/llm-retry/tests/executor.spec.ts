@@ -7,6 +7,7 @@ import {
   nextCapturedRetry,
   waitForRetryDelay,
 } from '../src/executor.ts'
+import * as retryRoot from '../src/index.ts'
 
 const normal: ResolvedRetryPolicy = {
   mode: 'normal',
@@ -60,5 +61,12 @@ describe('captured retry executor', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('package root executor re-exports', () => {
+  it('exports nextCapturedRetry and waitForRetryDelay as functions', () => {
+    expect(retryRoot.nextCapturedRetry).toBe(nextCapturedRetry)
+    expect(retryRoot.waitForRetryDelay).toBe(waitForRetryDelay)
   })
 })

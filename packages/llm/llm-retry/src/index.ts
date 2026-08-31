@@ -17,6 +17,7 @@ import type { LlmRetryEventData } from './types.ts'
 
 export type { LlmRetryEventData, LlmRetryStartedEventData } from './types.ts'
 export { RetryId } from './brand.ts'
+export * from './executor.ts'
 
 export const name = 'llm-retry'
 export const inject = ['agents', 'sessionProjections']

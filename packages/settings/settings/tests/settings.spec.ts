@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import { SettingsProvider, SettingsConflictError, type SettingsNamespace, type SettingsScope, type SettingsUpdateSource } from '../src/index.ts'
+import { SettingsProvider, SettingsConflictError, installSettingsSection, settingsNamespace, type SettingsNamespace, type SettingsScope, type SettingsUpdateSource } from '../src/index.ts'
 import { deepEqualJson } from '@deepseek-ai/dsh-util-values'
 import { MemorySettings } from './memory.ts'
 
@@ -75,6 +75,16 @@ function recordUpdates(ctx: Context) {
   })
   return events
 }
+
+describe('settingsNamespace', () => {
+  it('brands lowercase kebab-case names', () => {
+    expect(settingsNamespace('ui-theme')).toBe('ui-theme')
+  })
+
+  it.each(['', 'UI', '9lives', 'a_b', '-lead'])('rejects %j', (value) => {
+    expect(() => settingsNamespace(value)).toThrow(TypeError)
+  })
+})
 
 describe('settings namespace validation', () => {
   it.each(['', 'UI', '9lives', 'a_b', '-lead'])('rejects %j at the service', async (value) => {
@@ -783,6 +793,105 @@ describe('SettingsProvider.installSection', () => {
       inject: ['settings'],
       apply: (child: Context) => {
         child.settings.installSection(child, 'helper-ns', HelperSchema, entry, {
+          setSource: (source) => {
+            current = source
+          },
+          onChange: () => {
+            changes.push(current().theme)
+          },
+        })
+      },
+    })
+    await consumer
+    await vi.waitFor(() => {
+      expect(changes).toEqual(['user'])
+    })
+
+    const unloading = consumer.dispose()
+    provider.pushExternal({ 'helper-ns': { theme: 'racing' } })
+    await unloading
+    expect(changes).toEqual(['user'])
+  })
+})
+
+describe('installSettingsSection', () => {
+  const HelperSchema: z<{ theme: string }> = z.object({
+    theme: z.string().default('default'),
+  })
+
+  it('drives the source through attach, live commits, and detach', async () => {
+    const ctx = new Context()
+    const entry = { theme: 'entry' }
+    let current: () => { theme: string } = () => entry
+    let changes = 0
+    installSettingsSection(ctx, settingsNamespace('helper-ns'), HelperSchema, entry, {
+      setSource: (source) => {
+        current = source
+      },
+      onChange: () => {
+        changes += 1
+      },
+    })
+    expect(current()).toEqual({ theme: 'entry' })
+    expect(changes).toBe(0)
+
+    const fiber = ctx.plugin(MemorySettings, { doc: { 'helper-ns': { theme: 'user' } } })
+    await fiber
+    await vi.waitFor(() => {
+      expect(current()).toEqual({ theme: 'user' })
+    })
+    expect(changes).toBe(1)
+
+    await ctx.settings.update('helper-ns', { theme: 'live' })
+    await vi.waitFor(() => {
+      expect(changes).toBe(2)
+    })
+    expect(current()).toEqual({ theme: 'live' })
+
+    await fiber.dispose()
+    await vi.waitFor(() => {
+      expect(changes).toBe(3)
+    })
+    expect(current()).toEqual({ theme: 'entry' })
+  })
+
+  it('stays silent when the consumer itself unloads', async () => {
+    const { ctx } = await boot({ doc: { 'helper-ns': { theme: 'user' } } })
+    const entry = { theme: 'entry' }
+    let current: () => { theme: string } = () => entry
+    const changes: string[] = []
+    const consumer = ctx.plugin({
+      inject: ['settings'],
+      apply: (child: Context) => {
+        installSettingsSection(child, settingsNamespace('helper-ns'), HelperSchema, entry, {
+          setSource: (source) => {
+            current = source
+          },
+          onChange: () => {
+            changes.push(current().theme)
+          },
+        })
+      },
+    })
+    await consumer
+    await vi.waitFor(() => {
+      expect(changes).toEqual(['user'])
+    })
+
+    await consumer.dispose()
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(changes).toEqual(['user'])
+  })
+
+  it('stays silent for a stored change that lands while the consumer unloads', async () => {
+    const { ctx, provider } = await boot({ doc: { 'helper-ns': { theme: 'user' } } })
+    const entry = { theme: 'entry' }
+    let current: () => { theme: string } = () => entry
+    const changes: string[] = []
+    const consumer = ctx.plugin({
+      inject: ['settings'],
+      apply: (child: Context) => {
+        installSettingsSection(child, settingsNamespace('helper-ns'), HelperSchema, entry, {
           setSource: (source) => {
             current = source
           },
